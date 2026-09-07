@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.models.faq import FAQ
-from app.db.session import AsyncSessionLocal
+from app.db.session import AsyncSessionLocal, engine
 
 SEED_FAQS: List[Dict[str, str]] = [
     {
@@ -61,6 +61,7 @@ async def main():
     async with AsyncSessionLocal() as session:
         inserted = await seed_all_data(session)
         print(f"Seed finished: {inserted} FAQ item(s) inserted.")
+    await engine.dispose()
 
 
 if __name__ == "__main__":

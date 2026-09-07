@@ -1,0 +1,499 @@
+b0546f2 feat(models): add orm entities and faq seed script aligned with ch02-ddl.sql
+
+ app/models/__init__.py     |   6 ++
+ app/models/conversation.py |  57 ++++++++++++++++
+ app/models/faq.py          |  44 ++++++++++++
+ app/models/message.py      |  57 ++++++++++++++++
+ app/models/ticket.py       |  52 +++++++++++++++
+ scripts/seed_data.py       |  67 +++++++++++++++++++
+ tests/test_models.py       | 163 +++++++++++++++++++++++++++++++++++++++++++++
+ 7 files changed, 446 insertions(+)
+
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+new file mode 100644
+index 0000000..e02a365
+--- /dev/null
++++ b/app/models/__init__.py
+@@ -0,0 +1,6 @@
++from app.models.conversation import Conversation
++from app.models.message import Message
++from app.models.faq import FAQ
++from app.models.ticket import Ticket
++
++__all__ = ["Conversation", "Message", "FAQ", "Ticket"]
+diff --git a/app/models/conversation.py b/app/models/conversation.py
+new file mode 100644
+index 0000000..7459bd8
+--- /dev/null
++++ b/app/models/conversation.py
+@@ -0,0 +1,57 @@
++from datetime import datetime
++from typing import List, TYPE_CHECKING
++from sqlalchemy import BigInteger, Integer, String, Enum, DateTime, func
++from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
++from sqlalchemy.orm import Mapped, mapped_column, relationship
++from app.db.session import Base
++
++if TYPE_CHECKING:
++    from app.models.message import Message
++    from app.models.ticket import Ticket
++
++
++class Conversation(Base):
++    __tablename__ = "conversations"
++
++    id: Mapped[int] = mapped_column(
++        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
++        primary_key=True,
++        autoincrement=True,
++        comment="会话主键",
++    )
++    user_id: Mapped[str] = mapped_column(
++        String(64),
++        nullable=False,
++        default="default_user",
++        comment="用户标识",
++    )
++    status: Mapped[str] = mapped_column(
++        Enum("进行中", "已转人工", "已结束", name="conv_status"),
++        default="进行中",
++        nullable=False,
++        comment="处理状态",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        nullable=False,
++        comment="开启时间",
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++        comment="更新时间",
++    )
++
++    messages: Mapped[List["Message"]] = relationship(
++        "Message",
++        back_populates="conversation",
++        cascade="all, delete-orphan",
++    )
++    tickets: Mapped[List["Ticket"]] = relationship(
++        "Ticket",
++        back_populates="conversation",
++        cascade="all, delete-orphan",
++    )
+diff --git a/app/models/faq.py b/app/models/faq.py
+new file mode 100644
+index 0000000..59a1b49
+--- /dev/null
++++ b/app/models/faq.py
+@@ -0,0 +1,44 @@
++from datetime import datetime
++from sqlalchemy import BigInteger, Integer, String, Text, DateTime, func
++from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
++from sqlalchemy.orm import Mapped, mapped_column
++from app.db.session import Base
++
++
++class FAQ(Base):
++    __tablename__ = "faq"
++
++    id: Mapped[int] = mapped_column(
++        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
++        primary_key=True,
++        autoincrement=True,
++        comment="FAQ 主键",
++    )
++    question: Mapped[str] = mapped_column(
++        String(512),
++        nullable=False,
++        comment="问题",
++    )
++    answer: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        comment="答案",
++    )
++    category: Mapped[str] = mapped_column(
++        String(64),
++        nullable=False,
++        comment="分类",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        nullable=False,
++        comment="创建时间",
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++        comment="更新时间",
++    )
+diff --git a/app/models/message.py b/app/models/message.py
+new file mode 100644
+index 0000000..8dbc3d8
+--- /dev/null
++++ b/app/models/message.py
+@@ -0,0 +1,57 @@
++from datetime import datetime
++from typing import Optional, Any, TYPE_CHECKING
++from sqlalchemy import BigInteger, Integer, String, Text, JSON, Enum, DateTime, ForeignKey, func
++from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
++from sqlalchemy.orm import Mapped, mapped_column, relationship
++from app.db.session import Base
++
++if TYPE_CHECKING:
++    from app.models.conversation import Conversation
++
++
++class Message(Base):
++    __tablename__ = "messages"
++
++    id: Mapped[int] = mapped_column(
++        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
++        primary_key=True,
++        autoincrement=True,
++        comment="消息主键",
++    )
++    conversation_id: Mapped[int] = mapped_column(
++        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
++        ForeignKey("conversations.id"),
++        nullable=False,
++        comment="所属会话",
++    )
++    role: Mapped[str] = mapped_column(
++        Enum("user", "assistant", "tool", name="message_role"),
++        nullable=False,
++        comment="角色:用户/助手/工具结果",
++    )
++    content: Mapped[Optional[str]] = mapped_column(
++        Text,
++        nullable=True,
++        comment="消息正文,assistant 纯工具调用时可为空",
++    )
++    tool_calls: Mapped[Optional[Any]] = mapped_column(
++        JSON,
++        nullable=True,
++        comment="assistant 消息带的工具调用申请单",
++    )
++    tool_call_id: Mapped[Optional[str]] = mapped_column(
++        String(64),
++        nullable=True,
++        comment="tool 消息对应的申请单 id,回灌时对号入座",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        nullable=False,
++        comment="产生时间",
++    )
++
++    conversation: Mapped["Conversation"] = relationship(
++        "Conversation",
++        back_populates="messages",
++    )
+diff --git a/app/models/ticket.py b/app/models/ticket.py
+new file mode 100644
+index 0000000..2fc00af
+--- /dev/null
++++ b/app/models/ticket.py
+@@ -0,0 +1,52 @@
++from datetime import datetime
++from typing import TYPE_CHECKING
++from sqlalchemy import BigInteger, Integer, String, Text, Enum, DateTime, ForeignKey, func
++from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
++from sqlalchemy.orm import Mapped, mapped_column, relationship
++from app.db.session import Base
++
++if TYPE_CHECKING:
++    from app.models.conversation import Conversation
++
++
++class Ticket(Base):
++    __tablename__ = "tickets"
++
++    ticket_no: Mapped[str] = mapped_column(
++        String(32),
++        primary_key=True,
++        comment="工单号,如 T20260701008",
++    )
++    conversation_id: Mapped[int] = mapped_column(
++        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
++        ForeignKey("conversations.id"),
++        nullable=False,
++        comment="关联会话,可倒查当时聊了什么",
++    )
++    description: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        comment="问题描述",
++    )
++    ticket_type: Mapped[str] = mapped_column(
++        Enum("售后", "投诉", "咨询", name="ticket_type"),
++        nullable=False,
++        comment="工单类型",
++    )
++    status: Mapped[str] = mapped_column(
++        Enum("待处理", "已处理", name="ticket_status"),
++        default="待处理",
++        nullable=False,
++        comment="处理状态",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        nullable=False,
++        comment="创建时间",
++    )
++
++    conversation: Mapped["Conversation"] = relationship(
++        "Conversation",
++        back_populates="tickets",
++    )
+diff --git a/scripts/seed_data.py b/scripts/seed_data.py
+new file mode 100644
+index 0000000..64aedb0
+--- /dev/null
++++ b/scripts/seed_data.py
+@@ -0,0 +1,67 @@
++import asyncio
++import sys
++from pathlib import Path
++from typing import List, Dict
++from sqlalchemy import select
++from sqlalchemy.ext.asyncio import AsyncSession
++
++# Ensure project root is in sys.path
++PROJECT_ROOT = Path(__file__).resolve().parent.parent
++if str(PROJECT_ROOT) not in sys.path:
++    sys.path.insert(0, str(PROJECT_ROOT))
++
++from app.models.faq import FAQ
++from app.db.session import AsyncSessionLocal
++
++SEED_FAQS: List[Dict[str, str]] = [
++    {
++        "question": "退货政策说明",
++        "answer": "商城支持7天无理由退货，商品需保持吊牌完好、包装齐全，并在签收后7天内发起退货申请。",
++        "category": "售后",
++    },
++    {
++        "question": "运费标准与包邮政策",
++        "answer": "全场订单实付满99元免运费，不足99元收取10元基础运费。",
++        "category": "物流",
++    },
++    {
++        "question": "发票开具说明",
++        "answer": "确认收货后可在订单详情页申请开具电子发票，1-3个工作日内发送至绑定邮箱。",
++        "category": "财务",
++    },
++]
++
++
++async def seed_all_data(session: AsyncSession) -> int:
++    """
++    Idempotently inject predefined FAQ seed data into the database.
++    Returns the number of newly inserted FAQ records.
++    """
++    inserted_count = 0
++    for item in SEED_FAQS:
++        stmt = select(FAQ).where(FAQ.question == item["question"])
++        result = await session.execute(stmt)
++        existing = result.scalar_one_or_none()
++        if existing is None:
++            faq = FAQ(
++                question=item["question"],
++                answer=item["answer"],
++                category=item["category"],
++            )
++            session.add(faq)
++            inserted_count += 1
++
++    if inserted_count > 0:
++        await session.commit()
++
++    return inserted_count
++
++
++async def main():
++    async with AsyncSessionLocal() as session:
++        inserted = await seed_all_data(session)
++        print(f"Seed finished: {inserted} FAQ item(s) inserted.")
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
+diff --git a/tests/test_models.py b/tests/test_models.py
+new file mode 100644
+index 0000000..fb15d26
+--- /dev/null
++++ b/tests/test_models.py
+@@ -0,0 +1,163 @@
++import pytest
++from unittest.mock import AsyncMock, MagicMock
++from sqlalchemy import create_engine, select
++from sqlalchemy.orm import Session
++from app.db.session import Base
++from app.models import Conversation, Message, FAQ, Ticket
++from scripts.seed_data import seed_all_data, SEED_FAQS
++
++
++def test_model_attributes():
++    conv = Conversation(user_id="u1", status="进行中")
++    assert conv.user_id == "u1"
++    assert conv.status == "进行中"
++
++    msg = Message(conversation_id=1, role="user", content="hello")
++    assert msg.conversation_id == 1
++    assert msg.role == "user"
++    assert msg.content == "hello"
++
++    faq = FAQ(question="退货政策", answer="7天无理由", category="售后")
++    assert faq.question == "退货政策"
++    assert faq.answer == "7天无理由"
++    assert faq.category == "售后"
++
++    ticket = Ticket(
++        ticket_no="T123",
++        conversation_id=1,
++        description="退款",
++        ticket_type="售后",
++    )
++    assert ticket.ticket_no == "T123"
++    assert ticket.conversation_id == 1
++    assert ticket.description == "退款"
++    assert ticket.ticket_type == "售后"
++
++
++def test_models_table_metadata():
++    assert Conversation.__tablename__ == "conversations"
++    assert Message.__tablename__ == "messages"
++    assert FAQ.__tablename__ == "faq"
++    assert Ticket.__tablename__ == "tickets"
++
++    # Column name assertions matching sql/ch02-ddl.sql
++    conv_cols = set(Conversation.__table__.columns.keys())
++    assert {"id", "user_id", "status", "created_at", "updated_at"}.issubset(conv_cols)
++
++    msg_cols = set(Message.__table__.columns.keys())
++    assert {"id", "conversation_id", "role", "content", "tool_calls", "tool_call_id", "created_at"}.issubset(msg_cols)
++
++    faq_cols = set(FAQ.__table__.columns.keys())
++    assert {"id", "question", "answer", "category", "created_at", "updated_at"}.issubset(faq_cols)
++
++    ticket_cols = set(Ticket.__table__.columns.keys())
++    assert {"ticket_no", "conversation_id", "description", "ticket_type", "status", "created_at"}.issubset(ticket_cols)
++
++    # Primary key assertions
++    assert [c.name for c in Conversation.__table__.primary_key.columns] == ["id"]
++    assert [c.name for c in Message.__table__.primary_key.columns] == ["id"]
++    assert [c.name for c in FAQ.__table__.primary_key.columns] == ["id"]
++    assert [c.name for c in Ticket.__table__.primary_key.columns] == ["ticket_no"]
++
++    # Foreign key assertions
++    msg_fk_targets = {fk.target_fullname for fk in Message.__table__.c.conversation_id.foreign_keys}
++    assert "conversations.id" in msg_fk_targets
++
++    ticket_fk_targets = {fk.target_fullname for fk in Ticket.__table__.c.conversation_id.foreign_keys}
++    assert "conversations.id" in ticket_fk_targets
++
++
++def test_models_sync_sqlite_crud():
++    engine = create_engine("sqlite:///:memory:")
++    Base.metadata.create_all(engine)
++
++    with Session(engine) as session:
++        # Create Conversation
++        conv = Conversation(user_id="u_test_1001", status="进行中")
++        session.add(conv)
++        session.commit()
++        assert conv.id is not None
++        conv_id = conv.id
++
++        # Create Message
++        msg = Message(
++            conversation_id=conv_id,
++            role="assistant",
++            content=None,
++            tool_calls=[{"name": "query_faq", "args": {"keyword": "退货"}}],
++            tool_call_id=None,
++        )
++        session.add(msg)
++        session.commit()
++        assert msg.id is not None
++        assert msg.tool_calls == [{"name": "query_faq", "args": {"keyword": "退货"}}]
++
++        # Create FAQ
++        faq = FAQ(
++            question="什么是会员特权？",
++            answer="会员享受专属折扣与优先发货服务。",
++            category="会员",
++        )
++        session.add(faq)
++        session.commit()
++        assert faq.id is not None
++
++        # Create Ticket
++        ticket = Ticket(
++            ticket_no="T20260907001",
++            conversation_id=conv_id,
++            description="用户申请换货",
++            ticket_type="售后",
++            status="待处理",
++        )
++        session.add(ticket)
++        session.commit()
++        assert ticket.ticket_no == "T20260907001"
++
++        # Verify Query
++        queried_conv = session.get(Conversation, conv_id)
++        assert queried_conv is not None
++        assert queried_conv.user_id == "u_test_1001"
++
++        queried_ticket = session.get(Ticket, "T20260907001")
++        assert queried_ticket is not None
++        assert queried_ticket.description == "用户申请换货"
++
++
++def test_seed_faqs_structure():
++    assert len(SEED_FAQS) == 3
++    questions = [f["question"] for f in SEED_FAQS]
++    assert "退货政策说明" in questions
++    assert "运费标准与包邮政策" in questions
++    assert "发票开具说明" in questions
++
++    categories = {f["category"] for f in SEED_FAQS}
++    assert {"售后", "物流", "财务"}.issubset(categories)
++
++
++@pytest.mark.asyncio
++async def test_seed_all_data_idempotency():
++    mock_session = AsyncMock()
++    mock_session.add = MagicMock()
++
++    # Scenario 1: Empty database, all 3 FAQs should be inserted
++    mock_result_empty = MagicMock()
++    mock_result_empty.scalar_one_or_none.return_value = None
++    mock_session.execute.return_value = mock_result_empty
++
++    added_count = await seed_all_data(mock_session)
++    assert added_count == 3
++    assert mock_session.add.call_count == 3
++    mock_session.commit.assert_awaited_once()
++
++    # Scenario 2: Already seeded, 0 FAQs should be inserted
++    mock_session.reset_mock()
++    mock_result_exists = MagicMock()
++    mock_result_exists.scalar_one_or_none.return_value = FAQ(
++        question="退货政策说明", answer="...", category="售后"
++    )
++    mock_session.execute.return_value = mock_result_exists
++
++    added_count_second_run = await seed_all_data(mock_session)
++    assert added_count_second_run == 0
++    assert mock_session.add.call_count == 0

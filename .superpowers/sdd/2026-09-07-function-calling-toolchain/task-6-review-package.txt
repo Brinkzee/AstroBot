@@ -1,0 +1,444 @@
+66898aa feat(api): upgrade sse endpoint with tool calling event stream
+
+ app/api/routes.py             |  64 ++++++++--------
+ app/schemas/chat.py           |  15 +++-
+ tests/test_api.py             |  78 ++++++++-----------
+ tests/test_api_chat_stream.py | 169 ++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 244 insertions(+), 82 deletions(-)
+
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 0ad568e..ace7163 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -1,66 +1,62 @@
+ import json
+-from fastapi import APIRouter, HTTPException
++from fastapi import APIRouter, Depends, HTTPException
+ from fastapi.responses import StreamingResponse
++from sqlalchemy.ext.asyncio import AsyncSession
++
+ from app.schemas.chat import ChatStreamRequest
+ from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
+-from app.services.session_manager import session_manager
+ from app.services.after_sale_service import extract_after_sale_ticket
+-from app.prompts.customer_service import customer_service_prompt
+-from app.llm import get_chat_model
+-from app.config import settings
++from app.services.chat_service import ChatService
++from app.db.session import get_db
+ 
+ router = APIRouter(prefix="/api")
+ 
+-@router.post("/chat/stream")
+-async def chat_stream(request: ChatStreamRequest):
+-    session_id = session_manager.get_or_create_session(request.session_id)
+-    history = session_manager.get_trimmed_history(session_id, max_tokens=settings.max_context_tokens)
+-
+-    formatted_messages = customer_service_prompt.format_messages(
+-        history=history,
+-        input=request.message
+-    )
+-
+-    # 记录当前用户消息到会话
+-    session_manager.add_user_message(session_id, request.message)
++chat_service = ChatService()
++default_chat_service = chat_service
+ 
+-    llm = get_chat_model(streaming=True)
+ 
++@router.post("/chat/stream")
++async def chat_stream(
++    request: ChatStreamRequest,
++    db: AsyncSession = Depends(get_db),
++):
+     async def event_generator():
+-        collected_chunks = []
+         try:
+-            async for chunk in llm.astream(formatted_messages):
+-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+-                if content:
+-                    collected_chunks.append(content)
+-                    payload = json.dumps({"session_id": session_id, "content": content}, ensure_ascii=False)
+-                    yield f"data: {payload}\n\n"
+-
+-            # 流式传输完成后，将 AI 完整回复写入会话历史
+-            full_response = "".join(collected_chunks)
+-            if full_response:
+-                session_manager.add_ai_message(session_id, full_response)
+-
++            async for event in chat_service.stream_chat(
++                db=db,
++                conversation_id=request.effective_conversation_id,
++                message=request.message,
++            ):
++                payload = json.dumps(event, ensure_ascii=False)
++                yield f"data: {payload}\n\n"
+             yield "data: [DONE]\n\n"
+         except Exception as e:
+-            err_payload = json.dumps({"session_id": session_id, "error": str(e)}, ensure_ascii=False)
++            err_payload = json.dumps(
++                {
++                    "event_type": "error",
++                    "conversation_id": request.effective_conversation_id,
++                    "error": str(e),
++                },
++                ensure_ascii=False,
++            )
+             yield f"data: {err_payload}\n\n"
+             yield "data: [DONE]\n\n"
+ 
+     return StreamingResponse(
+         event_generator(),
+         media_type="text/event-stream",
+         headers={
+             "Cache-Control": "no-cache",
+             "Connection": "keep-alive",
+-            "X-Accel-Buffering": "no"
+-        }
++            "X-Accel-Buffering": "no",
++        },
+     )
+ 
++
+ @router.post("/after-sale/extract", response_model=AfterSaleTicket)
+ async def extract_ticket(request: AfterSaleExtractRequest):
+     try:
+         ticket = extract_after_sale_ticket(request.description)
+         return ticket
+     except Exception as e:
+         raise HTTPException(status_code=500, detail=f"提取失败: {str(e)}")
+diff --git a/app/schemas/chat.py b/app/schemas/chat.py
+index 86ec24c..953c7af 100644
+--- a/app/schemas/chat.py
++++ b/app/schemas/chat.py
+@@ -1,7 +1,20 @@
+ from typing import Optional
+ from pydantic import BaseModel, Field
+ 
++
+ class ChatStreamRequest(BaseModel):
+     """对话流式请求参数"""
+-    session_id: Optional[str] = Field(default=None, description="会话ID，若为空则由服务端自动生成")
++    conversation_id: Optional[int] = Field(default=None, description="会话ID（自增主键）")
++    session_id: Optional[str] = Field(default=None, description="会话ID，兼容旧版参数别名")
+     message: str = Field(..., min_length=1, description="用户本次输入的内容")
++
++    @property
++    def effective_conversation_id(self) -> Optional[int]:
++        """提取有效的会话ID整型数字，优先取 conversation_id，其次若 session_id 为纯数字则转换"""
++        if self.conversation_id is not None:
++            return self.conversation_id
++        if self.session_id is not None:
++            s = str(self.session_id).strip()
++            if s.isdigit():
++                return int(s)
++        return None
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 755ce6d..33900f8 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -1,16 +1,15 @@
+ import json
+ from unittest.mock import patch, MagicMock
+ from fastapi.testclient import TestClient
+ import pytest
+ from app.schemas.after_sale import AfterSaleTicket
+-from app.services.session_manager import session_manager
+ 
+ def test_health_endpoint():
+     from main import app
+     client = TestClient(app)
+     res = client.get("/health")
+     assert res.status_code == 200
+     assert res.json() == {"status": "ok"}
+ 
+ def test_chat_page_endpoint():
+     from main import app
+@@ -36,81 +35,66 @@ def test_after_sale_extract_endpoint(mock_extract):
+         raw_description="拉链坏了要换货"
+     )
+ 
+     res = client.post("/api/after-sale/extract", json={"description": "拉链坏了要换货，订单TB20240901"})
+     assert res.status_code == 200
+     data = res.json()
+     assert data["order_id"] == "TB20240901"
+     assert data["issue_type"] == "商品质量问题/破损"
+     assert data["expected_solution"] == "换货"
+ 
+-@patch("app.api.routes.get_chat_model")
+-def test_chat_stream_endpoint(mock_get_model):
++@patch("app.api.routes.chat_service.stream_chat")
++def test_chat_stream_endpoint(mock_stream_chat):
+     from main import app
+     client = TestClient(app)
+ 
+-    # 模拟流式 chunks
+-    async def fake_astream(messages):
+-        class Chunk:
+-            def __init__(self, c):
+-                self.content = c
+-        yield Chunk("您好！")
+-        yield Chunk("我是小星。")
++    async def fake_stream_chat(db, conversation_id, message):
++        yield {
++            "event_type": "text",
++            "conversation_id": conversation_id or 1,
++            "content": "您好！我是小星。"
++        }
+ 
+-    mock_llm = MagicMock()
+-    mock_llm.astream = fake_astream
+-    mock_get_model.return_value = mock_llm
+-
+-    session_id = "test-stream-session-1"
+-    session_manager.clear_session(session_id)
++    mock_stream_chat.side_effect = fake_stream_chat
+ 
++    session_id = "1"
+     res = client.post("/api/chat/stream", json={"session_id": session_id, "message": "你好呀"})
+     assert res.status_code == 200
+     assert "text/event-stream" in res.headers["content-type"]
+     body = res.text
+     assert "data: " in body
+     assert "[DONE]" in body
+-    assert "您好！" in body
+-    assert "我是小星。" in body
+-
+-    # 验证历史会话已被记录
+-    history = session_manager.get_history(session_id)
+-    assert len(history) == 2
+-    assert history[0].content == "你好呀"
+-    assert history[1].content == "您好！我是小星。"
+-
+-@patch("app.api.routes.get_chat_model")
+-def test_multi_turn_context_retained(mock_get_model):
+-    """测试连续两轮对话，第二轮输入时历史上下文正确传递给 Prompt"""
++    assert "您好！我是小星。" in body
++    assert '"event_type": "text"' in body
++
++@patch("app.api.routes.chat_service.stream_chat")
++def test_multi_turn_context_retained(mock_stream_chat):
++    """测试连续两轮对话，conversation_id 正确在连续请求中传递"""
+     from main import app
+     client = TestClient(app)
+ 
+     calls = []
+-    async def fake_astream(messages):
+-        calls.append(messages)
+-        class Chunk:
+-            def __init__(self, c):
+-                self.content = c
+-        yield Chunk("收到。")
++    async def fake_stream_chat(db, conversation_id, message):
++        calls.append({"conversation_id": conversation_id, "message": message})
++        yield {
++            "event_type": "text",
++            "conversation_id": conversation_id,
++            "content": "收到。"
++        }
+ 
+-    mock_llm = MagicMock()
+-    mock_llm.astream = fake_astream
+-    mock_get_model.return_value = mock_llm
++    mock_stream_chat.side_effect = fake_stream_chat
+ 
+-    sid = "multi-turn-test"
+-    session_manager.clear_session(sid)
++    cid = 99
+ 
+     # 第一轮
+-    res1 = client.post("/api/chat/stream", json={"session_id": sid, "message": "我想买羽绒服"})
++    res1 = client.post("/api/chat/stream", json={"conversation_id": cid, "message": "我想买羽绒服"})
+     assert res1.status_code == 200
+     assert len(calls) == 1
++    assert calls[0]["conversation_id"] == 99
++    assert calls[0]["message"] == "我想买羽绒服"
+ 
+     # 第二轮
+-    res2 = client.post("/api/chat/stream", json={"session_id": sid, "message": "保暖效果好吗？"})
++    res2 = client.post("/api/chat/stream", json={"conversation_id": cid, "message": "保暖效果好吗？"})
+     assert res2.status_code == 200
+     assert len(calls) == 2
+-
+-    # 第二次调用的 messages 中应包含第一轮的问答历史
+-    round2_messages = calls[1]
+-    history_texts = [m.content for m in round2_messages]
+-    assert any("我想买羽绒服" in t for t in history_texts)
+-    assert any("收到。" in t for t in history_texts)
++    assert calls[1]["conversation_id"] == 99
++    assert calls[1]["message"] == "保暖效果好吗？"
+diff --git a/tests/test_api_chat_stream.py b/tests/test_api_chat_stream.py
+new file mode 100644
+index 0000000..dab12e1
+--- /dev/null
++++ b/tests/test_api_chat_stream.py
+@@ -0,0 +1,169 @@
++import json
++from unittest.mock import patch
++import pytest
++from fastapi.testclient import TestClient
++
++from main import app
++from app.schemas.chat import ChatStreamRequest
++
++
++def parse_sse_events(sse_text: str):
++    """解析 SSE 响应文本为事件列表和 done 标记"""
++    events = []
++    has_done = False
++    for line in sse_text.splitlines():
++        line = line.strip()
++        if not line:
++            continue
++        if line.startswith("data:"):
++            data_str = line[len("data:"):].strip()
++            if data_str == "[DONE]":
++                has_done = True
++            else:
++                events.append(json.loads(data_str))
++    return events, has_done
++
++
++def test_chat_stream_request_schema():
++    """测试 ChatStreamRequest 模式及其 effective_conversation_id 属性"""
++    # 1. 指定 conversation_id
++    req1 = ChatStreamRequest(conversation_id=10, message="查询订单")
++    assert req1.conversation_id == 10
++    assert req1.session_id is None
++    assert req1.effective_conversation_id == 10
++
++    # 2. 指定 session_id 为数字字符串
++    req2 = ChatStreamRequest(session_id="25", message="查询商品")
++    assert req2.conversation_id is None
++    assert req2.session_id == "25"
++    assert req2.effective_conversation_id == 25
++
++    # 3. session_id 为非纯数字字符串
++    req3 = ChatStreamRequest(session_id="session_abc_123", message="你好")
++    assert req3.effective_conversation_id is None
++
++    # 4. 同时传入 conversation_id 与 session_id，优先以 conversation_id 为准
++    req4 = ChatStreamRequest(conversation_id=7, session_id="99", message="查询物流")
++    assert req4.effective_conversation_id == 7
++
++    # 5. 均未传入
++    req5 = ChatStreamRequest(message="新会话")
++    assert req5.effective_conversation_id is None
++
++    # 6. 空 message 触发校验异常
++    with pytest.raises(Exception):
++        ChatStreamRequest(message="")
++
++
++def test_chat_stream_sse_tool_and_text_events():
++    """测试 POST /api/chat/stream 对接 ChatService 吐出 tool_start, tool_end, text 与 [DONE]"""
++    client = TestClient(app)
++
++    async def fake_stream_chat(db, conversation_id, message):
++        assert conversation_id == 101
++        assert message == "查订单1001"
++        yield {
++            "event_type": "tool_start",
++            "conversation_id": 101,
++            "tool_name": "query_order",
++            "tool_label": "查询订单",
++            "args": {"order_id": "1001"},
++        }
++        yield {
++            "event_type": "tool_end",
++            "conversation_id": 101,
++            "tool_name": "query_order",
++            "success": True,
++        }
++        yield {
++            "event_type": "text",
++            "conversation_id": 101,
++            "content": "您的订单1001已发货。",
++        }
++
++    with patch("app.api.routes.chat_service.stream_chat", side_effect=fake_stream_chat):
++        res = client.post(
++            "/api/chat/stream",
++            json={"conversation_id": 101, "message": "查订单1001"},
++        )
++
++        assert res.status_code == 200
++        assert "text/event-stream" in res.headers["content-type"]
++        assert res.headers.get("Cache-Control") == "no-cache"
++        assert res.headers.get("X-Accel-Buffering") == "no"
++
++        events, has_done = parse_sse_events(res.text)
++        assert has_done is True
++        assert len(events) == 3
++
++        # tool_start
++        assert events[0]["event_type"] == "tool_start"
++        assert events[0]["conversation_id"] == 101
++        assert events[0]["tool_name"] == "query_order"
++        assert events[0]["tool_label"] == "查询订单"
++        assert events[0]["args"] == {"order_id": "1001"}
++
++        # tool_end
++        assert events[1]["event_type"] == "tool_end"
++        assert events[1]["conversation_id"] == 101
++        assert events[1]["tool_name"] == "query_order"
++        assert events[1]["success"] is True
++
++        # text
++        assert events[2]["event_type"] == "text"
++        assert events[2]["conversation_id"] == 101
++        assert events[2]["content"] == "您的订单1001已发货。"
++
++
++def test_chat_stream_backward_compatible_session_id():
++    """测试通过 session_id 别名调用并正确传递 effective_conversation_id"""
++    client = TestClient(app)
++
++    captured_conv_id = None
++
++    async def fake_stream_chat(db, conversation_id, message):
++        nonlocal captured_conv_id
++        captured_conv_id = conversation_id
++        yield {
++            "event_type": "text",
++            "conversation_id": conversation_id or 1,
++            "content": "收到",
++        }
++
++    with patch("app.api.routes.chat_service.stream_chat", side_effect=fake_stream_chat):
++        res = client.post(
++            "/api/chat/stream",
++            json={"session_id": "88", "message": "测试兼容"},
++        )
++        assert res.status_code == 200
++        assert captured_conv_id == 88
++
++        events, has_done = parse_sse_events(res.text)
++        assert has_done is True
++        assert len(events) == 1
++        assert events[0]["event_type"] == "text"
++        assert events[0]["content"] == "收到"
++
++
++def test_chat_stream_error_event():
++    """测试当生成过程抛出异常时，返回 event_type='error' 并以 [DONE] 结束"""
++    client = TestClient(app)
++
++    async def fake_stream_chat(db, conversation_id, message):
++        yield {
++            "event_type": "error",
++            "conversation_id": conversation_id,
++            "error": "服务暂时不可用",
++        }
++
++    with patch("app.api.routes.chat_service.stream_chat", side_effect=fake_stream_chat):
++        res = client.post(
++            "/api/chat/stream",
++            json={"conversation_id": 55, "message": "测试异常"},
++        )
++        assert res.status_code == 200
++        events, has_done = parse_sse_events(res.text)
++        assert has_done is True
++        assert len(events) == 1
++        assert events[0]["event_type"] == "error"
++        assert "服务暂时不可用" in events[0]["error"]
