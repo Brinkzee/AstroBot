@@ -172,3 +172,7 @@ class ToolExecutor:
             error_detail = "未知执行错误"
 
         return _build_failure_response(tool_name, tool_call_id, error_detail)
+
+
+# 默认工具执行器单例
+default_tool_executor = ToolExecutor(registry=default_tool_registry)
