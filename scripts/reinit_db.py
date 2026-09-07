@@ -9,8 +9,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.db.session import engine, Base, AsyncSessionLocal
 from app.models import Conversation, Message, FAQ, Ticket
 from scripts.seed_data import seed_all_data
+from scripts.wsl_helper import ensure_mysql_ready
 
 async def reinit():
+    ensure_mysql_ready()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

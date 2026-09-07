@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.db.session import AsyncSessionLocal, engine
 from app.services.chat_service import ChatService
+from scripts.wsl_helper import ensure_mysql_ready
 
 chat_service = ChatService()
 
@@ -49,6 +50,7 @@ async def run_scenario(scenario_num: int, title: str, user_message: str):
         return tool_called, full_text
 
 async def main():
+    ensure_mysql_ready()
     print("\n🚀 开始执行 Chapter 02 三大验收标准端到端实测...\n")
     
     # 验收场景 1: 查物流
