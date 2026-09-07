@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     openai_model_name: str = Field(default="gpt-4o-mini", description="模型名称，可配置 deepseek-chat、gpt-4o 等")
     openai_temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="采样温度")
     max_context_tokens: int = Field(default=2000, gt=0, description="上下文历史最大保留 Token 预算")
+    database_url: str = Field(
+        default="mysql+aiomysql://root:root123456@127.0.0.1:3306/astro_bot?charset=utf8mb4",
+        description="MySQL 异步连接串"
+    )
 
     @property
     def effective_base_url(self) -> Optional[str]:
