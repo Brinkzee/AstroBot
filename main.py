@@ -1,5 +1,8 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from app.api.routes import router
 
 app = FastAPI(
@@ -17,6 +20,16 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+static_dir = os.path.join(os.path.dirname(__file__), "app", "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/")
+@app.get("/chat")
+def get_chat_page():
+    index_file = os.path.join(static_dir, "index.html")
+    return FileResponse(index_file)
 
 @app.get("/health")
 def health():

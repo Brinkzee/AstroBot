@@ -12,6 +12,18 @@ def test_health_endpoint():
     assert res.status_code == 200
     assert res.json() == {"status": "ok"}
 
+def test_chat_page_endpoint():
+    from main import app
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "智能客服小星" in res.text
+
+    res_chat = client.get("/chat")
+    assert res_chat.status_code == 200
+    assert "text/html" in res_chat.headers["content-type"]
+
 @patch("app.api.routes.extract_after_sale_ticket")
 def test_after_sale_extract_endpoint(mock_extract):
     from main import app
