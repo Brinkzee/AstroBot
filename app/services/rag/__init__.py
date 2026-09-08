@@ -4,11 +4,14 @@ from app.services.rag.dual_writer import KnowledgeDualWriter, compose_embedding_
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
 from app.services.rag.miner import DialogueKnowledgeMiner
+from app.services.rag.reorder import build_citation_items, lost_in_the_middle_reorder
+from app.services.rag.reranker import BGERerankerClient
 from app.services.rag.retriever import KnowledgeRetriever
-from app.services.rag.splitter import MarkdownStructureSplitter, DocChunk
+from app.services.rag.splitter import DocChunk, MarkdownStructureSplitter
 
 __all__ = [
     "BGEEmbeddingClient",
+    "BGERerankerClient",
     "MilvusKnowledgeStore",
     "MarkdownStructureSplitter",
     "DocChunk",
@@ -16,6 +19,9 @@ __all__ = [
     "compose_embedding_text",
     "DialogueKnowledgeMiner",
     "KnowledgeRetriever",
+    "lost_in_the_middle_reorder",
+    "build_citation_items",
 ]
+
 
 
