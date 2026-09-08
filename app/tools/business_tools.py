@@ -1,11 +1,24 @@
 import json
+import logging
 import random
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from sqlalchemy import select, or_
 from app.db.session import AsyncSessionLocal
 from app.models import FAQ, Ticket
+from app.services.rag.retriever import KnowledgeRetriever
+
+logger = logging.getLogger(__name__)
+
+_retriever: Optional[KnowledgeRetriever] = None
+
+
+def get_retriever() -> KnowledgeRetriever:
+    global _retriever
+    if _retriever is None:
+        _retriever = KnowledgeRetriever()
+    return _retriever
 
 
 # 模拟订单数据库缓存
@@ -204,6 +217,16 @@ async def query_faq(keyword: str) -> str:
     if not kw:
         return f"未找到与【{keyword}】相关的常见问题解答。"
 
+    # 1. 优先尝试 Milvus Dense 向量语义近邻检索
+    try:
+        retriever = get_retriever()
+        hits = await retriever.retrieve(kw, top_k=3)
+        if hits:
+            return retriever.format_faq_hits(hits, keyword=keyword)
+    except Exception as e:
+        logger.warning(f"KnowledgeRetriever 语义检索异常，优雅降级为 SQL 查询: {e}")
+
+    # 2. 优雅保底：若 Milvus 尚未灌库或未命中时，兼容回退原 FAQ 表以保证旧单测与无向量环境的平滑兼容
     async with AsyncSessionLocal() as session:
         stmt = (
             select(FAQ)

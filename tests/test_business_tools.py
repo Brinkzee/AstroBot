@@ -86,6 +86,29 @@ async def test_query_faq_not_found():
 
 
 @pytest.mark.asyncio
+async def test_query_faq_dense_vector_retrieval():
+    """测试 query_faq 命中 Dense 向量检索时的正常响应流程"""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[
+        {
+            "id": 1,
+            "distance": 0.95,
+            "questions": "如何申请退货退款？",
+            "answer": "联系在线客服并提交申请，我们将在24小时内审核。",
+        }
+    ])
+    mock_retriever.format_faq_hits.return_value = (
+        "1. 问：如何申请退货退款？\n   答：联系在线客服并提交申请，我们将在24小时内审核。"
+    )
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever):
+        res = await query_faq.ainvoke({"keyword": "退款"})
+        assert "如何申请退货退款？" in res
+        assert "联系在线客服并提交申请" in res
+        mock_retriever.retrieve.assert_awaited_once_with("退款", top_k=3)
+
+
+@pytest.mark.asyncio
 async def test_create_ticket_success():
     mock_session = AsyncMock()
     mock_session.add = MagicMock()
