@@ -31,6 +31,11 @@ def get_chat_page():
     index_file = os.path.join(static_dir, "index.html")
     return FileResponse(index_file)
 
+@app.get("/kb")
+def get_kb_page():
+    kb_file = os.path.join(static_dir, "kb.html")
+    return FileResponse(kb_file)
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
