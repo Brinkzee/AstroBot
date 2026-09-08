@@ -38,7 +38,7 @@
     /* 聊天主视窗 */
     .chat-card {
       width: 100%;
-      max-width: 860px;
+      max-width: 900px;
       height: 92vh;
       background: var(--card-bg);
       border-radius: 20px;
@@ -165,7 +165,7 @@
     .msg-row {
       display: flex;
       gap: 12px;
-      max-width: 82%;
+      max-width: 85%;
       animation: fadeIn 0.25s ease-out forwards;
     }
 
@@ -201,6 +201,60 @@
       border: 1px solid #e2e8f0;
       border-bottom-left-radius: 4px;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+      min-width: 160px;
+    }
+
+    /* 工具轨迹徽章 Tool Badges */
+    .tool-badge-container {
+      margin-bottom: 10px;
+    }
+
+    .tool-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+    }
+
+    .tool-badge.loading {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      animation: pulseGlow 1.5s infinite alternate;
+    }
+
+    .tool-badge.completed {
+      background: #f0fdf4;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    .tool-badge.failed {
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    .tool-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid #bfdbfe;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulseGlow {
+      from { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2); }
+      to { box-shadow: 0 0 8px 2px rgba(59, 130, 246, 0.3); }
     }
 
     /* 打字机光标效果 */
@@ -274,6 +328,13 @@
       background: #e2e8f0;
       border-color: #cbd5e1;
       color: var(--primary);
+    }
+
+    .chip-btn.highlight {
+      background: #e0f2fe;
+      border-color: #bae6fd;
+      color: #0284c7;
+      font-weight: 500;
     }
 
     /* 底部输入框 */
@@ -356,12 +417,12 @@
           <div class="online-indicator"></div>
         </div>
         <div class="title-area">
-          <h1>智能客服小星 <span class="badge">星光优选官方</span></h1>
-          <div class="status-text">支持多轮对话 · 实时逐字推流 (SSE)</div>
+          <h1>智能客服小星 <span class="badge">Function Calling 赋能</span></h1>
+          <div class="status-text">支持自主工具调用 · 实时状态帧与逐 Token 流式推送</div>
         </div>
       </div>
       <div class="header-actions">
-        <div class="session-badge" id="session-display">Session: 自动生成</div>
+        <div class="session-badge" id="session-display">会话: 自动生成</div>
         <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
       </div>
     </header>
@@ -372,18 +433,23 @@
       <div class="msg-row bot">
         <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
         <div class="msg-content">
-          您好！我是星光优选智能客服<strong>小星</strong>。请问有什么可以为您效劳的？
-          您可以咨询商品保修、尺码、退换货规则，或者输入售后诉求。
+          您好！我是星光优选智能客服<strong>小星</strong>。我已经具备自主业务工具查询能力！
+          您可以随时咨询：
+          • 查物流：「订单 1001 的物流到哪了」
+          • 查常见问答：「退货政策是什么」
+          • 查订单/商品：「查询商品羽绒服」
+          • 转人工工单：「帮我创建售后工单」
         </div>
       </div>
     </main>
 
     <!-- 快捷提问胶囊 -->
     <div class="quick-chips-container">
-      <button class="chip-btn" onclick="sendQuickText('羽绒服保修多久？')">羽绒服保修多久？</button>
-      <button class="chip-btn" onclick="sendQuickText('我刚刚看了你们那件黑色羽绒服')">我刚刚看了你们那件黑色羽绒服</button>
-      <button class="chip-btn" onclick="sendQuickText('它有内胆吗？')">它有内胆吗？(测试上下文接住)</button>
-      <button class="chip-btn" onclick="sendQuickText('订单TB20240901拉链卡住了拉不上，我想直接换一件新的')">售后退换换货诉求</button>
+      <button class="chip-btn highlight" onclick="sendQuickText('订单 1001 的物流到哪了')">🚚 验收1: 查物流到哪了</button>
+      <button class="chip-btn highlight" onclick="sendQuickText('退货政策是什么')">📋 验收2: 查退货政策</button>
+      <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
+      <button class="chip-btn" onclick="sendQuickText('查询订单 1001 的信息')">📦 查订单1001</button>
+      <button class="chip-btn" onclick="sendQuickText('帮我创建售后工单，手机收到后外壳有划痕')">🎫 创建售后工单</button>
     </div>
 
     <!-- 底部输入栏 -->
@@ -397,12 +463,12 @@
           </svg>
         </button>
       </div>
-      <div class="footer-tip">由 FastAPI + LangChain + SSE 流式推流驱动</div>
+      <div class="footer-tip">由 FastAPI + SQLAlchemy Async + LangChain @tool 驱动 · 单轮精准收敛</div>
     </footer>
   </div>
 
   <script>
-    let currentSessionId = null;
+    let currentConversationId = null;
     let isStreaming = false;
 
     const messagesContainer = document.getElementById('messages-container');
@@ -428,8 +494,8 @@
     btnSend.addEventListener('click', sendMessage);
 
     btnClear.addEventListener('click', () => {
-      currentSessionId = null;
-      sessionDisplay.innerText = 'Session: 自动生成';
+      currentConversationId = null;
+      sessionDisplay.innerText = '会话: 自动生成';
       messagesContainer.innerHTML = `
         <div class="msg-row bot">
           <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
@@ -471,9 +537,12 @@
       const content = document.createElement('div');
       content.className = 'msg-content';
       content.innerHTML = `
-        <span class="typing-indicator">
-          <span></span><span></span><span></span>
-        </span>
+        <div class="tool-badge-container" style="display:none;"></div>
+        <div class="text-body">
+          <span class="typing-indicator">
+            <span></span><span></span><span></span>
+          </span>
+        </div>
       `;
 
       row.appendChild(avatar);
@@ -495,6 +564,9 @@
       btnSend.disabled = true;
 
       const botContentEl = createBotPlaceholder();
+      const toolContainer = botContentEl.querySelector('.tool-badge-container');
+      const textBody = botContentEl.querySelector('.text-body');
+
       let fullText = '';
       let hasReceivedFirstToken = false;
 
@@ -502,8 +574,8 @@
         const payload = {
           message: text
         };
-        if (currentSessionId) {
-          payload.session_id = currentSessionId;
+        if (currentConversationId) {
+          payload.conversation_id = currentConversationId;
         }
 
         const response = await fetch('/api/chat/stream', {
@@ -528,7 +600,7 @@
 
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
-          buffer = parts.pop(); // 保留尚未闭合的块
+          buffer = parts.pop(); // 保留未闭合块
 
           for (const part of parts) {
             const trimmed = part.trim();
@@ -541,22 +613,51 @@
 
             try {
               const data = JSON.parse(dataStr);
-              if (data.session_id) {
-                currentSessionId = data.session_id;
-                sessionDisplay.innerText = 'Session: ' + currentSessionId.slice(0, 8) + '...';
+
+              // 记录会话 ID
+              if (data.conversation_id) {
+                currentConversationId = data.conversation_id;
+                sessionDisplay.innerText = '会话: #' + currentConversationId;
               }
 
-              if (data.content) {
-                if (!hasReceivedFirstToken) {
-                  hasReceivedFirstToken = true;
-                  botContentEl.innerHTML = ''; // 移除 loading 三个点
-                }
-                fullText += data.content;
-                // 渲染逐字文本与动态光标
-                botContentEl.innerHTML = escapeHtml(fullText) + '<span class="typing-cursor"></span>';
+              // 事件分流处理
+              if (data.event_type === 'tool_start') {
+                toolContainer.style.display = 'block';
+                const label = data.tool_label || data.tool_name;
+                toolContainer.innerHTML = `
+                  <div class="tool-badge loading">
+                    <div class="tool-spinner"></div>
+                    <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
+                  </div>
+                `;
                 scrollToBottom();
-              } else if (data.error) {
-                botContentEl.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(data.error)}</span>`;
+              } else if (data.event_type === 'tool_end') {
+                toolContainer.style.display = 'block';
+                const statusIcon = data.success ? '📦' : '⚠️';
+                const statusText = data.success ? '调用成功' : '调用异常';
+                const badgeClass = data.success ? 'completed' : 'failed';
+                toolContainer.innerHTML = `
+                  <div class="tool-badge ${badgeClass}">
+                    <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
+                    <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
+                  </div>
+                `;
+                scrollToBottom();
+              } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
+                const chunk = data.content || '';
+                if (chunk) {
+                  if (!hasReceivedFirstToken) {
+                    hasReceivedFirstToken = true;
+                    textBody.innerHTML = ''; // 移除 loading 三个点
+                  }
+                  fullText += chunk;
+                  textBody.innerHTML = escapeHtml(fullText) + '<span class="typing-cursor"></span>';
+                  scrollToBottom();
+                }
+              } else if (data.event_type === 'error' || data.error) {
+                const errMsg = data.error || '未知异常';
+                textBody.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(errMsg)}</span>`;
+                scrollToBottom();
               }
             } catch (err) {
               console.warn('解析 SSE 帧失败:', err, dataStr);
@@ -564,12 +665,14 @@
           }
         }
 
-        // 完成传输，移除打字机光标
-        botContentEl.innerHTML = escapeHtml(fullText);
+        // 流结束，移除光标
+        if (textBody) {
+          textBody.innerHTML = escapeHtml(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
+        }
         scrollToBottom();
 
       } catch (err) {
-        botContentEl.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
+        textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
       } finally {
         isStreaming = false;
         btnSend.disabled = false;
@@ -578,7 +681,8 @@
     }
 
     function escapeHtml(str) {
-      return str
+      if (!str) return '';
+      return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
