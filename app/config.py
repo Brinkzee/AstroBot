@@ -19,6 +19,24 @@ class Settings(BaseSettings):
         default="mysql+aiomysql://root:root123456@127.0.0.1:3306/astro_bot?charset=utf8mb4",
         description="MySQL 异步连接串"
     )
+    milvus_uri: str = Field(
+        default="./data/milvus/astro_bot.db",
+        description="Milvus-Lite 本地数据文件路径或独立 Milvus 连接 URI"
+    )
+    huggingface_token: Optional[str] = Field(
+        default=None,
+        description="HuggingFace API Token 用于在线 BGE-M3 推理"
+    )
+
+    @property
+    def MILVUS_URI(self) -> str:
+        """保持与 SDD 规范中大写属性名称的完全兼容"""
+        return self.milvus_uri
+
+    @property
+    def HUGGINGFACE_TOKEN(self) -> Optional[str]:
+        """保持与 SDD 规范中大写属性名称的完全兼容"""
+        return self.huggingface_token
 
     @property
     def effective_base_url(self) -> Optional[str]:
