@@ -371,3 +371,51 @@ async def test_stream_chat_fatal_error_handling():
     error_events = [e for e in events if e["event_type"] == "error"]
     assert len(error_events) == 1
     assert "Upstream LLM timeout" in error_events[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_create_ticket_forces_active_conversation_id():
+    """测试当大模型调用 create_ticket 时误填或幻觉 conversation_id (如订单号 1001)，
+    stream_chat 能够强制将其纠正覆盖为当前实际活跃的会话 ID (conv.id)。
+    """
+    db = FakeAsyncSession()
+
+    mock_llm = MagicMock()
+    mock_bound = MagicMock()
+    mock_bound.ainvoke = AsyncMock(
+        return_value=AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "create_ticket",
+                "args": {"conversation_id": 1001, "description": "商品划痕申请售后", "ticket_type": "售后"},
+                "id": "call_ticket_1"
+            }],
+        )
+    )
+    mock_llm.bind_tools.return_value = mock_bound
+
+    mock_stream_llm = MagicMock()
+    async def fake_astream(messages):
+        yield MockChunk("工单已为您创建成功。")
+    mock_stream_llm.astream = fake_astream
+
+    service = ChatService(model=mock_llm, stream_model=mock_stream_llm)
+
+    service.executor.execute = AsyncMock(return_value={
+        "success": True,
+        "tool_name": "create_ticket",
+        "tool_call_id": "call_ticket_1",
+        "output": '{"ticket_no": "T123", "status": "工单已创建"}',
+        "error": None,
+    })
+
+    events = [e async for e in service.stream_chat(db, conversation_id=1, message="商品有划痕转人工")]
+
+    tool_start_events = [e for e in events if e["event_type"] == "tool_start"]
+    assert len(tool_start_events) == 1
+    # 核心断言：必须被纠正为当前会话 ID (1)，而不是模型幻觉传进来的 1001！
+    assert tool_start_events[0]["args"]["conversation_id"] == 1
+
+    called_tool_call = service.executor.execute.call_args[0][0]
+    assert called_tool_call["args"]["conversation_id"] == 1
+

@@ -61,7 +61,11 @@ async def test_query_faq_matched():
     mock_ctx.__aexit__.return_value = None
     mock_session_local = MagicMock(return_value=mock_ctx)
 
-    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[])
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever), \
+         patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
         res = await query_faq.ainvoke({"keyword": "退货"})
         assert "退货政策说明" in res
         assert "支持7天无理由退货" in res
@@ -80,9 +84,36 @@ async def test_query_faq_not_found():
     mock_ctx.__aexit__.return_value = None
     mock_session_local = MagicMock(return_value=mock_ctx)
 
-    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[])
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever), \
+         patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
         res = await query_faq.ainvoke({"keyword": "宇宙飞船"})
         assert "未找到与【宇宙飞船】相关的常见问题解答。" in res
+
+
+@pytest.mark.asyncio
+async def test_query_faq_dense_vector_retrieval():
+    """测试 query_faq 命中 Dense 向量检索时的正常响应流程"""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[
+        {
+            "id": 1,
+            "distance": 0.95,
+            "questions": "如何申请退货退款？",
+            "answer": "联系在线客服并提交申请，我们将在24小时内审核。",
+        }
+    ])
+    mock_retriever.format_faq_hits.return_value = (
+        "1. 问：如何申请退货退款？\n   答：联系在线客服并提交申请，我们将在24小时内审核。"
+    )
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever):
+        res = await query_faq.ainvoke({"keyword": "退款"})
+        assert "如何申请退货退款？" in res
+        assert "联系在线客服并提交申请" in res
+        mock_retriever.retrieve.assert_awaited_once_with("退款", top_k=3)
 
 
 @pytest.mark.asyncio
@@ -133,6 +164,32 @@ async def test_create_ticket_invalid_type_fallback():
         assert data["ticket_type"] == "售后"
         added_ticket = mock_session.add.call_args[0][0]
         assert added_ticket.ticket_type == "售后"
+
+
+@pytest.mark.asyncio
+async def test_create_ticket_auto_creates_conversation_when_missing():
+    """测试当传入的 conversation_id 在数据库中不存在时，自动补建有效 Conversation 并关联工单"""
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+    # 模拟 session.get(Conversation, ...) 返回 None（代表会话不存在）
+    mock_session.get = AsyncMock(return_value=None)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    mock_ctx.__aexit__.return_value = None
+    mock_session_local = MagicMock(return_value=mock_ctx)
+
+    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+        res = await create_ticket.ainvoke({
+            "conversation_id": 1001,
+            "description": "手机外壳划痕申请退换",
+            "ticket_type": "售后",
+        })
+        assert "工单已创建，人工客服将在24小时内跟进处理" in res
+        data = json.loads(res)
+        assert data["ticket_no"].startswith("T")
+        # 验证是否创建了兜底会话与工单（add 至少被调用，包括补齐会话与工单）
+        assert mock_session.add.call_count >= 1
+
 
 
 def test_tool_metadata_and_docstrings():

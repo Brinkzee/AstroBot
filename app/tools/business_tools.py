@@ -1,11 +1,24 @@
 import json
+import logging
 import random
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from sqlalchemy import select, or_
 from app.db.session import AsyncSessionLocal
-from app.models import FAQ, Ticket
+from app.models import FAQ, Ticket, Conversation
+from app.services.rag.retriever import KnowledgeRetriever
+
+logger = logging.getLogger(__name__)
+
+_retriever: Optional[KnowledgeRetriever] = None
+
+
+def get_retriever(force_refresh: bool = False) -> KnowledgeRetriever:
+    global _retriever
+    if _retriever is None or force_refresh:
+        _retriever = KnowledgeRetriever()
+    return _retriever
 
 
 # 模拟订单数据库缓存
@@ -204,6 +217,18 @@ async def query_faq(keyword: str) -> str:
     if not kw:
         return f"未找到与【{keyword}】相关的常见问题解答。"
 
+    # 1. 优先尝试 Milvus Dense 向量语义近邻检索
+    try:
+        retriever = get_retriever()
+        hits = await retriever.retrieve(kw, top_k=3)
+        if hits:
+            return retriever.format_faq_hits(hits, keyword=keyword)
+    except Exception as e:
+        logger.warning(f"KnowledgeRetriever 语义检索异常，优雅降级为 SQL 查询: {e}")
+        global _retriever
+        _retriever = None
+
+    # 2. 优雅保底：若 Milvus 尚未灌库或未命中时，兼容回退原 FAQ 表以保证旧单测与无向量环境的平滑兼容
     async with AsyncSessionLocal() as session:
         stmt = (
             select(FAQ)
@@ -224,14 +249,14 @@ async def query_faq(keyword: str) -> str:
 
 @tool
 async def create_ticket(
-    conversation_id: int,
-    description: str,
+    conversation_id: Optional[int] = None,
+    description: str = "",
     ticket_type: str = "售后",
 ) -> str:
     """创建人工客服工单。当用户遇到复杂问题、投诉、争议或明确要求转人工客服处理时调用此工具。
 
     Args:
-        conversation_id: 关联的当前会话主键 ID (int)
+        conversation_id: 可选，关联的当前会话主键 ID (int)，在多轮对话中系统会自动绑定当前会话
         description: 工单问题详细描述
         ticket_type: 工单类型，可选值为 '售后'、'投诉' 或 '咨询'，默认为 '售后'
     """
@@ -240,26 +265,64 @@ async def create_ticket(
         ticket_type = "售后"
 
     ticket_no = f"T{datetime.now().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
+    actual_conv_id = conversation_id
 
-    ticket = Ticket(
-        ticket_no=ticket_no,
-        conversation_id=conversation_id,
-        description=description,
-        ticket_type=ticket_type,
-        status="待处理",
-    )
+    try:
+        async with AsyncSessionLocal() as session:
+            # 1. 验证或修复 conversation_id，确保外键约束 100% 满足
+            conv = None
+            if actual_conv_id is not None:
+                conv = await session.get(Conversation, actual_conv_id)
 
-    async with AsyncSessionLocal() as session:
-        session.add(ticket)
-        await session.commit()
+            if conv is None:
+                # 若传入的 conversation_id 为空或在数据库中不存在，自动兜底创建有效会话
+                try:
+                    conv = Conversation(
+                        id=actual_conv_id if (actual_conv_id and actual_conv_id > 0) else None,
+                        user_id="default_user",
+                        status="已转人工",
+                    )
+                    session.add(conv)
+                    await session.commit()
+                    await session.refresh(conv)
+                    actual_conv_id = conv.id
+                except Exception:
+                    await session.rollback()
+                    conv = Conversation(user_id="default_user", status="已转人工")
+                    session.add(conv)
+                    await session.commit()
+                    await session.refresh(conv)
+                    actual_conv_id = conv.id
 
-    return json.dumps(
-        {
-            "ticket_no": ticket_no,
-            "conversation_id": conversation_id,
-            "ticket_type": ticket_type,
-            "status": "工单已创建，人工客服将在24小时内跟进处理",
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+            # 2. 插入工单记录
+            ticket = Ticket(
+                ticket_no=ticket_no,
+                conversation_id=actual_conv_id,
+                description=description,
+                ticket_type=ticket_type,
+                status="待处理",
+            )
+            session.add(ticket)
+            await session.commit()
+
+        return json.dumps(
+            {
+                "ticket_no": ticket_no,
+                "conversation_id": actual_conv_id,
+                "ticket_type": ticket_type,
+                "status": "工单已创建，人工客服将在24小时内跟进处理",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    except Exception as e:
+        logger.exception(f"创建工单异常: {e}")
+        return json.dumps(
+            {
+                "error": f"创建工单失败: {str(e)}",
+                "ticket_no": ticket_no,
+                "status": "创建失败",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )

@@ -224,8 +224,8 @@ class ChatService:
             else:
                 args_dict = {}
 
-            # 为 create_ticket 自动补全 conversation_id（若模型遗漏）
-            if tool_name == "create_ticket" and not args_dict.get("conversation_id"):
+            # 为 create_ticket 强制绑定当前活跃会话 ID（防止大模型误填订单号或幻觉 ID 导致外键违规）
+            if tool_name == "create_ticket":
                 args_dict["conversation_id"] = conv_id
                 tool_call["args"] = args_dict
 
