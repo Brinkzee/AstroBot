@@ -15,11 +15,15 @@ def mock_db_session():
 
 
 def test_get_kb_page_html():
-    """测试访问 http://localhost:8000/kb 能成功返回 HTML 页面"""
+    """测试访问 http://localhost:8000/kb 能成功返回 HTML 页面并包含完整文档录入模块"""
     response = client.get("/kb")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "知识库" in response.text
+    assert "完整文档录入" in response.text
+    assert "btn-mode-doc" in response.text
+    assert "doc-form" in response.text
+    assert "btn-preview-doc" in response.text
 
 
 def test_get_kb_stats():
@@ -264,3 +268,99 @@ def test_kb_search_api():
         assert data["hits"][0]["distance"] == 0.88
         assert "顺丰速运" in data["formatted_preview"]
         assert "latency_ms" in data
+
+
+def test_document_preview_api():
+    """测试完整 Markdown 文档切块预览接口 POST /api/kb/documents/preview"""
+    md_content = """# 会员积分体系
+## 积分获取与抵扣
+问：积分如何获取？
+答：用户在商城每实付1元可累积1积分。
+
+问：积分如何抵扣订单金额？
+答：100积分可在下单时抵扣1元现金，最多抵扣整单30%。
+"""
+    payload = {
+        "filename": "会员积分规则.md",
+        "category": "会员权益",
+        "content": md_content,
+    }
+    response = client.post("/api/kb/documents/preview", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_chunks"] >= 2
+    assert len(data["chunks"]) >= 2
+    questions_list = [c["questions"] for c in data["chunks"]]
+    assert any("积分如何获取" in q for q in questions_list)
+    assert any("积分如何抵扣" in q for q in questions_list)
+
+
+def test_document_manual_create_with_sync():
+    """测试完整文档录入并立即向量化双写 POST /api/kb/documents/manual (sync_vector=True)"""
+    mock_session = AsyncMock()
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        with patch("app.api.routes.KnowledgeDualWriter") as MockWriter:
+            writer_instance = MockWriter.return_value
+            mock_chunk = MagicMock(spec=KnowledgeChunk)
+            mock_chunk.id = 101
+            mock_chunk.category = "会员权益"
+            mock_chunk.vectorize_status = "done"
+
+            writer_instance.write_chunks = AsyncMock(return_value=[mock_chunk, mock_chunk])
+            writer_instance.close = MagicMock()
+
+            payload = {
+                "filename": "测试会员文档.md",
+                "category": "会员权益",
+                "content": "# 会员制度\n## 特权介绍\n问：黄金会员有什么特权？\n答：专属折扣与优先发货。",
+                "save_file": False,
+                "sync_vector": True,
+            }
+            response = client.post("/api/kb/documents/manual", json=payload)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["total_chunks"] >= 1
+            assert data["saved_chunks"] >= 1
+            assert data["vectorize_status"] == "done"
+            writer_instance.write_chunks.assert_awaited_once()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_document_manual_create_without_sync():
+    """测试完整文档录入暂不向量化 POST /api/kb/documents/manual (sync_vector=False)"""
+    mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
+    mock_session.commit = AsyncMock()
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        payload = {
+            "filename": "测试离线文档.md",
+            "category": "运营规范",
+            "content": "# 运营手册\n## 发货规范\n全场48小时内极速发货。",
+            "save_file": False,
+            "sync_vector": False,
+        }
+        response = client.post("/api/kb/documents/manual", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["total_chunks"] >= 1
+        assert data["vectorize_status"] == "pending"
+        mock_session.add_all.assert_called_once()
+        mock_session.commit.assert_awaited_once()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+

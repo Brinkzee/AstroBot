@@ -80,6 +80,11 @@ from app.schemas.kb import (
     ChunkListResponse,
     KBSearchResponse,
     KBSearchHit,
+    DocumentPreviewRequest,
+    DocChunkPreviewItem,
+    DocumentPreviewResponse,
+    ManualDocumentCreateRequest,
+    ManualDocumentCreateResponse,
 )
 from app.services.rag.dual_writer import KnowledgeDualWriter
 from app.services.rag.milvus_client import MilvusKnowledgeStore
@@ -335,4 +340,125 @@ async def search_knowledge(request: KBSearchRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索自测异常: {str(e)}")
+
+
+@router.post("/kb/documents/preview", response_model=DocumentPreviewResponse)
+async def preview_document_chunks(request: DocumentPreviewRequest):
+    """完整 Markdown 文档智能切块预览（不落库）"""
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="文档正文内容不能为空")
+
+    try:
+        splitter = MarkdownSectionSplitter()
+        doc_chunks = splitter.split_markdown(request.content)
+
+        default_cat = (request.category or "").strip()
+        preview_items: List[DocChunkPreviewItem] = []
+        for idx, c in enumerate(doc_chunks, start=1):
+            cat = c.category
+            if default_cat and (not cat or cat == "未分类"):
+                cat = default_cat
+            preview_items.append(
+                DocChunkPreviewItem(
+                    id=idx,
+                    category=cat,
+                    questions=c.questions,
+                    answer=c.answer,
+                    section_path=c.section_path,
+                    content_type=c.content_type or "policy",
+                    is_key_clause=bool(c.is_key_clause),
+                )
+            )
+
+        return DocumentPreviewResponse(
+            filename=request.filename,
+            total_chunks=len(preview_items),
+            chunks=preview_items,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文档切块预览异常: {str(e)}")
+
+
+@router.post("/kb/documents/manual", response_model=ManualDocumentCreateResponse)
+async def create_manual_document(
+    request: ManualDocumentCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """完整 Markdown 文档录入，支持保存原材料文件与智能切分向量化双写"""
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="文档正文内容不能为空")
+
+    clean_name = Path(request.filename).name.strip()
+    if not clean_name:
+        clean_name = f"doc_{int(time.time())}.md"
+    elif not clean_name.endswith(".md"):
+        clean_name = f"{clean_name}.md"
+
+    # 可选保存原材料文件至 data/kb/
+    file_saved = False
+    if request.save_file:
+        try:
+            kb_dir = Path("data/kb")
+            kb_dir.mkdir(parents=True, exist_ok=True)
+            target_path = kb_dir / clean_name
+            target_path.write_text(request.content, encoding="utf-8")
+            file_saved = True
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"保存原材料文件失败: {str(e)}")
+
+    try:
+        splitter = MarkdownSectionSplitter()
+        doc_chunks = splitter.split_markdown(request.content)
+        if not doc_chunks:
+            raise HTTPException(status_code=400, detail="文档未能切分出有效知识块，请检查内容格式")
+
+        default_cat = (request.category or "").strip()
+        for c in doc_chunks:
+            if default_cat and (not c.category or c.category == "未分类"):
+                c.category = default_cat
+
+        if request.sync_vector:
+            writer = KnowledgeDualWriter()
+            try:
+                saved = await writer.write_chunks(db, doc_chunks)
+            finally:
+                writer.close()
+            return ManualDocumentCreateResponse(
+                success=True,
+                total_chunks=len(doc_chunks),
+                saved_chunks=len(saved),
+                vectorize_status="done",
+                file_saved=file_saved,
+                filename=clean_name,
+            )
+        else:
+            db_chunks = []
+            for c in doc_chunks:
+                db_chunks.append(
+                    KnowledgeChunk(
+                        category=c.category,
+                        questions=c.questions,
+                        answer=c.answer,
+                        section_path=c.section_path,
+                        content_type=c.content_type or "policy",
+                        is_key_clause=c.is_key_clause,
+                        vectorize_status="pending",
+                        vector_id=None,
+                    )
+                )
+            db.add_all(db_chunks)
+            await db.commit()
+            return ManualDocumentCreateResponse(
+                success=True,
+                total_chunks=len(doc_chunks),
+                saved_chunks=len(db_chunks),
+                vectorize_status="pending",
+                file_saved=file_saved,
+                filename=clean_name,
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"完整文档录入异常: {str(e)}")
+
 

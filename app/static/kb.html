@@ -488,6 +488,42 @@
     .filter-input {
       max-width: 240px;
     }
+
+    /* 子模式分段切换器 */
+    .segmented-control {
+      display: inline-flex;
+      background: #f1f5f9;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 20px;
+    }
+
+    .segmented-btn {
+      padding: 8px 20px;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .segmented-btn:hover {
+      color: var(--text-main);
+    }
+
+    .segmented-btn.active {
+      background: #ffffff;
+      color: var(--primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
   </style>
 </head>
 <body>
@@ -618,7 +654,16 @@
 
     <!-- 模块 2: 手工知识录入 -->
     <div id="tab-manual" class="tab-pane">
-      <div class="panel-card" style="max-width: 800px; margin: 0 auto;">
+      <!-- 录入子模式切换栏 -->
+      <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+        <div class="segmented-control">
+          <button type="button" class="segmented-btn active" id="btn-mode-single" onclick="switchManualMode('single')">📝 单条问答录入</button>
+          <button type="button" class="segmented-btn" id="btn-mode-doc" onclick="switchManualMode('doc')">📑 完整文档录入</button>
+        </div>
+      </div>
+
+      <!-- 子模式 A: 单条知识手工录入 -->
+      <div id="manual-single-container" class="panel-card" style="max-width: 800px; margin: 0 auto;">
         <div class="panel-header">
           <div class="panel-title">✍️ 单条知识手工录入与向量化</div>
         </div>
@@ -680,6 +725,93 @@
             <button type="submit" class="btn btn-primary" id="btn-submit-manual">🚀 确认录入知识库</button>
           </div>
         </form>
+      </div>
+
+      <!-- 子模式 B: 完整 Markdown 文档录入与智能切块 -->
+      <div id="manual-doc-container" class="panel-card" style="max-width: 960px; margin: 0 auto; display: none;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">📑 完整 Markdown 文档录入与智能切块</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              支持粘贴完整 Markdown 政策手册，系统将自动识别标题层级（# / ## / ###）、表格与 Q&A 问答对并提取层次结构。
+            </div>
+          </div>
+        </div>
+
+        <form id="doc-form" onsubmit="submitManualDoc(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="doc-filename">文档文件名 * (需以 .md 结尾)</label>
+              <input type="text" id="doc-filename" required placeholder="如：会员积分规则.md 或 售后退换货规范.md">
+            </div>
+
+            <div class="form-group">
+              <label for="doc-category">默认业务分类 (可选，章节未定义分类时生效)</label>
+              <input type="text" id="doc-category" placeholder="如：会员权益、售后服务、物流配送">
+            </div>
+
+            <div class="form-group full-width">
+              <label for="doc-content">Markdown 文档正文 *</label>
+              <textarea id="doc-content" required rows="12" style="font-family: monospace; font-size: 13px; line-height: 1.5;" placeholder="# 会员积分体系
+## 积分获取规则
+问：积分如何获取？
+答：用户在商城每实付1元可累积1积分。
+
+问：积分如何抵扣？
+答：100积分可在下单时抵扣1元现金，最多抵扣整单30%。"></textarea>
+            </div>
+
+            <div class="form-group full-width" style="display: flex; flex-direction: column; gap: 10px; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <label class="checkbox-label" style="font-weight: 500;">
+                <input type="checkbox" id="doc-save-file" checked>
+                💾 同时保存原材料文件至 <code>data/kb/</code> 目录 (持久化原材料，方便离线管理与全库重建)
+              </label>
+              <label class="checkbox-label" style="font-weight: 600; color: #1e40af;">
+                <input type="checkbox" id="doc-sync-vector" checked>
+                ⚡ 立即执行 BGE-M3 向量化并同步写入 Milvus 向量库 (取消勾选则仅存入 MySQL 保持 pending 待补齐)
+              </label>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <button type="button" class="btn btn-secondary" id="btn-preview-doc" onclick="previewDocChunks()">
+              🔍 智能切块预览 (不落库)
+            </button>
+            <div style="display: flex; gap: 12px;">
+              <button type="reset" class="btn btn-secondary" onclick="clearDocPreview()">重置表单</button>
+              <button type="submit" class="btn btn-primary" id="btn-submit-doc">🚀 确认切块并录入知识库</button>
+            </div>
+          </div>
+        </form>
+
+        <!-- 切块预览展示区 -->
+        <div id="doc-preview-area" style="display: none; margin-top: 24px; border-top: 2px dashed var(--border-color); padding-top: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+              <span>🧩 智能切块预览</span>
+              <span class="stat-badge badge-info" id="preview-total-badge">共 0 块</span>
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted);">仅在内存中解析预览，尚未写入数据库</span>
+          </div>
+
+          <div class="table-container" style="max-height: 360px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50px;">#</th>
+                  <th style="width: 110px;">分类</th>
+                  <th style="width: 140px;">所属层级路径</th>
+                  <th style="width: 180px;">标准问题 / 标题</th>
+                  <th>解答正文预览</th>
+                  <th style="width: 70px;">类型</th>
+                  <th style="width: 70px;">核心条款</th>
+                </tr>
+              </thead>
+              <tbody id="preview-tbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -962,6 +1094,155 @@
       } finally {
         btn.disabled = false;
         btn.innerText = "🚀 确认录入知识库";
+      }
+    }
+
+    // 录入子模式切换 (单条 vs 完整文档)
+    function switchManualMode(mode) {
+      const btnSingle = document.getElementById("btn-mode-single");
+      const btnDoc = document.getElementById("btn-mode-doc");
+      const singleContainer = document.getElementById("manual-single-container");
+      const docContainer = document.getElementById("manual-doc-container");
+
+      if (mode === "single") {
+        btnSingle.classList.add("active");
+        btnDoc.classList.remove("active");
+        singleContainer.style.display = "block";
+        docContainer.style.display = "none";
+      } else {
+        btnSingle.classList.remove("active");
+        btnDoc.classList.add("active");
+        singleContainer.style.display = "none";
+        docContainer.style.display = "block";
+      }
+    }
+
+    // 清空预览区
+    function clearDocPreview() {
+      const previewArea = document.getElementById("doc-preview-area");
+      const tbody = document.getElementById("preview-tbody");
+      if (previewArea) previewArea.style.display = "none";
+      if (tbody) tbody.innerHTML = "";
+    }
+
+    // 智能切块预览请求
+    async function previewDocChunks() {
+      const content = document.getElementById("doc-content").value.trim();
+      if (!content) {
+        alert("请先输入 Markdown 文档正文内容！");
+        return;
+      }
+      const filename = document.getElementById("doc-filename").value.trim() || null;
+      const category = document.getElementById("doc-category").value.trim() || null;
+
+      const btn = document.getElementById("btn-preview-doc");
+      btn.disabled = true;
+      btn.innerText = "⏳ 正在切块解析...";
+
+      try {
+        const res = await fetch("/api/kb/documents/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename, category, content }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "切块预览失败");
+        }
+        const data = await res.json();
+
+        const previewArea = document.getElementById("doc-preview-area");
+        const totalBadge = document.getElementById("preview-total-badge");
+        const tbody = document.getElementById("preview-tbody");
+
+        previewArea.style.display = "block";
+        totalBadge.innerText = `切出 ${data.total_chunks} 个知识块`;
+
+        if (data.chunks.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">未能识别出有效切块，请检查文档标题结构</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.chunks.map(chunk => `
+          <tr>
+            <td><strong>#${chunk.id}</strong></td>
+            <td><span class="stat-badge badge-info">${escapeHtml(chunk.category)}</span></td>
+            <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(chunk.section_path || '-')}</td>
+            <td style="font-weight: 500; font-size: 13px;">${escapeHtml(chunk.questions)}</td>
+            <td style="font-size: 12px; color: var(--text-muted);" title="${escapeHtml(chunk.answer)}">
+              ${escapeHtml(chunk.answer.slice(0, 80))}${chunk.answer.length > 80 ? '...' : ''}
+            </td>
+            <td><span class="stat-badge ${chunk.content_type === 'faq' ? 'badge-success' : 'badge-warning'}">${chunk.content_type}</span></td>
+            <td>${chunk.is_key_clause ? '<span class="stat-badge badge-danger">核心</span>' : '<span style="color:var(--text-muted);">-</span>'}</td>
+          </tr>
+        `).join("");
+
+        showToast(`🔍 预览解析完成，共切出 ${data.total_chunks} 个知识块`);
+      } catch (err) {
+        alert("切块预览失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🔍 智能切块预览 (不落库)";
+      }
+    }
+
+    // 完整文档录入提交
+    async function submitManualDoc(event) {
+      event.preventDefault();
+      const content = document.getElementById("doc-content").value.trim();
+      const filename = document.getElementById("doc-filename").value.trim();
+      const category = document.getElementById("doc-category").value.trim() || null;
+      const saveFile = document.getElementById("doc-save-file").checked;
+      const syncVector = document.getElementById("doc-sync-vector").checked;
+
+      if (!filename) {
+        alert("请输入文档文件名！");
+        return;
+      }
+      if (!content) {
+        alert("请输入 Markdown 文档正文！");
+        return;
+      }
+
+      const btn = document.getElementById("btn-submit-doc");
+      btn.disabled = true;
+      btn.innerText = "⏳ 正在执行切块与落库...";
+
+      try {
+        const res = await fetch("/api/kb/documents/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: filename,
+            category: category,
+            content: content,
+            save_file: saveFile,
+            sync_vector: syncVector,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "文档录入失败");
+        }
+        const data = await res.json();
+
+        showToast(`🎉 文档录入成功！切出并落库 ${data.saved_chunks} 个知识块 (状态: ${data.vectorize_status})`);
+
+        // 清空表单与预览
+        document.getElementById("doc-form").reset();
+        document.getElementById("doc-save-file").checked = true;
+        document.getElementById("doc-sync-vector").checked = true;
+        clearDocPreview();
+
+        // 刷新统计、材料和知识块列表
+        loadStats();
+        loadMaterials();
+        loadChunks();
+      } catch (err) {
+        alert("文档录入失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🚀 确认切块并录入知识库";
       }
     }
 
