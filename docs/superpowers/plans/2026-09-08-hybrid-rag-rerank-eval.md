@@ -268,16 +268,16 @@ git commit -m "feat(rag): add two-phase self-eval guardrails, refusal pool loggi
 - Consumes: `tests/data/eval_ch04.jsonl`, `AdvancedKnowledgeRetriever`, `FaithCase`
 - Produces: `RAGEvaluator.evaluate_strategy()`, `RAGEvaluator.run_comparative_eval()`, `reports/ch04_evaluation_report.md`
 
-- [ ] **Step 1: 编写评估指标与台账落库失败测试**
+- [x] **Step 1: 编写评估指标与台账落库失败测试**
 编写 `tests/test_rag_evaluator.py`：
 1. 验证 `Recall@K` 与 `MRR` 计算函数的数学准确性；
 2. 验证 Faithfulness 裁判打分与编造判定逻辑；
 3. 验证当某道题被判定为编造时，能调用 `upsert_faith_case` 幂等写入 `faith_cases` 表，保存完整 `citations` 快照；若该题原为「已解决」，能自动回退为「未解决」（复发追踪）。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 运行 `pytest tests/test_rag_evaluator.py -v`，预期报缺少 `RAGEvaluator`。
 
-- [ ] **Step 3: 实现 RAGEvaluator 与对比评测脚本**
+- [x] **Step 3: 实现 RAGEvaluator 与对比评测脚本**
 1. 实现 `app/services/rag/evaluator.py`：
    - 加载 `tests/data/eval_ch04.jsonl`，按分桶统计；
    - 实现检索指标计算（基于 `expect_section` 命中判断）与 LLM 忠实度裁判；
@@ -287,10 +287,10 @@ git commit -m "feat(rag): add two-phase self-eval guardrails, refusal pool loggi
    - 支持 `--sample` 采样或全量跑；
    - 控制台渲染对比表格，并写入 `reports/ch04_evaluation_report.md`。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 运行 `pytest tests/test_rag_evaluator.py -v`，验证全部通过。
 
-- [ ] **Step 5: 提交代码**
+- [x] **Step 5: 提交代码**
 ```bash
 git add app/services/rag/evaluator.py scripts/run_ch04_evaluation.py tests/test_rag_evaluator.py
 git commit -m "feat(eval): add comparative evaluation suite and faith_cases tracking ledger"

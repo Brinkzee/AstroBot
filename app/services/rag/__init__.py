@@ -7,6 +7,15 @@ from app.services.rag.advanced_retriever import (
 from app.services.rag.dual_writer import KnowledgeDualWriter, compose_embedding_text
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.evaluator import (
+    BucketMetrics,
+    EvaluationReport,
+    RAGEvaluator,
+    StrategyMetrics,
+    compute_retrieval_metrics,
+    evaluate_faithfulness,
+    render_markdown_report,
+)
 from app.services.rag.generator import RAGControlledGenerator, SelfCheckResult
 from app.services.rag.miner import DialogueKnowledgeMiner
 from app.services.rag.query_processor import QueryProcessor, QueryUnderstandingResult
@@ -33,7 +42,15 @@ __all__ = [
     "build_citation_items",
     "RAGControlledGenerator",
     "SelfCheckResult",
+    "RAGEvaluator",
+    "BucketMetrics",
+    "StrategyMetrics",
+    "EvaluationReport",
+    "compute_retrieval_metrics",
+    "evaluate_faithfulness",
+    "render_markdown_report",
 ]
+
 
 
 
