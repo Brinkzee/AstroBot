@@ -44,11 +44,15 @@ class ChatService:
         executor: ToolExecutor = default_tool_executor,
         model: Optional[Any] = None,
         stream_model: Optional[Any] = None,
+        retriever: Optional[Any] = None,
+        rag_generator: Optional[Any] = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
         self.model = model
         self.stream_model = stream_model
+        self.retriever = retriever
+        self.rag_generator = rag_generator
 
     async def get_or_create_conversation(
         self,
@@ -270,7 +274,87 @@ class ChatService:
                 tool_call_id=call_id,
             )
 
-            # 7.6 回灌模型上下文，执行流式输出
+            # 若为知识库问答 (query_faq)，执行两阶段自评与受控流式生成
+            if tool_name == "query_faq":
+                retriever = self.retriever
+                if retriever is None:
+                    try:
+                        from app.tools.business_tools import get_retriever
+                        retriever = get_retriever()
+                    except Exception as e:
+                        logger.warning(f"获取知识库检索器失败: {e}")
+
+                citations: List[Dict[str, Any]] = []
+                query_kw = str(args_dict.get("keyword") or message or "").strip()
+                if retriever is not None and hasattr(retriever, "retrieve_with_strategy"):
+                    try:
+                        retrieval_res = await retriever.retrieve_with_strategy(query=query_kw)
+                        citations = getattr(retrieval_res, "citations", []) or []
+                    except Exception as e:
+                        logger.warning(f"调用进阶检索器获取 citations 失败: {e}")
+
+                rag_gen = self.rag_generator
+                if rag_gen is None:
+                    from app.services.rag.generator import RAGControlledGenerator
+                    rag_gen = RAGControlledGenerator(model=self.model, stream_model=self.stream_model)
+
+                # Phase 1: 知识充分度自检
+                check_res = await rag_gen.check_sufficiency(
+                    query=message,
+                    citations=citations,
+                    db=db,
+                    conversation_id=conv_id,
+                )
+
+                if not check_res.useful:
+                    # 自评不足或超纲，下发标准拒答语，截断后续生成
+                    refusal_text = getattr(
+                        rag_gen,
+                        "refusal_text",
+                        "非常抱歉，当前知识库中暂未收录相关信息，已为您登记至后台人工处理，我们的客服专员将尽快为您核实解答。",
+                    )
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": refusal_text,
+                    }
+                    await self.save_message(
+                        db,
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=refusal_text,
+                    )
+                    return
+
+                # Phase 2: 知识证据充分，首帧下发 citations 事件
+                yield {
+                    "event_type": "citations",
+                    "conversation_id": conv_id,
+                    "citations": citations,
+                }
+
+                # 流式下发受控生成的带角标文本
+                final_content = ""
+                async for chunk_text in rag_gen.astream_generate(
+                    query=message, citations=citations, history=history
+                ):
+                    if chunk_text:
+                        final_content += chunk_text
+                        yield {
+                            "event_type": "text",
+                            "conversation_id": conv_id,
+                            "content": chunk_text,
+                        }
+
+                await self.save_message(
+                    db,
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=final_content,
+                )
+                return
+
+            # 7.6 回灌模型上下文，执行流式输出 (非 FAQ 业务工具)
             feedback_messages = list(prompt_messages) + [
                 AIMessage(content=resp.content or "", tool_calls=[tool_call]),
                 ToolMessage(content=tool_output, tool_call_id=call_id),

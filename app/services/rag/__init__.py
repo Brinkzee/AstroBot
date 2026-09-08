@@ -7,6 +7,7 @@ from app.services.rag.advanced_retriever import (
 from app.services.rag.dual_writer import KnowledgeDualWriter, compose_embedding_text
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.generator import RAGControlledGenerator, SelfCheckResult
 from app.services.rag.miner import DialogueKnowledgeMiner
 from app.services.rag.query_processor import QueryProcessor, QueryUnderstandingResult
 from app.services.rag.reorder import build_citation_items, lost_in_the_middle_reorder
@@ -30,6 +31,8 @@ __all__ = [
     "QueryUnderstandingResult",
     "lost_in_the_middle_reorder",
     "build_citation_items",
+    "RAGControlledGenerator",
+    "SelfCheckResult",
 ]
 
 

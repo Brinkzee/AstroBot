@@ -231,27 +231,27 @@ git commit -m "feat(retriever): implement advanced hybrid rag retriever with sea
 - Consumes: `AdvancedKnowledgeRetriever`, `LowConfidenceQuestion`, `ChatService`
 - Produces: `RAGControlledGenerator.self_check()`, `RAGControlledGenerator.stream_generate()`, SSE `citations` 事件
 
-- [ ] **Step 1: 编写生成质量控制失败测试**
+- [x] **Step 1: 编写生成质量控制失败测试**
 编写 `tests/test_rag_generator.py`：
 1. 测试知识不足或超纲提问时，`self_check` 返回 `useful=False`，异步向 `low_confidence_questions` 表插入记录（`source='self_check'` 或 `'retrieval_low_conf'`，包含 `reason`），并返回显式拒答文本；
 2. 测试知识充分时，`self_check` 返回 `useful=True`；
 3. 测试受控生成 Prompt 包含严格的负面知识红线（禁止承诺退款到账精确时间、禁止承诺私下赔付）及引用角标格式规范 `[n]`；
 4. 测试 `ChatService.stream_chat` 在触发知识库检索时，首帧下发 `{"event_type": "citations", "citations": [...]}`。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 运行 `pytest tests/test_rag_generator.py -v`，预期报缺少 `RAGControlledGenerator`。
 
-- [ ] **Step 3: 实现受控生成器与 ChatService 编排**
+- [x] **Step 3: 实现受控生成器与 ChatService 编排**
 1. 实现 `app/prompts/rag_qa.py`：定义自检判别 Prompt 与带负面红线约束的引用问答 Prompt；
 2. 实现 `app/services/rag/generator.py`：实现 `RAGControlledGenerator`，封装两阶段自检与流式生成逻辑；
 3. 修改 `app/services/chat_service.py`：在执行知识工具后，若触发进阶 RAG 逻辑，发射 `citations` 事件，并应用自评拒答或受控流式生成。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 运行 `pytest tests/test_rag_generator.py -v` 及 `tests/test_chat_service.py`，确保全部测试 PASS。
 
-- [ ] **Step 5: 提交代码**
+- [x] **Step 5: 提交代码**
 ```bash
-git add app/prompts/rag_qa.py app/services/rag/generator.py app/services/chat_service.py tests/test_rag_generator.py
+git add app/prompts/rag_qa.py app/services/rag/generator.py app/services/chat_service.py app/services/rag/__init__.py tests/test_rag_generator.py
 git commit -m "feat(rag): add two-phase self-eval guardrails, refusal pool logging, and citation generation"
 ```
 
