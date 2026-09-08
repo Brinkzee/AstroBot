@@ -3,6 +3,7 @@
 from app.services.rag.dual_writer import KnowledgeDualWriter, compose_embedding_text
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.miner import DialogueKnowledgeMiner
 from app.services.rag.splitter import MarkdownStructureSplitter, DocChunk
 
 __all__ = [
@@ -12,5 +13,7 @@ __all__ = [
     "DocChunk",
     "KnowledgeDualWriter",
     "compose_embedding_text",
+    "DialogueKnowledgeMiner",
 ]
+
 
