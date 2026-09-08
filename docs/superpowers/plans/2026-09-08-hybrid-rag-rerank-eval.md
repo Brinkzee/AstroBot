@@ -152,27 +152,27 @@ git commit -m "feat(rerank): add bge-reranker-v2-m3 client and lost-in-the-middl
 - Consumes: `app.llm.get_chat_model`
 - Produces: `QueryProcessor.process()`, `QueryUnderstandingResult`
 
-- [ ] **Step 1: 编写 Query 理解失败测试**
+- [x] **Step 1: 编写 Query 理解失败测试**
 编写 `tests/test_rag_query_processor.py`：
 1. 测试口语化问法（如“我买了那个pro x99的手表，要是用着不顺心能退吗”）能被改写归一出含“星光PRO-X99”、“退货政策”的标准问法 `standard_query`；
 2. 测试同义词与型号扩展 `expanded_keywords` 包含关键实体；
 3. 测试拼接生成的 `bm25_query`（包含归一问题与扩展关键词）；
 4. 测试大模型调用异常或 Mock 模式下的平滑降级（回退为原始 query）。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 运行 `pytest tests/test_rag_query_processor.py -v`，预期报 `ImportError: cannot import name 'QueryProcessor'`。
 
-- [ ] **Step 3: 实现 QueryProcessor 与 Prompt**
+- [x] **Step 3: 实现 QueryProcessor 与 Prompt**
 1. 实现 `app/prompts/query_understanding.py`：设计严格结构化 JSON 提示词，指导 LLM 输出 `standard_query` 与 `expanded_keywords`；
 2. 实现 `app/services/rag/query_processor.py`：
    - 定义 `QueryUnderstandingResult` 数据类；
    - 实现 `QueryProcessor.aprocess(query: str) -> QueryUnderstandingResult`，异步调用轻量 LLM 并解析结构化结果；
    - 增加错误捕获与 Mock 兜底。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 运行 `pytest tests/test_rag_query_processor.py -v`，验证全部测试 PASS。
 
-- [ ] **Step 5: 提交代码**
+- [x] **Step 5: 提交代码**
 ```bash
 git add app/prompts/query_understanding.py app/services/rag/query_processor.py tests/test_rag_query_processor.py
 git commit -m "feat(rag): add query understanding processor for normalization and synonym expansion"
