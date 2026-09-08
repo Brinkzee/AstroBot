@@ -445,3 +445,8 @@ class MarkdownStructureSplitter:
 
     def split_markdown(self, text: str) -> List[DocChunk]:
         return self.split_text(text)
+
+
+# 保持别名与兼容性导出
+MarkdownSectionSplitter = MarkdownStructureSplitter
+

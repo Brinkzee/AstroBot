@@ -1,4 +1,5 @@
 import json
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,3 +61,278 @@ async def extract_ticket(request: AfterSaleExtractRequest):
         return ticket
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"提取失败: {str(e)}")
+
+
+# ==============================================================================
+# 知识库可视化管理与自测工作台 API 接口 (/api/kb/...)
+# ==============================================================================
+import time
+from datetime import datetime
+from pathlib import Path
+from sqlalchemy import select, func, or_
+from app.models.knowledge import KnowledgeChunk
+from app.schemas.kb import (
+    ManualChunkCreateRequest,
+    KBSearchRequest,
+    KBStatsResponse,
+    MaterialItem,
+    ChunkItem,
+    ChunkListResponse,
+    KBSearchResponse,
+    KBSearchHit,
+)
+from app.services.rag.dual_writer import KnowledgeDualWriter
+from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.retriever import KnowledgeRetriever
+from app.services.rag.splitter import DocChunk, MarkdownSectionSplitter
+
+
+@router.get("/kb/stats", response_model=KBStatsResponse)
+async def get_kb_stats(db: AsyncSession = Depends(get_db)):
+    """获取知识库整体统计指标 (MySQL 原文 vs Milvus 向量索引)"""
+    total_res = await db.execute(select(func.count(KnowledgeChunk.id)))
+    total_chunks = total_res.scalar() or 0
+
+    done_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "done")
+    )
+    done_chunks = done_res.scalar() or 0
+
+    pending_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "pending")
+    )
+    pending_chunks = pending_res.scalar() or 0
+
+    failed_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "failed")
+    )
+    failed_chunks = failed_res.scalar() or 0
+
+    store = MilvusKnowledgeStore()
+    try:
+        milvus_count = store.count("knowledge")
+    finally:
+        store.close()
+
+    return KBStatsResponse(
+        total_chunks=total_chunks,
+        done_chunks=done_chunks,
+        pending_chunks=pending_chunks,
+        failed_chunks=failed_chunks,
+        milvus_count=milvus_count,
+        is_aligned=(done_chunks == milvus_count),
+    )
+
+
+@router.get("/kb/materials", response_model=List[MaterialItem])
+async def get_kb_materials():
+    """扫描 data/kb/ 目录下的原材料文档清单及切块估算"""
+    kb_dir = Path("data/kb")
+    materials: List[MaterialItem] = []
+    if kb_dir.exists():
+        splitter = MarkdownSectionSplitter()
+        for file_path in sorted(kb_dir.glob("*.md")):
+            stat = file_path.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                sections = splitter.split_markdown(content)
+                est_chunks = len(sections)
+            except Exception:
+                est_chunks = 0
+
+            materials.append(
+                MaterialItem(
+                    filename=file_path.name,
+                    file_path=str(file_path).replace("\\", "/"),
+                    file_size_bytes=stat.st_size,
+                    modified_time=mod_time,
+                    estimated_chunks=est_chunks,
+                )
+            )
+    return materials
+
+
+@router.get("/kb/chunks", response_model=ChunkListResponse)
+async def get_kb_chunks(
+    page: int = 1,
+    page_size: int = 20,
+    status: Optional[str] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """分页与条件筛选知识切块列表"""
+    stmt = select(KnowledgeChunk)
+    count_stmt = select(func.count(KnowledgeChunk.id))
+
+    filters = []
+    if status:
+        filters.append(KnowledgeChunk.vectorize_status == status)
+    if category:
+        filters.append(KnowledgeChunk.category == category)
+    if search:
+        filters.append(
+            or_(
+                KnowledgeChunk.questions.like(f"%{search}%"),
+                KnowledgeChunk.answer.like(f"%{search}%"),
+                KnowledgeChunk.section_path.like(f"%{search}%"),
+            )
+        )
+
+    if filters:
+        stmt = stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+
+    total_res = await db.execute(count_stmt)
+    total = total_res.scalar() or 0
+
+    stmt = stmt.order_by(KnowledgeChunk.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+
+    items = []
+    for r in records:
+        created_str = (
+            r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            if hasattr(r.created_at, "strftime")
+            else str(r.created_at)
+        )
+        items.append(
+            ChunkItem(
+                id=r.id,
+                category=r.category,
+                questions=r.questions,
+                answer=r.answer,
+                section_path=r.section_path,
+                content_type=r.content_type,
+                is_key_clause=r.is_key_clause,
+                vectorize_status=r.vectorize_status,
+                vector_id=r.vector_id,
+                created_at=created_str,
+            )
+        )
+
+    return ChunkListResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=items,
+    )
+
+
+@router.post("/kb/chunks/manual", response_model=ChunkItem)
+async def create_manual_chunk(
+    request: ManualChunkCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """手工录入单条知识块，支持立即双写落库与向量化"""
+    try:
+        if request.sync_vector:
+            doc_chunk = DocChunk(
+                category=request.category,
+                questions=request.questions,
+                answer=request.answer,
+                section_path=request.section_path,
+                content_type=request.content_type,
+                is_key_clause=request.is_key_clause,
+            )
+            writer = KnowledgeDualWriter()
+            try:
+                saved = await writer.write_chunks(db, [doc_chunk])
+                if not saved:
+                    raise HTTPException(status_code=500, detail="保存知识块失败")
+                chunk = saved[0]
+            finally:
+                writer.close()
+        else:
+            chunk = KnowledgeChunk(
+                category=request.category,
+                questions=request.questions,
+                answer=request.answer,
+                section_path=request.section_path,
+                content_type=request.content_type,
+                is_key_clause=request.is_key_clause,
+                vectorize_status="pending",
+                vector_id=None,
+            )
+            db.add(chunk)
+            await db.commit()
+            await db.refresh(chunk)
+
+        created_str = (
+            chunk.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            if hasattr(chunk.created_at, "strftime")
+            else str(chunk.created_at)
+        )
+        return ChunkItem(
+            id=chunk.id,
+            category=chunk.category,
+            questions=chunk.questions,
+            answer=chunk.answer,
+            section_path=chunk.section_path,
+            content_type=chunk.content_type,
+            is_key_clause=chunk.is_key_clause,
+            vectorize_status=chunk.vectorize_status,
+            vector_id=chunk.vector_id,
+            created_at=created_str,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"知识录入异常: {str(e)}")
+
+
+@router.post("/kb/repair-pending")
+async def repair_pending_chunks(db: AsyncSession = Depends(get_db)):
+    """一键触发断点续跑补齐所有未向量化的 pending 知识块"""
+    try:
+        writer = KnowledgeDualWriter()
+        try:
+            repaired = await writer.repair_pending_chunks(db)
+        finally:
+            writer.close()
+        return {"success": True, "repaired_count": repaired}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"修复补偿失败: {str(e)}")
+
+
+@router.post("/kb/search", response_model=KBSearchResponse)
+async def search_knowledge(request: KBSearchRequest):
+    """密集语义检索自测沙盒"""
+    start_time = time.perf_counter()
+    try:
+        retriever = KnowledgeRetriever()
+        hits = await retriever.retrieve(
+            query=request.query,
+            top_k=request.top_k,
+            min_score=request.min_score,
+            category=request.category,
+        )
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        preview = retriever.format_faq_hits(hits, keyword=request.query)
+
+        hit_items = []
+        for h in hits:
+            hit_items.append(
+                KBSearchHit(
+                    id=h["id"],
+                    distance=round(float(h.get("distance", 0.0)), 4),
+                    category=h.get("category", ""),
+                    questions=h.get("questions", ""),
+                    answer=h.get("answer", ""),
+                    section_path=h.get("section_path"),
+                    content_type=h.get("content_type", "faq"),
+                    is_key_clause=bool(h.get("is_key_clause", False)),
+                )
+            )
+
+        return KBSearchResponse(
+            query=request.query,
+            top_k=request.top_k,
+            latency_ms=elapsed_ms,
+            total_hits=len(hit_items),
+            hits=hit_items,
+            formatted_preview=preview,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"检索自测异常: {str(e)}")
+
