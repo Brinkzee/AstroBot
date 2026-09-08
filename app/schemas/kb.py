@@ -74,3 +74,43 @@ class KBSearchResponse(BaseModel):
     total_hits: int
     hits: List[KBSearchHit]
     formatted_preview: str
+
+
+class DocumentPreviewRequest(BaseModel):
+    filename: Optional[str] = Field(None, description="文档名称，例如'会员积分规则.md'")
+    category: Optional[str] = Field(None, description="备选默认分类")
+    content: str = Field(..., min_length=1, description="Markdown 文档完整正文")
+
+
+class DocChunkPreviewItem(BaseModel):
+    id: int
+    category: str
+    questions: str
+    answer: str
+    section_path: Optional[str] = None
+    content_type: str = "policy"
+    is_key_clause: bool = False
+
+
+class DocumentPreviewResponse(BaseModel):
+    filename: Optional[str] = None
+    total_chunks: int
+    chunks: List[DocChunkPreviewItem]
+
+
+class ManualDocumentCreateRequest(BaseModel):
+    filename: str = Field(..., min_length=1, description="文档文件名，必须以 .md 结尾")
+    category: Optional[str] = Field(None, description="备选默认分类")
+    content: str = Field(..., min_length=1, description="Markdown 文档正文")
+    save_file: bool = Field(default=True, description="是否同时保存原材料至 data/kb/ 目录")
+    sync_vector: bool = Field(default=True, description="是否立即执行向量化并双写写入 Milvus")
+
+
+class ManualDocumentCreateResponse(BaseModel):
+    success: bool
+    total_chunks: int
+    saved_chunks: int
+    vectorize_status: str
+    file_saved: bool
+    filename: str
+
