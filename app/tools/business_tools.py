@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 _retriever: Optional[KnowledgeRetriever] = None
 
 
-def get_retriever() -> KnowledgeRetriever:
+def get_retriever(force_refresh: bool = False) -> KnowledgeRetriever:
     global _retriever
-    if _retriever is None:
+    if _retriever is None or force_refresh:
         _retriever = KnowledgeRetriever()
     return _retriever
 
@@ -225,6 +225,8 @@ async def query_faq(keyword: str) -> str:
             return retriever.format_faq_hits(hits, keyword=keyword)
     except Exception as e:
         logger.warning(f"KnowledgeRetriever 语义检索异常，优雅降级为 SQL 查询: {e}")
+        global _retriever
+        _retriever = None
 
     # 2. 优雅保底：若 Milvus 尚未灌库或未命中时，兼容回退原 FAQ 表以保证旧单测与无向量环境的平滑兼容
     async with AsyncSessionLocal() as session:

@@ -101,6 +101,12 @@ class MilvusKnowledgeStore:
         if not query_vector:
             return []
 
+        # 确保集合处于已加载状态 (防止 released 状态导致 code=101 错误)
+        try:
+            self.client.load_collection(collection_name)
+        except Exception as e:
+            logger.debug(f"load_collection({collection_name}) 提示: {e}")
+
         raw_results = self.client.search(
             collection_name=collection_name,
             data=[query_vector],
@@ -136,6 +142,11 @@ class MilvusKnowledgeStore:
         if not self.client or not self.client.has_collection(collection_name):
             return 0
 
+        try:
+            self.client.load_collection(collection_name)
+        except Exception:
+            pass
+
         res = self.client.query(
             collection_name=collection_name,
             filter="",
@@ -145,8 +156,8 @@ class MilvusKnowledgeStore:
             return int(res[0].get("count(*)", 0))
         return 0
 
-    def close(self):
-        """关闭客户端连接并释放底层 Milvus-Lite 本地服务句柄与文件锁。"""
+    def close(self, release_server: bool = False):
+        """关闭客户端连接并按需释放底层 Milvus-Lite 本地服务句柄。"""
         if self.client is not None:
             try:
                 self.client.close()
@@ -154,7 +165,7 @@ class MilvusKnowledgeStore:
                 logger.debug(f"关闭 MilvusClient 异常: {e}")
             self.client = None
 
-        if self.uri and self.uri.endswith(".db"):
+        if release_server and self.uri and self.uri.endswith(".db"):
             try:
                 from milvus_lite.server_manager import server_manager_instance
                 server_manager_instance.release_server(self.uri)

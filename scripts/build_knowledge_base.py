@@ -31,6 +31,7 @@ from app.services.rag.dual_writer import KnowledgeDualWriter
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
 from app.services.rag.splitter import MarkdownStructureSplitter
+from scripts.wsl_helper import ensure_mysql_ready
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +66,8 @@ async def build_knowledge_base(
         "total_chunks": 0,
         "post_repaired": 0,
     }
+
+    ensure_mysql_ready(verbose=False)
 
     own_writer = False
     if writer is None:

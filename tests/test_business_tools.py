@@ -61,7 +61,11 @@ async def test_query_faq_matched():
     mock_ctx.__aexit__.return_value = None
     mock_session_local = MagicMock(return_value=mock_ctx)
 
-    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[])
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever), \
+         patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
         res = await query_faq.ainvoke({"keyword": "退货"})
         assert "退货政策说明" in res
         assert "支持7天无理由退货" in res
@@ -80,7 +84,11 @@ async def test_query_faq_not_found():
     mock_ctx.__aexit__.return_value = None
     mock_session_local = MagicMock(return_value=mock_ctx)
 
-    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve = AsyncMock(return_value=[])
+
+    with patch("app.tools.business_tools.get_retriever", return_value=mock_retriever), \
+         patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
         res = await query_faq.ainvoke({"keyword": "宇宙飞船"})
         assert "未找到与【宇宙飞船】相关的常见问题解答。" in res
 

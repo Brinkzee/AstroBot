@@ -31,24 +31,20 @@ def ensure_mysql_ready(verbose: bool = True):
     """
     global _keepalive_proc
 
-    # 1. 启动 Windows 下持有 WSL2 会话的保活进程
-    if sys.platform == "win32" and _keepalive_proc is None:
+    # 1. 启动 Windows 下持有 WSL2 会话的保活进程（使用 DETACHED_PROCESS 跨脚本保活）
+    if sys.platform == "win32":
         try:
             creation_flags = 0
             if hasattr(subprocess, "CREATE_NO_WINDOW"):
-                creation_flags = subprocess.CREATE_NO_WINDOW
-            _keepalive_proc = subprocess.Popen(
+                creation_flags |= subprocess.CREATE_NO_WINDOW
+            if hasattr(subprocess, "DETACHED_PROCESS"):
+                creation_flags |= subprocess.DETACHED_PROCESS
+            subprocess.Popen(
                 ["wsl", "-d", "Ubuntu", "sleep", "86400"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=creation_flags
             )
-            def cleanup():
-                global _keepalive_proc
-                if _keepalive_proc and _keepalive_proc.poll() is None:
-                    _keepalive_proc.terminate()
-                    _keepalive_proc = None
-            atexit.register(cleanup)
         except Exception as e:
             if verbose:
                 print(f"[提示] 启动 WSL 保活进程跳过或异常: {e}")
