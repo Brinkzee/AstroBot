@@ -404,6 +404,217 @@
       margin-top: 8px;
       text-align: center;
     }
+
+    /* 引用角标 */
+    .cite-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      line-height: 1.2;
+      padding: 1px 5px;
+      margin: 0 2px;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: var(--primary);
+      border: 1px solid #bfdbfe;
+      font-weight: 600;
+      cursor: pointer;
+      vertical-align: super;
+      transition: all 0.15s ease;
+    }
+    .cite-pill:hover {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: #1d4ed8;
+      transform: translateY(-1px);
+    }
+
+    /* 引用抽屉与蒙层 */
+    .citation-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    .citation-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .citation-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 100%;
+      max-width: 440px;
+      height: 100vh;
+      background: #ffffff;
+      box-shadow: -8px 0 30px rgba(0, 0, 0, 0.12);
+      z-index: 101;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .citation-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+    }
+    .drawer-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .drawer-title h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .btn-drawer-close {
+      background: transparent;
+      border: none;
+      font-size: 24px;
+      color: var(--text-muted);
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .btn-drawer-close:hover {
+      background: #e2e8f0;
+      color: var(--text-main);
+    }
+
+    .drawer-body {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .cite-card-section {
+      background: #f8fafc;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .cite-badge-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .cite-n-badge {
+      display: inline-block;
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 12px;
+    }
+    .cite-category-tag {
+      font-size: 11px;
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-weight: 500;
+    }
+    .cite-meta-row {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      word-break: break-all;
+    }
+    .cite-meta-label {
+      font-weight: 600;
+      color: #475569;
+      flex-shrink: 0;
+    }
+    .cite-text-block {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: #1e293b;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 满意度反馈栏 */
+    .feedback-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 6px;
+      border-top: 1px dashed #e2e8f0;
+    }
+    .btn-fb-thumb {
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #475569;
+    }
+    .btn-fb-thumb:hover:not(:disabled) {
+      background: #e2e8f0;
+      transform: scale(1.08);
+    }
+    .btn-fb-thumb.active-up {
+      background: #eff6ff;
+      border-color: #3b82f6;
+      color: #2563eb;
+      font-weight: bold;
+    }
+    .btn-fb-thumb.active-down {
+      background: #fef2f2;
+      border-color: #f87171;
+      color: #ef4444;
+      font-weight: bold;
+    }
+    .btn-fb-thumb:disabled {
+      cursor: default;
+      opacity: 0.85;
+    }
+    .fb-tip {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-left: 6px;
+      transition: opacity 0.2s ease;
+    }
   </style>
 </head>
 <body>
@@ -466,6 +677,21 @@
       </div>
       <div class="footer-tip">由 FastAPI + SQLAlchemy Async + LangChain @tool 驱动 · 单轮精准收敛</div>
     </footer>
+  </div>
+
+  <!-- 引用溯源侧滑抽屉 -->
+  <div class="citation-overlay" id="citation-overlay" onclick="closeCitationDrawer()"></div>
+  <div class="citation-drawer" id="citation-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span style="font-size: 20px;">📖</span>
+        <h3>知识引用溯源详情</h3>
+      </div>
+      <button class="btn-drawer-close" onclick="closeCitationDrawer()" title="关闭抽屉">&times;</button>
+    </div>
+    <div class="drawer-body" id="citation-drawer-body">
+      <!-- 动态插入引用内容 -->
+    </div>
   </div>
 
   <script>
@@ -622,7 +848,10 @@
               }
 
               // 事件分流处理
-              if (data.event_type === 'tool_start') {
+              if (data.event_type === 'citations') {
+                botContentEl._citations = data.citations || [];
+                console.log('Received citations snapshot:', botContentEl._citations);
+              } else if (data.event_type === 'tool_start') {
                 toolContainer.style.display = 'block';
                 const label = data.tool_label || data.tool_name;
                 toolContainer.innerHTML = `
@@ -652,7 +881,7 @@
                     textBody.innerHTML = ''; // 移除 loading 三个点
                   }
                   fullText += chunk;
-                  textBody.innerHTML = escapeHtml(fullText) + '<span class="typing-cursor"></span>';
+                  textBody.innerHTML = renderContentWithCitations(fullText) + '<span class="typing-cursor"></span>';
                   scrollToBottom();
                 }
               } else if (data.event_type === 'error' || data.error) {
@@ -666,9 +895,21 @@
           }
         }
 
-        // 流结束，移除光标
+        // 流结束，移除光标并渲染最终格式
         if (textBody) {
-          textBody.innerHTML = escapeHtml(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
+          textBody.innerHTML = renderContentWithCitations(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
+        }
+
+        // 为 Bot 回复挂载左下角满意度反馈 (👍/👎 点亮锁定)
+        if (fullText && !botContentEl.querySelector('.feedback-bar')) {
+          const fbBar = document.createElement('div');
+          fbBar.className = 'feedback-bar';
+          fbBar.innerHTML = `
+            <button type="button" class="btn-fb-thumb up" onclick="handleFeedback(this, 'up')" title="回答有帮助">👍 赞</button>
+            <button type="button" class="btn-fb-thumb down" onclick="handleFeedback(this, 'down')" title="回答不准确">👎 踩</button>
+            <span class="fb-tip"></span>
+          `;
+          botContentEl.appendChild(fbBar);
         }
         scrollToBottom();
 
@@ -679,6 +920,111 @@
         btnSend.disabled = false;
         userInput.focus();
       }
+    }
+
+    function renderContentWithCitations(text) {
+      if (!text) return '';
+      let safe = escapeHtml(text);
+      return safe.replace(/\[(\d+)\]/g, (match, num) => {
+        return `<button type="button" class="cite-pill" data-n="${num}" onclick="openCitationDrawer(event, this, ${num})" title="查看引用来源">[${num}]</button>`;
+      });
+    }
+
+    function openCitationDrawer(event, btnEl, n) {
+      if (event) event.stopPropagation();
+      const msgRow = btnEl.closest('.msg-content') || btnEl.closest('.msg-row');
+      const citations = (msgRow && msgRow._citations) || [];
+
+      const drawerOverlay = document.getElementById('citation-overlay');
+      const drawerEl = document.getElementById('citation-drawer');
+      const drawerBody = document.getElementById('citation-drawer-body');
+
+      const targetN = parseInt(n, 10);
+      const item = citations.find(c => c.n === targetN) || (citations[targetN - 1] || null);
+
+      if (!item) {
+        drawerBody.innerHTML = `
+          <div class="cite-card-section" style="text-align:center; padding:32px 20px;">
+            <div style="font-size:32px; margin-bottom:12px;">🔍</div>
+            <h4 style="color:#64748b; margin-bottom:8px;">暂未检索到【证据 ${n}】的对应引用快照</h4>
+            <p style="font-size:12px; color:#94a3b8; line-height:1.5;">该回答可能由直接生成或快照索引编号存在偏移。</p>
+          </div>
+        `;
+      } else {
+        const sectionPath = item.section_path || '售后政策 / 通用规范';
+        const category = item.category || '常见问答';
+        const question = item.question || '标准售后咨询';
+        const answer = item.answer || '(暂无知识解答原文)';
+        const chunkId = item.chunk_id ? `#${item.chunk_id}` : '';
+
+        drawerBody.innerHTML = `
+          <div class="cite-card-section">
+            <div class="cite-badge-header">
+              <span class="cite-n-badge">证据 [${escapeHtml(item.n || n)}]</span>
+              <span class="cite-category-tag">${escapeHtml(category)} ${escapeHtml(chunkId)}</span>
+            </div>
+
+            <div class="cite-meta-row">
+              <span class="cite-meta-label">📚 章节路径：</span>
+              <span>${escapeHtml(sectionPath)}</span>
+            </div>
+
+            <div class="cite-meta-row">
+              <span class="cite-meta-label">❓ 标准问法：</span>
+              <span style="font-weight:500; color:#334155;">${escapeHtml(question)}</span>
+            </div>
+
+            <div style="margin-top:12px;">
+              <div class="cite-meta-label" style="margin-bottom:6px;">📝 知识库解答原文：</div>
+              <div class="cite-text-block">${escapeHtml(answer)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      drawerOverlay.classList.add('open');
+      drawerEl.classList.add('open');
+    }
+
+    function closeCitationDrawer() {
+      const drawerOverlay = document.getElementById('citation-overlay');
+      const drawerEl = document.getElementById('citation-drawer');
+      if (drawerOverlay) drawerOverlay.classList.remove('open');
+      if (drawerEl) drawerEl.classList.remove('open');
+    }
+
+    // ESC 键平滑收起抽屉
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeCitationDrawer();
+      }
+    });
+
+    function handleFeedback(btn, type) {
+      const bar = btn.closest('.feedback-bar');
+      if (!bar) return;
+      const buttons = bar.querySelectorAll('.btn-fb-thumb');
+      const tip = bar.querySelector('.fb-tip');
+
+      // 点亮对应按钮
+      if (type === 'up') {
+        btn.classList.add('active-up');
+        tip.innerText = '已反馈 (满意) 👍';
+      } else {
+        btn.classList.add('active-down');
+        tip.innerText = '已反馈 (待改进) 👎';
+      }
+
+      // 一次性锁定所有按钮
+      buttons.forEach(b => {
+        b.disabled = true;
+      });
+
+      console.log('Satisfaction feedback recorded:', {
+        type,
+        conversation_id: currentConversationId,
+        timestamp: new Date().toISOString()
+      });
     }
 
     function escapeHtml(str) {
