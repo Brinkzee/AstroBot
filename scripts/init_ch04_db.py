@@ -13,9 +13,79 @@ from app.db.session import engine
 from scripts.wsl_helper import ensure_mysql_ready
 
 
+def split_sql_statements(sql_text: str) -> List[str]:
+    """
+    引号感知的 SQL 分句解析器。
+    在字符级扫描时正确识别单引号 '...'、双引号 "..."、转义字符 \\ 及成对转义 ''/""，
+    仅对不在引号内的半角分号 ';' 进行语句切分。
+    """
+    statements: List[str] = []
+    current: List[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    n = len(sql_text)
+
+    while i < n:
+        char = sql_text[i]
+
+        # 处理转义字符 \
+        if char == "\\" and (in_single_quote or in_double_quote):
+            current.append(char)
+            if i + 1 < n:
+                current.append(sql_text[i + 1])
+                i += 2
+                continue
+            else:
+                i += 1
+                break
+
+        if char == "'":
+            if not in_double_quote:
+                if in_single_quote:
+                    # 判断 SQL 标准的连续两个单引号 '' 转义
+                    if i + 1 < n and sql_text[i + 1] == "'":
+                        current.append("''")
+                        i += 2
+                        continue
+                    else:
+                        in_single_quote = False
+                else:
+                    in_single_quote = True
+            current.append(char)
+        elif char == '"':
+            if not in_single_quote:
+                if in_double_quote:
+                    # 判断 SQL 标准的连续两个双引号 "" 转义
+                    if i + 1 < n and sql_text[i + 1] == '"':
+                        current.append('""')
+                        i += 2
+                        continue
+                    else:
+                        in_double_quote = False
+                else:
+                    in_double_quote = True
+            current.append(char)
+        elif char == ";" and not in_single_quote and not in_double_quote:
+            stmt = "".join(current).strip()
+            if stmt:
+                statements.append(stmt)
+            current = []
+        else:
+            current.append(char)
+
+        i += 1
+
+    remaining = "".join(current).strip()
+    if remaining:
+        statements.append(remaining)
+
+    return statements
+
+
 def parse_ddl_statements(ddl_path: Path | str) -> List[str]:
     """
-    读取 DDL 文件，移除注释并拆分为独立的 SQL 语句。
+    读取 DDL 文件，移除注释并使用引号感知的切分器拆分为独立的 SQL 语句。
     对于 CREATE TABLE 语句，自动注入 IF NOT EXISTS 确保幂等安全执行。
     """
     path = Path(ddl_path)
@@ -30,8 +100,10 @@ def parse_ddl_statements(ddl_path: Path | str) -> List[str]:
         cleaned_lines.append(line)
     cleaned_text = "\n".join(cleaned_lines)
 
+    raw_statements = split_sql_statements(cleaned_text)
+
     statements: List[str] = []
-    for raw_stmt in cleaned_text.split(";"):
+    for raw_stmt in raw_statements:
         stmt = raw_stmt.strip()
         if not stmt:
             continue

@@ -3,13 +3,14 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import Base
 from app.models import Conversation
 from app.models.low_confidence import LowConfidenceQuestion, LowConfidenceSource, record_low_confidence
 from app.models.faith_case import FaithCase, FaithCaseStatus, upsert_faith_case
-from scripts.init_ch04_db import parse_ddl_statements, init_ch04_db
+from scripts.init_ch04_db import split_sql_statements, parse_ddl_statements, init_ch04_db
 
 
 def test_low_confidence_question_attributes_and_defaults():
@@ -196,6 +197,20 @@ def test_sqlite_in_memory_crud():
         assert queried_fc.citations == citations
         assert queried_fc.status == "未解决"
 
+        # 5. Verify eval_id uniqueness constraint (duplicate eval_id raises IntegrityError)
+        duplicate_fc = FaithCase(
+            eval_id="B12",
+            bucket="B_model",
+            query="保修期多久？（重复录入）",
+            strategy="hybrid_rerank",
+            answer="重复记录",
+            reason="重复测试",
+        )
+        session.add(duplicate_fc)
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
 
 @pytest.mark.asyncio
 async def test_record_low_confidence_helper():
@@ -364,16 +379,40 @@ async def test_upsert_faith_case_recurrence_rollback_resolved():
     mock_session.refresh.assert_awaited_once_with(existing)
 
 
+def test_split_sql_statements_with_quotes_and_semicolons():
+    raw_sql = (
+        "SET NAMES utf8mb4;\n"
+        "CREATE TABLE test_tab (id INT COMMENT 'semicolon; inside; single; quote', name VARCHAR(32) COMMENT \"double; quote;\");\n"
+        "SELECT 'escaped\\' quote; test' AS val;\n"
+    )
+    stmts = split_sql_statements(raw_sql)
+    assert len(stmts) == 3
+    assert "semicolon; inside; single; quote" in stmts[1]
+    assert "double; quote;" in stmts[1]
+    assert "escaped\\' quote; test" in stmts[2]
+
+
 def test_parse_ddl_statements():
     ddl_path = Path(__file__).resolve().parent.parent / "sql" / "ch04_ddl.sql"
     assert ddl_path.exists()
     statements = parse_ddl_statements(ddl_path)
-    assert len(statements) >= 2
+    # 严格断言精准等于 3 条语句 (SET NAMES, low_confidence_questions, faith_cases)
+    assert len(statements) == 3
+
+    assert statements[0].strip() == "SET NAMES utf8mb4"
+    assert "low_confidence_questions" in statements[1]
+    assert "faith_cases" in statements[2]
 
     create_tables = [s for s in statements if "CREATE TABLE" in s.upper()]
     assert len(create_tables) == 2
     for ct in create_tables:
         assert "IF NOT EXISTS" in ct.upper()
+
+    # 验证 faith_cases 建表语句完整闭合，包含 PRIMARY KEY 与 UNIQUE KEY
+    fc_ddl = statements[2]
+    assert "PRIMARY KEY (id)" in fc_ddl
+    assert "UNIQUE KEY uk_eval_id (eval_id)" in fc_ddl
+    assert fc_ddl.strip().endswith("COMMENT='ch04 忠实度编造个案台账'")
 
 
 @pytest.mark.asyncio
@@ -385,5 +424,5 @@ async def test_init_ch04_db_idempotent():
     mock_engine.dispose = AsyncMock()
 
     executed = await init_ch04_db(engine_override=mock_engine)
-    assert len(executed) >= 2
-    assert mock_conn.execute.call_count == len(executed)
+    assert len(executed) == 3
+    assert mock_conn.execute.call_count == 3
