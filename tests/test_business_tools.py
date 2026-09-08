@@ -166,6 +166,32 @@ async def test_create_ticket_invalid_type_fallback():
         assert added_ticket.ticket_type == "售后"
 
 
+@pytest.mark.asyncio
+async def test_create_ticket_auto_creates_conversation_when_missing():
+    """测试当传入的 conversation_id 在数据库中不存在时，自动补建有效 Conversation 并关联工单"""
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+    # 模拟 session.get(Conversation, ...) 返回 None（代表会话不存在）
+    mock_session.get = AsyncMock(return_value=None)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    mock_ctx.__aexit__.return_value = None
+    mock_session_local = MagicMock(return_value=mock_ctx)
+
+    with patch("app.tools.business_tools.AsyncSessionLocal", mock_session_local):
+        res = await create_ticket.ainvoke({
+            "conversation_id": 1001,
+            "description": "手机外壳划痕申请退换",
+            "ticket_type": "售后",
+        })
+        assert "工单已创建，人工客服将在24小时内跟进处理" in res
+        data = json.loads(res)
+        assert data["ticket_no"].startswith("T")
+        # 验证是否创建了兜底会话与工单（add 至少被调用，包括补齐会话与工单）
+        assert mock_session.add.call_count >= 1
+
+
+
 def test_tool_metadata_and_docstrings():
     tools = [query_order, query_product, query_logistics, query_faq, create_ticket]
     names = [t.name for t in tools]
