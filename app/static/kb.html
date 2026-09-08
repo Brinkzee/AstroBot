@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 知识库智能管理与自测工作台</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border-color: #e2e8f0;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 顶栏 Header */
+    header {
+      background: #ffffff;
+      border-bottom: 1px solid var(--border-color);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      color: #fff;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 18px;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--primary);
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .btn-nav:hover {
+      background: #dbeafe;
+    }
+
+    /* 主视窗容器 */
+    .container {
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+      flex: 1;
+    }
+
+    /* 顶部 KPI 概览卡片 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .stat-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .stat-badge {
+      align-self: flex-start;
+      margin-top: 4px;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+    .badge-danger { background: #fee2e2; color: #991b1b; }
+    .badge-info { background: #e0e7ff; color: #3730a3; }
+
+    /* 选项卡导航 */
+    .tabs-nav {
+      display: flex;
+      gap: 8px;
+      border-bottom: 2px solid var(--border-color);
+      margin-bottom: 20px;
+    }
+
+    .tab-btn {
+      padding: 10px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: var(--primary);
+    }
+
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    /* Tab 内容区 */
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* 通用卡片容器 */
+    .panel-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .panel-title {
+      font-size: 17px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 数据表格 */
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      text-align: left;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #475569;
+      font-weight: 600;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-color);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background-color: #f8fafc;
+    }
+
+    /* 表单组件 */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group.full-width {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 14px;
+      color: var(--text-main);
+      background: #fff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 90px;
+      font-family: inherit;
+    }
+
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: normal;
+      cursor: pointer;
+    }
+
+    .checkbox-label input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    /* 按钮 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+    }
+
+    .btn-success:hover {
+      background: #059669;
+    }
+
+    .btn-secondary {
+      background: #e2e8f0;
+      color: #334155;
+    }
+
+    .btn-secondary:hover {
+      background: #cbd5e1;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* 检索自测沙盒专用 */
+    .search-box {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .search-input {
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 15px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .search-settings {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 12px 16px;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .hit-card {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .hit-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(0,0,0,0.06);
+    }
+
+    .hit-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .hit-score {
+      font-weight: 700;
+      color: var(--primary);
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hit-score-bar {
+      width: 80px;
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+      display: inline-block;
+    }
+
+    .hit-score-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+    }
+
+    .hit-q {
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 6px;
+    }
+
+    .hit-a {
+      font-size: 13.5px;
+      color: #475569;
+      line-height: 1.6;
+      background: #f8fafc;
+      padding: 10px 12px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+
+    /* 提示消息 Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      background: #1e293b;
+      color: #fff;
+      border-radius: 8px;
+      font-size: 14px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* 过滤器工具栏 */
+    .filter-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .filter-input {
+      max-width: 240px;
+    }
+
+    /* 子模式分段切换器 */
+    .segmented-control {
+      display: inline-flex;
+      background: #f1f5f9;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 20px;
+    }
+
+    .segmented-btn {
+      padding: 8px 20px;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .segmented-btn:hover {
+      color: var(--text-main);
+    }
+
+    .segmented-btn.active {
+      background: #ffffff;
+      color: var(--primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶栏 Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">📚</div>
+      <div>
+        <div class="brand-title">AstroBot 知识库管理工作台</div>
+        <div class="brand-subtitle">Dense 密集语义向量知识库 · 双写落库与自愈沙盒</div>
+      </div>
+    </div>
+    <div class="header-links">
+      <a href="/chat" class="btn-nav">💬 返回在线客服</a>
+      <a href="/docs" target="_blank" class="btn-nav">📖 API 接口文档</a>
+    </div>
+  </header>
+
+  <!-- 主容器 -->
+  <div class="container">
+
+    <!-- KPI 状态概览栏 -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-label">权威源知识块 (MySQL)</span>
+        <span class="stat-value" id="stat-total">-</span>
+        <span class="stat-badge badge-info">MySQL 原文总库</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">已向量化记录 (Done)</span>
+        <span class="stat-value" id="stat-done" style="color: var(--success);">-</span>
+        <span class="stat-badge badge-success">密集索引就绪</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">待补齐向量 (Pending)</span>
+        <span class="stat-value" id="stat-pending" style="color: var(--warning);">-</span>
+        <span class="stat-badge badge-warning" id="stat-pending-badge">待自愈落库</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">向量库记录数 (Milvus)</span>
+        <span class="stat-value" id="stat-milvus">-</span>
+        <span class="stat-badge" id="stat-align-badge">检查对齐中...</span>
+      </div>
+    </div>
+
+    <!-- 选项卡导航 -->
+    <div class="tabs-nav">
+      <button class="tab-btn active" onclick="switchTab('tab-preview')">📑 材料清单与切块预览</button>
+      <button class="tab-btn" onclick="switchTab('tab-manual')">✍️ 手工知识录入</button>
+      <button class="tab-btn" onclick="switchTab('tab-repair')">⚡ 向量化补 Pending 自愈</button>
+      <button class="tab-btn" onclick="switchTab('tab-search')">🔍 密集语义检索自测沙盒</button>
+    </div>
+
+    <!-- 模块 1: 材料清单与切块预览 -->
+    <div id="tab-preview" class="tab-pane active">
+      <!-- 1.1 原材料清单 -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">📄 原材料 Markdown 文档清单 (data/kb/)</div>
+          <button class="btn btn-secondary" onclick="loadMaterials()">🔄 刷新材料</button>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>文档文件名</th>
+                <th>文件路径</th>
+                <th>体积大小</th>
+                <th>最后更新时间</th>
+                <th>切块估算</th>
+              </tr>
+            </thead>
+            <tbody id="materials-tbody">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">正在加载原材料文档清单...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 1.2 知识切块瀑布表格 -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">🧩 已切分知识块列表 (knowledge_chunks)</div>
+          <button class="btn btn-secondary" onclick="loadChunks()">🔄 刷新列表</button>
+        </div>
+
+        <!-- 筛选栏 -->
+        <div class="filter-bar">
+          <input type="text" id="chunk-search" class="filter-input" placeholder="搜索问题、正文或路径..." onkeydown="if(event.key==='Enter') loadChunks()">
+          <select id="chunk-status-filter" class="filter-input" onchange="loadChunks()">
+            <option value="">全部向量化状态</option>
+            <option value="done">已完成 (done)</option>
+            <option value="pending">待同步 (pending)</option>
+            <option value="failed">失败 (failed)</option>
+          </select>
+          <input type="text" id="chunk-category-filter" class="filter-input" placeholder="分类过滤..." onkeydown="if(event.key==='Enter') loadChunks()">
+          <button class="btn btn-primary" onclick="loadChunks()">查询</button>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 60px;">ID</th>
+                <th style="width: 130px;">业务分类</th>
+                <th>标准问题 / 相似问</th>
+                <th>答案正文摘要</th>
+                <th style="width: 140px;">所属章节路径</th>
+                <th style="width: 100px;">状态</th>
+                <th style="width: 150px;">入库时间</th>
+              </tr>
+            </thead>
+            <tbody id="chunks-tbody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">正在加载知识块列表...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
+          <span style="font-size: 13px; color: var(--text-muted);" id="chunks-page-info">共 0 条记录</span>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" id="btn-prev-page" onclick="prevPage()">上一页</button>
+            <button class="btn btn-secondary" id="btn-next-page" onclick="nextPage()">下一页</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模块 2: 手工知识录入 -->
+    <div id="tab-manual" class="tab-pane">
+      <!-- 录入子模式切换栏 -->
+      <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+        <div class="segmented-control">
+          <button type="button" class="segmented-btn active" id="btn-mode-single" onclick="switchManualMode('single')">📝 单条问答录入</button>
+          <button type="button" class="segmented-btn" id="btn-mode-doc" onclick="switchManualMode('doc')">📑 完整文档录入</button>
+        </div>
+      </div>
+
+      <!-- 子模式 A: 单条知识手工录入 -->
+      <div id="manual-single-container" class="panel-card" style="max-width: 800px; margin: 0 auto;">
+        <div class="panel-header">
+          <div class="panel-title">✍️ 单条知识手工录入与向量化</div>
+        </div>
+        <form id="manual-form" onsubmit="submitManualChunk(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="manual-category">业务分类 *</label>
+              <input type="text" id="manual-category" required placeholder="如：售后服务、物流配送、支付退款">
+            </div>
+
+            <div class="form-group">
+              <label for="manual-type">内容类型 *</label>
+              <select id="manual-type">
+                <option value="faq">FAQ 问答对 (faq)</option>
+                <option value="policy">平台服务政策 (policy)</option>
+                <option value="procedure">业务办理流程 (procedure)</option>
+                <option value="spec">商品与运费规范 (spec)</option>
+              </select>
+            </div>
+
+            <div class="form-group full-width">
+              <label for="manual-section">目录层级路径 (可选)</label>
+              <input type="text" id="manual-section" placeholder="如：商城配送与运费服务规范 > 偏远地区包邮">
+            </div>
+
+            <div class="form-group full-width">
+              <label for="manual-questions">标准问题与相似问法 * (多问法请换行)</label>
+              <textarea id="manual-questions" required rows="3" placeholder="例如：
+如何申请开具发票？
+发票开具流程是怎样的？
+支持电子普通发票吗？"></textarea>
+            </div>
+
+            <div class="form-group full-width">
+              <label for="manual-answer">解答正文 *</label>
+              <textarea id="manual-answer" required rows="5" placeholder="请输入针对该问题的权威详尽解答..."></textarea>
+            </div>
+
+            <div class="form-group full-width">
+              <label class="checkbox-label">
+                <input type="checkbox" id="manual-key-clause">
+                标记为核心关键条款 (is_key_clause)
+              </label>
+            </div>
+
+            <div class="form-group full-width" style="background: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe;">
+              <label class="checkbox-label" style="color: #1e40af; font-weight: 600;">
+                <input type="checkbox" id="manual-sync-vector" checked>
+                ⚡ 立即执行 BGE-M3 向量化并同步写入 Milvus 向量库
+              </label>
+              <div style="font-size: 12px; color: #3b82f6; margin-left: 24px; margin-top: 4px;">
+                勾选后将自动生成 1024 维 Dense 语义向量并建立索引；取消勾选将仅存入 MySQL 保持 pending 待补齐状态。
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
+            <button type="reset" class="btn btn-secondary">重置表单</button>
+            <button type="submit" class="btn btn-primary" id="btn-submit-manual">🚀 确认录入知识库</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- 子模式 B: 完整 Markdown 文档录入与智能切块 -->
+      <div id="manual-doc-container" class="panel-card" style="max-width: 960px; margin: 0 auto; display: none;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">📑 完整 Markdown 文档录入与智能切块</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              支持粘贴完整 Markdown 政策手册，系统将自动识别标题层级（# / ## / ###）、表格与 Q&A 问答对并提取层次结构。
+            </div>
+          </div>
+        </div>
+
+        <form id="doc-form" onsubmit="submitManualDoc(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="doc-filename">文档文件名 * (需以 .md 结尾)</label>
+              <input type="text" id="doc-filename" required placeholder="如：会员积分规则.md 或 售后退换货规范.md">
+            </div>
+
+            <div class="form-group">
+              <label for="doc-category">默认业务分类 (可选，章节未定义分类时生效)</label>
+              <input type="text" id="doc-category" placeholder="如：会员权益、售后服务、物流配送">
+            </div>
+
+            <div class="form-group full-width">
+              <label for="doc-content">Markdown 文档正文 *</label>
+              <textarea id="doc-content" required rows="12" style="font-family: monospace; font-size: 13px; line-height: 1.5;" placeholder="# 会员积分体系
+## 积分获取规则
+问：积分如何获取？
+答：用户在商城每实付1元可累积1积分。
+
+问：积分如何抵扣？
+答：100积分可在下单时抵扣1元现金，最多抵扣整单30%。"></textarea>
+            </div>
+
+            <div class="form-group full-width" style="display: flex; flex-direction: column; gap: 10px; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <label class="checkbox-label" style="font-weight: 500;">
+                <input type="checkbox" id="doc-save-file" checked>
+                💾 同时保存原材料文件至 <code>data/kb/</code> 目录 (持久化原材料，方便离线管理与全库重建)
+              </label>
+              <label class="checkbox-label" style="font-weight: 600; color: #1e40af;">
+                <input type="checkbox" id="doc-sync-vector" checked>
+                ⚡ 立即执行 BGE-M3 向量化并同步写入 Milvus 向量库 (取消勾选则仅存入 MySQL 保持 pending 待补齐)
+              </label>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <button type="button" class="btn btn-secondary" id="btn-preview-doc" onclick="previewDocChunks()">
+              🔍 智能切块预览 (不落库)
+            </button>
+            <div style="display: flex; gap: 12px;">
+              <button type="reset" class="btn btn-secondary" onclick="clearDocPreview()">重置表单</button>
+              <button type="submit" class="btn btn-primary" id="btn-submit-doc">🚀 确认切块并录入知识库</button>
+            </div>
+          </div>
+        </form>
+
+        <!-- 切块预览展示区 -->
+        <div id="doc-preview-area" style="display: none; margin-top: 24px; border-top: 2px dashed var(--border-color); padding-top: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+              <span>🧩 智能切块预览</span>
+              <span class="stat-badge badge-info" id="preview-total-badge">共 0 块</span>
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted);">仅在内存中解析预览，尚未写入数据库</span>
+          </div>
+
+          <div class="table-container" style="max-height: 360px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50px;">#</th>
+                  <th style="width: 110px;">分类</th>
+                  <th style="width: 140px;">所属层级路径</th>
+                  <th style="width: 180px;">标准问题 / 标题</th>
+                  <th>解答正文预览</th>
+                  <th style="width: 70px;">类型</th>
+                  <th style="width: 70px;">核心条款</th>
+                </tr>
+              </thead>
+              <tbody id="preview-tbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模块 3: 向量化补 Pending 自愈 -->
+    <div id="tab-repair" class="tab-pane">
+      <div class="panel-card" style="max-width: 800px; margin: 0 auto;">
+        <div class="panel-header">
+          <div class="panel-title">⚡ 知识库断点续跑与向量化补齐自愈</div>
+          <button class="btn btn-secondary" onclick="loadStats()">🔄 刷新状态</button>
+        </div>
+        <p style="font-size: 14px; color: var(--text-muted); line-height: 1.6; margin-bottom: 20px;">
+          在系统高并发写入、网络闪断或模拟容灾演练中断时，部分知识块可能在 MySQL 中持久化成功，但未进入 Milvus 向量库（保持 <code style="color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: 4px;">pending</code> 状态）。<br>
+          点击下方按钮即可触发后台自愈补齐程序，毫秒级扫描漏网数据并自动生成向量索引，保障最终 1:1 双写一致性。
+        </p>
+
+        <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; margin-bottom: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span style="font-weight: 600;">待补偿修复知识块数量:</span>
+            <span style="font-size: 24px; font-weight: 700; color: var(--warning);" id="repair-pending-count">0</span>
+          </div>
+          <div style="font-size: 13px; color: var(--text-muted);" id="repair-status-text">
+            系统状态健康，权威源与向量库记录数完全对齐。
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <button class="btn btn-warning btn" id="btn-repair" onclick="triggerRepairPending()" style="background: var(--warning); color: #fff;">
+            ⚡ 立即执行断点自愈补齐 (repair_pending_chunks)
+          </button>
+        </div>
+
+        <!-- 自愈日志输出框 -->
+        <div id="repair-console" style="display: none; margin-top: 20px; background: #0f172a; color: #10b981; font-family: monospace; font-size: 13px; padding: 16px; border-radius: 8px; max-height: 200px; overflow-y: auto; white-space: pre-wrap;">
+        </div>
+      </div>
+    </div>
+
+    <!-- 模块 4: 密集语义检索自测沙盒 -->
+    <div id="tab-search" class="tab-pane">
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">🔍 BGE-M3 Dense 密集向量语义检索自测沙盒</div>
+        </div>
+
+        <!-- 搜索栏 -->
+        <div class="search-box">
+          <input type="text" id="search-query" class="search-input" placeholder="输入用户的自然语言提问（如：邮费是多少？偏远地区包邮吗？）..." onkeydown="if(event.key==='Enter') executeSearch()">
+          <button class="btn btn-primary" id="btn-search" onclick="executeSearch()">🚀 执行语义检索</button>
+        </div>
+
+        <!-- 调节滑块与过滤 -->
+        <div class="search-settings">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="search-topk">Top-K 数量:</label>
+            <input type="number" id="search-topk" value="3" min="1" max="10" style="width: 70px;">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="search-minscore">余弦相似度阈值 (min_score):</label>
+            <input type="number" id="search-minscore" value="0.0" step="0.1" min="0.0" max="1.0" style="width: 80px;">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="search-cat">指定分类过滤 (可选):</label>
+            <input type="text" id="search-cat" placeholder="如：运费" style="width: 140px;">
+          </div>
+          <span style="margin-left: auto; color: var(--text-muted);" id="search-latency">耗时: - ms</span>
+        </div>
+
+        <!-- 检索结果输出区 -->
+        <div id="search-results">
+          <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+            💡 在上方输入任意自然语言问题并点击检索，实时检验 BGE-M3 跨越词汇鸿沟的语义召回效果。
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast 弹窗通知 -->
+  <div id="toast"></div>
+
+  <script>
+    let currentChunkPage = 1;
+    const chunkPageSize = 10;
+    let totalChunkCount = 0;
+
+    // 页面初始化
+    document.addEventListener("DOMContentLoaded", () => {
+      loadStats();
+      loadMaterials();
+      loadChunks();
+    });
+
+    // 选项卡切换
+    function switchTab(tabId) {
+      document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+      document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
+
+      const targetBtn = Array.from(document.querySelectorAll(".tab-btn")).find(btn => btn.getAttribute("onclick").includes(tabId));
+      if (targetBtn) targetBtn.classList.add("active");
+
+      const targetPane = document.getElementById(tabId);
+      if (targetPane) targetPane.classList.add("active");
+    }
+
+    // 提示通知 Toast
+    function showToast(msg, duration = 3000) {
+      const toast = document.getElementById("toast");
+      toast.innerText = msg;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), duration);
+    }
+
+    // 1. 加载统计概览指标
+    async function loadStats() {
+      try {
+        const res = await fetch("/api/kb/stats");
+        if (!res.ok) throw new Error("获取统计数据失败");
+        const data = await res.json();
+
+        document.getElementById("stat-total").innerText = data.total_chunks;
+        document.getElementById("stat-done").innerText = data.done_chunks;
+        document.getElementById("stat-pending").innerText = data.pending_chunks;
+        document.getElementById("stat-milvus").innerText = data.milvus_count;
+
+        const alignBadge = document.getElementById("stat-align-badge");
+        if (data.is_aligned) {
+          alignBadge.className = "stat-badge badge-success";
+          alignBadge.innerText = "严格 1:1 双写对齐";
+        } else {
+          alignBadge.className = "stat-badge badge-warning";
+          alignBadge.innerText = "存在数据差异未同步";
+        }
+
+        const pendingBadge = document.getElementById("stat-pending-badge");
+        if (data.pending_chunks > 0) {
+          pendingBadge.className = "stat-badge badge-danger";
+          pendingBadge.innerText = `发现 ${data.pending_chunks} 条孤立数据`;
+        } else {
+          pendingBadge.className = "stat-badge badge-success";
+          pendingBadge.innerText = "无残留 pending 块";
+        }
+
+        document.getElementById("repair-pending-count").innerText = data.pending_chunks;
+        const statusText = document.getElementById("repair-status-text");
+        if (data.pending_chunks > 0) {
+          statusText.innerHTML = `<span style="color: var(--danger); font-weight: 600;">⚠️ 检测到 ${data.pending_chunks} 条 pending 知识块尚未进入向量库，建议立即点击自愈补偿！</span>`;
+        } else {
+          statusText.innerHTML = `✅ 权威源与向量存储记录已完全对齐（共 ${data.done_chunks} 条）。`;
+        }
+
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 2. 加载材料清单
+    async function loadMaterials() {
+      const tbody = document.getElementById("materials-tbody");
+      try {
+        const res = await fetch("/api/kb/materials");
+        const materials = await res.json();
+        if (materials.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">暂无材料文件</td></tr>';
+          return;
+        }
+        tbody.innerHTML = materials.map(m => `
+          <tr>
+            <td style="font-weight: 600; color: #1e293b;">📄 ${m.filename}</td>
+            <td style="font-family: monospace; font-size: 12px; color: var(--text-muted);">${m.file_path}</td>
+            <td>${(m.file_size_bytes / 1024).toFixed(1)} KB</td>
+            <td>${m.modified_time}</td>
+            <td><span class="stat-badge badge-info">约 ${m.estimated_chunks} 块</span></td>
+          </tr>
+        `).join("");
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color: var(--danger); text-align:center;">加载失败: ${err.message}</td></tr>`;
+      }
+    }
+
+    // 3. 加载切块列表
+    async function loadChunks(page = 1) {
+      currentChunkPage = page;
+      const tbody = document.getElementById("chunks-tbody");
+      const search = document.getElementById("chunk-search").value.trim();
+      const status = document.getElementById("chunk-status-filter").value;
+      const category = document.getElementById("chunk-category-filter").value.trim();
+
+      const params = new URLSearchParams({
+        page: currentChunkPage,
+        page_size: chunkPageSize,
+      });
+      if (search) params.append("search", search);
+      if (status) params.append("status", status);
+      if (category) params.append("category", category);
+
+      try {
+        const res = await fetch(`/api/kb/chunks?${params.toString()}`);
+        const data = await res.json();
+        totalChunkCount = data.total;
+
+        document.getElementById("chunks-page-info").innerText = `第 ${data.page} 页 / 共 ${Math.ceil(data.total / chunkPageSize) || 1} 页 (总计 ${data.total} 条)`;
+        document.getElementById("btn-prev-page").disabled = currentChunkPage <= 1;
+        document.getElementById("btn-next-page").disabled = currentChunkPage >= Math.ceil(data.total / chunkPageSize);
+
+        if (data.items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-muted); padding: 30px;">未找到匹配的知识切块</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.items.map(item => {
+          let statusBadge = '';
+          if (item.vectorize_status === 'done') statusBadge = '<span class="stat-badge badge-success">已向量化</span>';
+          else if (item.vectorize_status === 'pending') statusBadge = '<span class="stat-badge badge-warning">Pending</span>';
+          else statusBadge = '<span class="stat-badge badge-danger">Failed</span>';
+
+          return `
+            <tr>
+              <td><strong>#${item.id}</strong></td>
+              <td><span class="stat-badge badge-info">${item.category}</span></td>
+              <td style="max-width: 250px; font-weight: 500;">${escapeHtml(item.questions)}</td>
+              <td style="max-width: 320px; color: var(--text-muted); font-size: 13px;" title="${escapeHtml(item.answer)}">
+                ${escapeHtml(item.answer.slice(0, 75))}${item.answer.length > 75 ? '...' : ''}
+              </td>
+              <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(item.section_path || '-')}</td>
+              <td>${statusBadge}</td>
+              <td style="font-size: 12px; color: var(--text-muted);">${item.created_at}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">加载失败: ${err.message}</td></tr>`;
+      }
+    }
+
+    function prevPage() {
+      if (currentChunkPage > 1) loadChunks(currentChunkPage - 1);
+    }
+    function nextPage() {
+      if (currentChunkPage < Math.ceil(totalChunkCount / chunkPageSize)) loadChunks(currentChunkPage + 1);
+    }
+
+    // 4. 手工录入知识提交
+    async function submitManualChunk(event) {
+      event.preventDefault();
+      const btn = document.getElementById("btn-submit-manual");
+      btn.disabled = true;
+      btn.innerText = "⏳ 正在写入并向量化...";
+
+      const payload = {
+        category: document.getElementById("manual-category").value.trim(),
+        content_type: document.getElementById("manual-type").value,
+        section_path: document.getElementById("manual-section").value.trim() || null,
+        questions: document.getElementById("manual-questions").value.trim(),
+        answer: document.getElementById("manual-answer").value.trim(),
+        is_key_clause: document.getElementById("manual-key-clause").checked,
+        sync_vector: document.getElementById("manual-sync-vector").checked,
+      };
+
+      try {
+        const res = await fetch("/api/kb/chunks/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "录入失败");
+        }
+        const created = await res.json();
+        showToast(`✅ 知识块 #${created.id} 录入成功！(状态: ${created.vectorize_status})`);
+
+        document.getElementById("manual-form").reset();
+        document.getElementById("manual-sync-vector").checked = true;
+
+        loadStats();
+        loadChunks();
+      } catch (err) {
+        alert("录入失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🚀 确认录入知识库";
+      }
+    }
+
+    // 录入子模式切换 (单条 vs 完整文档)
+    function switchManualMode(mode) {
+      const btnSingle = document.getElementById("btn-mode-single");
+      const btnDoc = document.getElementById("btn-mode-doc");
+      const singleContainer = document.getElementById("manual-single-container");
+      const docContainer = document.getElementById("manual-doc-container");
+
+      if (mode === "single") {
+        btnSingle.classList.add("active");
+        btnDoc.classList.remove("active");
+        singleContainer.style.display = "block";
+        docContainer.style.display = "none";
+      } else {
+        btnSingle.classList.remove("active");
+        btnDoc.classList.add("active");
+        singleContainer.style.display = "none";
+        docContainer.style.display = "block";
+      }
+    }
+
+    // 清空预览区
+    function clearDocPreview() {
+      const previewArea = document.getElementById("doc-preview-area");
+      const tbody = document.getElementById("preview-tbody");
+      if (previewArea) previewArea.style.display = "none";
+      if (tbody) tbody.innerHTML = "";
+    }
+
+    // 智能切块预览请求
+    async function previewDocChunks() {
+      const content = document.getElementById("doc-content").value.trim();
+      if (!content) {
+        alert("请先输入 Markdown 文档正文内容！");
+        return;
+      }
+      const filename = document.getElementById("doc-filename").value.trim() || null;
+      const category = document.getElementById("doc-category").value.trim() || null;
+
+      const btn = document.getElementById("btn-preview-doc");
+      btn.disabled = true;
+      btn.innerText = "⏳ 正在切块解析...";
+
+      try {
+        const res = await fetch("/api/kb/documents/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename, category, content }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "切块预览失败");
+        }
+        const data = await res.json();
+
+        const previewArea = document.getElementById("doc-preview-area");
+        const totalBadge = document.getElementById("preview-total-badge");
+        const tbody = document.getElementById("preview-tbody");
+
+        previewArea.style.display = "block";
+        totalBadge.innerText = `切出 ${data.total_chunks} 个知识块`;
+
+        if (data.chunks.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">未能识别出有效切块，请检查文档标题结构</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.chunks.map(chunk => `
+          <tr>
+            <td><strong>#${chunk.id}</strong></td>
+            <td><span class="stat-badge badge-info">${escapeHtml(chunk.category)}</span></td>
+            <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(chunk.section_path || '-')}</td>
+            <td style="font-weight: 500; font-size: 13px;">${escapeHtml(chunk.questions)}</td>
+            <td style="font-size: 12px; color: var(--text-muted);" title="${escapeHtml(chunk.answer)}">
+              ${escapeHtml(chunk.answer.slice(0, 80))}${chunk.answer.length > 80 ? '...' : ''}
+            </td>
+            <td><span class="stat-badge ${chunk.content_type === 'faq' ? 'badge-success' : 'badge-warning'}">${chunk.content_type}</span></td>
+            <td>${chunk.is_key_clause ? '<span class="stat-badge badge-danger">核心</span>' : '<span style="color:var(--text-muted);">-</span>'}</td>
+          </tr>
+        `).join("");
+
+        showToast(`🔍 预览解析完成，共切出 ${data.total_chunks} 个知识块`);
+      } catch (err) {
+        alert("切块预览失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🔍 智能切块预览 (不落库)";
+      }
+    }
+
+    // 完整文档录入提交
+    async function submitManualDoc(event) {
+      event.preventDefault();
+      const content = document.getElementById("doc-content").value.trim();
+      const filename = document.getElementById("doc-filename").value.trim();
+      const category = document.getElementById("doc-category").value.trim() || null;
+      const saveFile = document.getElementById("doc-save-file").checked;
+      const syncVector = document.getElementById("doc-sync-vector").checked;
+
+      if (!filename) {
+        alert("请输入文档文件名！");
+        return;
+      }
+      if (!content) {
+        alert("请输入 Markdown 文档正文！");
+        return;
+      }
+
+      const btn = document.getElementById("btn-submit-doc");
+      btn.disabled = true;
+      btn.innerText = "⏳ 正在执行切块与落库...";
+
+      try {
+        const res = await fetch("/api/kb/documents/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: filename,
+            category: category,
+            content: content,
+            save_file: saveFile,
+            sync_vector: syncVector,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "文档录入失败");
+        }
+        const data = await res.json();
+
+        showToast(`🎉 文档录入成功！切出并落库 ${data.saved_chunks} 个知识块 (状态: ${data.vectorize_status})`);
+
+        // 清空表单与预览
+        document.getElementById("doc-form").reset();
+        document.getElementById("doc-save-file").checked = true;
+        document.getElementById("doc-sync-vector").checked = true;
+        clearDocPreview();
+
+        // 刷新统计、材料和知识块列表
+        loadStats();
+        loadMaterials();
+        loadChunks();
+      } catch (err) {
+        alert("文档录入失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🚀 确认切块并录入知识库";
+      }
+    }
+
+    // 5. 触发自愈补齐
+    async function triggerRepairPending() {
+      const btn = document.getElementById("btn-repair");
+      const consoleBox = document.getElementById("repair-console");
+      btn.disabled = true;
+      btn.innerText = "⚡ 正在扫描补偿...";
+      consoleBox.style.display = "block";
+      consoleBox.innerText = `[${new Date().toLocaleTimeString()}] 启动断点自愈补齐扫描...\n`;
+
+      try {
+        const res = await fetch("/api/kb/repair-pending", { method: "POST" });
+        if (!res.ok) throw new Error("自愈请求失败");
+        const data = await res.json();
+
+        consoleBox.innerText += `[${new Date().toLocaleTimeString()}] 补齐完成！成功修复并向量化了 ${data.repaired_count} 个知识块。\n`;
+        consoleBox.innerText += `[${new Date().toLocaleTimeString()}] MySQL 权威源与 Milvus 向量库已恢复 1:1 双写一致！\n`;
+        showToast(`🎉 成功修复并同步 ${data.repaired_count} 条 pending 知识块！`);
+
+        loadStats();
+        loadChunks();
+      } catch (err) {
+        consoleBox.innerText += `[${new Date().toLocaleTimeString()}] 异常中断: ${err.message}\n`;
+        alert("修复失败: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "⚡ 立即执行断点自愈补齐 (repair_pending_chunks)";
+      }
+    }
+
+    // 6. 执行检索自测
+    async function executeSearch() {
+      const query = document.getElementById("search-query").value.trim();
+      if (!query) {
+        alert("请输入检索自然语言提问！");
+        return;
+      }
+      const topK = parseInt(document.getElementById("search-topk").value) || 3;
+      const minScore = parseFloat(document.getElementById("search-minscore").value) || 0.0;
+      const category = document.getElementById("search-cat").value.trim() || null;
+
+      const btn = document.getElementById("btn-search");
+      const resultsDiv = document.getElementById("search-results");
+      btn.disabled = true;
+      btn.innerText = "🔍 检索中...";
+
+      try {
+        const res = await fetch("/api/kb/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: query,
+            top_k: topK,
+            min_score: minScore,
+            category: category,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "检索异常");
+        }
+        const data = await res.json();
+
+        document.getElementById("search-latency").innerText = `耗时: ${data.latency_ms} ms (命中 ${data.total_hits} 条)`;
+
+        if (data.hits.length === 0) {
+          resultsDiv.innerHTML = `
+            <div style="text-align: center; color: var(--text-muted); padding: 30px;">
+              ⚠️ 未检索到相似度满足阈值 (>= ${minScore}) 的知识块。可尝试调低阈值或缩短提问关键词。
+            </div>
+          `;
+          return;
+        }
+
+        resultsDiv.innerHTML = data.hits.map((hit, idx) => {
+          const scorePercent = Math.max(0, Math.min(100, Math.round(hit.distance * 100)));
+          return `
+            <div class="hit-card">
+              <div class="hit-header">
+                <div>
+                  <span style="font-weight: 700; margin-right: 8px;">#${idx + 1}</span>
+                  <span class="stat-badge badge-info">${escapeHtml(hit.category)}</span>
+                  <span style="font-size: 12px; color: var(--text-muted); margin-left: 8px;">${escapeHtml(hit.section_path || '')}</span>
+                </div>
+                <div class="hit-score">
+                  <div class="hit-score-bar">
+                    <div class="hit-score-fill" style="width: ${scorePercent}%;"></div>
+                  </div>
+                  <span>${(hit.distance).toFixed(4)}</span>
+                </div>
+              </div>
+              <div class="hit-q"><strong>问法：</strong>${escapeHtml(hit.questions)}</div>
+              <div class="hit-a">${escapeHtml(hit.answer)}</div>
+            </div>
+          `;
+        }).join("");
+
+      } catch (err) {
+        resultsDiv.innerHTML = `<div style="color: var(--danger); padding: 20px;">检索失败: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "🚀 执行语义检索";
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+</html>
