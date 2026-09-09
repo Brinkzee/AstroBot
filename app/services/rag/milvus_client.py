@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pymilvus import (
     AnnSearchRequest,
@@ -206,14 +206,19 @@ class MilvusKnowledgeStore:
         top_k: int = 3,
         min_score: float = 0.0,
         filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        category: Optional[str] = None,
         collection_name: str = "knowledge",
+        **kwargs: Any,
     ) -> List[Dict]:
         """基于 COSINE 相似度的 Top-K 向量检索（向后兼容接口）。"""
+        effective_category = category_filter or category or kwargs.get("category_filter") or kwargs.get("category")
         return self.search_dense(
             query_vector=query_vector,
             top_k=top_k,
             min_score=min_score,
             filter=filter,
+            category_filter=effective_category,
             collection_name=collection_name,
         )
 

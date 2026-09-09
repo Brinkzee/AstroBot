@@ -271,3 +271,59 @@ async def test_query_faq_fallback_to_sql_when_retriever_empty():
         assert "这是通过数据库表查询返回的FAQ。" in res
         mock_retriever.retrieve.assert_awaited_once()
         mock_session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_knowledge_retriever_retrieve_with_category_parameter():
+    """测试 KnowledgeRetriever.retrieve 支持 category 和 category_filter 标量分类过滤"""
+    mock_embedding = MagicMock()
+    mock_embedding.aembed_query = AsyncMock(return_value=[0.1] * 1024)
+
+    mock_store = MagicMock()
+    mock_store.search.return_value = [
+        {
+            "id": 1,
+            "distance": 0.88,
+            "category": "售后服务",
+            "questions": "如何申请退换货？",
+            "answer": "联系客服提交申请即可。",
+        }
+    ]
+
+    retriever = KnowledgeRetriever(store=mock_store, embedding_client=mock_embedding)
+
+    # 1. 验证传入 category 参数（Web 接口常用）正常执行并不抛出异常
+    hits = await retriever.retrieve(
+        query="退货流程",
+        top_k=5,
+        min_score=0.4,
+        category="售后服务",
+    )
+    assert len(hits) == 1
+    assert hits[0]["category"] == "售后服务"
+    mock_store.search.assert_called_with(
+        query_vector=[0.1] * 1024,
+        top_k=5,
+        min_score=0.4,
+        filter=None,
+        category_filter="售后服务",
+        collection_name="knowledge",
+    )
+
+    # 2. 验证传入 category_filter 参数也支持
+    mock_store.search.reset_mock()
+    hits2 = await retriever.retrieve(
+        query="退货流程",
+        top_k=3,
+        category_filter="售后服务",
+        extra_unknown_kwarg=True,
+    )
+    assert len(hits2) == 1
+    mock_store.search.assert_called_with(
+        query_vector=[0.1] * 1024,
+        top_k=3,
+        min_score=0.35,
+        filter=None,
+        category_filter="售后服务",
+        collection_name="knowledge",
+    )

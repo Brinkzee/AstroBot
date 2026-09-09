@@ -238,10 +238,11 @@ class AdvancedKnowledgeRetriever:
         Returns:
             检索并重排后的候选文档列表
         """
+        effective_category = category_filter or kwargs.get("category") or kwargs.get("category_filter")
         result = await self.retrieve_with_strategy(
             query=query,
             strategy=strategy,
-            category_filter=category_filter,
+            category_filter=effective_category,
             top_k=top_k,
         )
         return result.docs[:top_k]
