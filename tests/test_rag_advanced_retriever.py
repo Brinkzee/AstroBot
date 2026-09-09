@@ -416,3 +416,61 @@ async def test_query_faq_fallback_to_sql_when_retriever_empty():
         assert "支持个人与企业增值税普通发票" in res
         mock_retriever.retrieve.assert_awaited_once_with("发票抬头", top_k=3)
         mock_session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_advanced_retriever_min_score_filtering_out_of_scope():
+    """验证当用户提问超纲（如'支持货到付款吗'）时，若所有候选重排得分均低于 min_score 阈值，
+    AdvancedKnowledgeRetriever 必须过滤掉低置信度候选，返回空的 docs 与 citations，避免虚假证据送入生成。
+    """
+    mock_query_processor = MagicMock()
+    mock_query_processor.aprocess = AsyncMock(
+        return_value=QueryUnderstandingResult(
+            original_query="支持货到付款吗",
+            standard_query="支持货到付款吗",
+            expanded_keywords=["货到付款", "支付"],
+            bm25_query="支持货到付款吗 货到付款 支付",
+        )
+    )
+
+    mock_embedding_client = MagicMock()
+    mock_embedding_client.aembed_query = AsyncMock(return_value=[0.1] * 1024)
+
+    # 模拟 Milvus 召回了仅因含有通用支付词而上榜的弱相关候选
+    weak_candidate = {
+        "id": 26,
+        "questions": "平台支持哪些支付方式？可以分期付款吗？",
+        "answer": "支持微信支付、支付宝、银行储蓄卡与信用卡在线快捷支付。",
+        "section_path": "商品选购与常见问题 FAQ > 支付方式与分期付款",
+        "category": "运费说明与常见 FAQ",
+    }
+    mock_store = MagicMock()
+    mock_store.hybrid_search = MagicMock(return_value=[weak_candidate])
+
+    # 模拟 Reranker 判定低相关性（打分仅 0.12，远低于置信度阈值 0.25）
+    reranked_low_score = [
+        {**weak_candidate, "rerank_score": 0.12}
+    ]
+    mock_reranker = MagicMock()
+    mock_reranker.rerank = AsyncMock(return_value=reranked_low_score)
+
+    retriever = AdvancedKnowledgeRetriever(
+        store=mock_store,
+        embedding_client=mock_embedding_client,
+        query_processor=mock_query_processor,
+        reranker_client=mock_reranker,
+        min_score=0.25,
+    )
+
+    # 1. 验证 retrieve_with_strategy 过滤低分候选
+    result = await retriever.retrieve_with_strategy(
+        query="支持货到付款吗",
+        strategy="hybrid_rerank",
+        min_score=0.25,
+    )
+    assert len(result.docs) == 0, "低于 min_score 的弱相关候选应被剔除"
+    assert len(result.citations) == 0, "低置信度候选不应生成 citations 证据"
+
+    # 2. 验证 retrieve 兼容接口同样过滤并返回空列表
+    hits = await retriever.retrieve(query="支持货到付款吗", top_k=3, min_score=0.25)
+    assert hits == []

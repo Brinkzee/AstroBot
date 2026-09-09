@@ -28,7 +28,7 @@ def get_retriever(force_refresh: bool = False) -> AdvancedKnowledgeRetriever:
             force_refresh = True
 
     if _retriever is None or force_refresh:
-        _retriever = AdvancedKnowledgeRetriever()
+        _retriever = AdvancedKnowledgeRetriever(min_score=0.25)
         _retriever._bound_loop = current_loop
     return _retriever
 

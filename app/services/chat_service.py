@@ -296,7 +296,7 @@ class ChatService:
                     citations = last_res.citations
                 elif retriever is not None and hasattr(retriever, "retrieve_with_strategy"):
                     try:
-                        retrieval_res = await retriever.retrieve_with_strategy(query=query_kw)
+                        retrieval_res = await retriever.retrieve_with_strategy(query=query_kw, min_score=0.25)
                         raw_cits = getattr(retrieval_res, "citations", [])
                         citations = raw_cits if isinstance(raw_cits, list) else []
                     except Exception as e:

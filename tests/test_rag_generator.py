@@ -498,3 +498,112 @@ async def test_chat_service_faq_refusal_when_self_check_fails():
     assert len(db.low_confidence_questions) == 1
     assert db.low_confidence_questions[0].raw_question == "如何制造反物质飞船？"
     assert db.low_confidence_questions[0].source == "retrieval_low_conf"
+
+
+@pytest.mark.asyncio
+async def test_mock_self_check_out_of_scope_query_not_fooled_by_common_words():
+    """验证即使提问包含'支持'等通用常见词，只要核心实体词（如'货到付款'）未在证据中出现，
+    _mock_self_check 必须坚决判定 useful=False，绝不可因通用两字词字符包含而误判为充分。
+    """
+    db = FakeAsyncSession()
+    # 模拟未配置真实 LLM 的 Mock 自检模式
+    generator = RAGControlledGenerator(model=None)
+
+    citations = [
+        {
+            "n": 1,
+            "chunk_id": 26,
+            "section_path": "商品选购与常见问题 FAQ > 支付方式与分期付款",
+            "question": "平台支持哪些支付方式？可以分期付款吗？",
+            "answer": "支持微信支付、支付宝、银行储蓄卡与信用卡在线快捷支付。满600支持分期。",
+        }
+    ]
+
+    # 用户提问"支持货到付款吗"（包含通用词"支持"，但核心实体"货到付款"未提及）
+    result = await generator.check_sufficiency(
+        query="支持货到付款吗",
+        citations=citations,
+        db=db,
+        conversation_id=99,
+    )
+
+    assert result.useful is False, "核心实体未提及，不可判定为充分"
+    assert "货到付款" in result.reason or "未提及" in result.reason or "匹配度不足" in result.reason
+    assert result.source == "self_check"
+    assert len(db.low_confidence_questions) == 1
+    assert db.low_confidence_questions[0].raw_question == "支持货到付款吗"
+
+
+def test_self_check_prompt_forbids_negative_inference():
+    """验证自检提示词明确禁止因未列出而自行否定反推（如因没提货到付款就判定充分回答不支持）"""
+    assert "反推" in SELF_CHECK_SYSTEM_PROMPT or "未提及" in SELF_CHECK_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_chat_service_refusal_for_unmentioned_policy_cod():
+    """端到端验证：针对知识库无相关政策的问题（如'支持货到付款吗'），
+    系统在执行 query_faq 时准确识别证据不足并触发标准拒答，
+    坚决不下发 citations 证据帧，不在回答中生成伪依据引用 [1]，并完成低置信度入池。
+    """
+    db = FakeAsyncSession()
+
+    mock_llm = MagicMock()
+    mock_bound = MagicMock()
+    mock_bound.ainvoke = AsyncMock(
+        return_value=MagicMock(
+            content="",
+            tool_calls=[{
+                "name": "query_faq",
+                "args": {"keyword": "货到付款"},
+                "id": "call_faq_cod_1",
+            }],
+        )
+    )
+    mock_llm.bind_tools.return_value = mock_bound
+
+    # 模拟检索器仅检索到弱相关支付方式
+    mock_retriever = AsyncMock()
+    mock_retriever.retrieve_with_strategy.return_value = MagicMock(
+        citations=[{
+            "n": 1,
+            "chunk_id": 26,
+            "section_path": "商品选购与常见问题 FAQ > 支付方式与分期付款",
+            "question": "平台支持哪些支付方式？可以分期付款吗？",
+            "answer": "支持微信支付、支付宝、银行储蓄卡与信用卡在线快捷支付。",
+        }],
+        docs=[{"id": 26}],
+    )
+
+    # 真实 generator（使用未连接 LLM 的 Mock 自检算法）
+    real_generator = RAGControlledGenerator(model=None)
+
+    chat_service = ChatService(
+        model=mock_llm,
+        retriever=mock_retriever,
+        rag_generator=real_generator,
+    )
+
+    events = [
+        e async for e in chat_service.stream_chat(
+            db=db,
+            conversation_id=None,
+            message="支持货到付款吗",
+        )
+    ]
+
+    event_types = [e.get("event_type") for e in events]
+    assert "tool_start" in event_types
+    assert "tool_end" in event_types
+    # 拒答时绝对不可下发 citations 事件帧，杜绝前端点亮或展示引用抽屉
+    assert "citations" not in event_types, "未收录政策严禁下发 citations 证据帧"
+
+    # 验证下发了礼貌拒答语，且严禁出现依据引用 [1]
+    text_content = "".join(e["content"] for e in events if e.get("event_type") == "text")
+    assert "非常抱歉" in text_content
+    assert "[1]" not in text_content, "拒答文本严禁臆造角标引用 [1]"
+
+    # 验证成功在 low_confidence_questions 表中完成登记
+    assert len(db.low_confidence_questions) == 1
+    record = db.low_confidence_questions[0]
+    assert record.raw_question == "支持货到付款吗"
+    assert record.source == "self_check"

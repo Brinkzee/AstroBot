@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+import jieba
+
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
@@ -147,30 +149,31 @@ class RAGControlledGenerator:
         if any(kw in query for kw in out_of_scope_keywords):
             return False, f"提问包含超出电商客服范畴的超纲概念，现有证据无法支持解答"
 
-        # 检查 query 中的核心词与证据的相关度
         all_evidence = " ".join(
             f"{c.get('question', '')} {c.get('answer', '')} {c.get('section_path', '')}"
             for c in citations
         )
 
-        query_terms = [t for t in query.replace("？", "").replace("?", "").split() if t]
-        if not query_terms:
-            query_terms = [query]
+        # 提炼核心实体词（过滤停用词与常用疑问前缀）
+        stopwords = {
+            "支持", "可以", "请问", "怎么", "如何", "能不能", "是否",
+            "有没有", "什么", "哪些", "吗", "呢", "吧", "的", "了",
+            "关于", "平台", "商城", "我想", "麻烦", "请", "问", "一下",
+            "多少", "几天", "多久"
+        }
+        words = [w.strip() for w in jieba.cut(query) if len(w.strip()) > 0]
+        core_keywords = [w for w in words if w not in stopwords and len(w) >= 2]
 
-        # 简单交集计算
-        match_count = 0
-        for term in query_terms:
-            if term in all_evidence:
-                match_count += 1
+        if not core_keywords:
+            core_keywords = [w for w in words if len(w) >= 2]
 
-        # 若是字符级包含（中文无空格分词）
-        if any(len(term) >= 2 and term in all_evidence for term in [query[i:i+2] for i in range(len(query)-1)]):
-            match_count += 1
+        # 核心实体词严格校验：核心实体必须在证据中出现
+        matched_keywords = [kw for kw in core_keywords if kw in all_evidence]
+        if not matched_keywords:
+            missing_entities = "、".join(core_keywords[:3]) if core_keywords else query
+            return False, f"知识库证据中未包含提问核心概念【{missing_entities}】，缺失关键事实解答依据"
 
-        if match_count > 0:
-            return True, "证据中包含与提问高度匹配的业务规则与规格描述，支持精准解答"
-        else:
-            return False, "证据内容与提问匹配度不足，缺失核心事实解答依据"
+        return True, "证据中包含与提问高度匹配的业务规则与规格描述，支持精准解答"
 
     async def astream_generate(
         self,

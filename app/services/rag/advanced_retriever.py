@@ -54,15 +54,17 @@ class AdvancedKnowledgeRetriever:
         query_processor: Optional[QueryProcessor] = None,
         reranker_client: Optional[BGERerankerClient] = None,
         collection_name: str = "knowledge",
+        min_score: Optional[float] = None,
     ):
         self.store = store or MilvusKnowledgeStore()
         self.embedding_client = embedding_client or BGEEmbeddingClient()
         self.query_processor = query_processor or QueryProcessor()
         self.reranker_client = reranker_client or BGERerankerClient()
         self.collection_name = collection_name
+        self.min_score = min_score
         self.last_result: Optional[AdvancedRetrievalResult] = None
         logger.info(
-            f"AdvancedKnowledgeRetriever 已初始化 (collection={self.collection_name})"
+            f"AdvancedKnowledgeRetriever 已初始化 (min_score={self.min_score}, collection={self.collection_name})"
         )
 
     async def retrieve_with_strategy(
@@ -72,6 +74,7 @@ class AdvancedKnowledgeRetriever:
         category_filter: Optional[str] = None,
         top_k: int = 10,
         top_k_per_route: int = 50,
+        min_score: Optional[float] = None,
     ) -> AdvancedRetrievalResult:
         """根据指定策略执行进阶检索召回与重排。
 
@@ -81,6 +84,7 @@ class AdvancedKnowledgeRetriever:
             category_filter: 可选的类目标量过滤条件
             top_k: 最终保留的最大结果条数，默认 10
             top_k_per_route: 粗排单路召回条目数，默认 50
+            min_score: 最低置信度/重排得分阈值，低于阈值的候选将被过滤剔除
 
         Returns:
             统一封装的 AdvancedRetrievalResult
@@ -201,8 +205,28 @@ class AdvancedKnowledgeRetriever:
                 top_k=top_k,
             )
 
+            # 按最低置信度阈值过滤低分弱相关候选，避免超纲问题被伪证据污染
+            effective_min_score = self.min_score if min_score is None else min_score
+            if effective_min_score is not None:
+                filtered_docs = [
+                    d for d in reranked_docs
+                    if float(d.get("rerank_score") if d.get("rerank_score") is not None else d.get("distance", 0.0)) >= effective_min_score
+                ]
+            else:
+                filtered_docs = reranked_docs
+
+            if not filtered_docs:
+                result = AdvancedRetrievalResult(
+                    docs=[],
+                    citations=[],
+                    strategy=strategy,
+                    query_understanding=qu,
+                )
+                self.last_result = result
+                return result
+
             # c. Lost in the Middle 首尾重排：[D1, D3, D5, D7, D9, D10, D8, D6, D4, D2]
-            reordered_docs = lost_in_the_middle_reorder(reranked_docs)
+            reordered_docs = lost_in_the_middle_reorder(filtered_docs)
 
             # d. 组装标准 1..K citations 快照
             citations = build_citation_items(reordered_docs)
@@ -239,11 +263,13 @@ class AdvancedKnowledgeRetriever:
             检索并重排后的候选文档列表
         """
         effective_category = category_filter or kwargs.get("category") or kwargs.get("category_filter")
+        call_min_score = kwargs.get("min_score")
         result = await self.retrieve_with_strategy(
             query=query,
             strategy=strategy,
             category_filter=effective_category,
             top_k=top_k,
+            min_score=call_min_score,
         )
         return result.docs[:top_k]
 
