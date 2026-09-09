@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import random
@@ -17,8 +18,18 @@ _retriever: Optional[AdvancedKnowledgeRetriever] = None
 
 def get_retriever(force_refresh: bool = False) -> AdvancedKnowledgeRetriever:
     global _retriever
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _retriever is not None and getattr(_retriever, "_bound_loop", None) is not None:
+        if _retriever._bound_loop is not current_loop:
+            force_refresh = True
+
     if _retriever is None or force_refresh:
         _retriever = AdvancedKnowledgeRetriever()
+        _retriever._bound_loop = current_loop
     return _retriever
 
 

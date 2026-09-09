@@ -349,20 +349,20 @@ git commit -m "feat(ui): add clickable citation drawer and thumbs-up/down feedba
 - Consumes: 全量系统模块
 - Produces: 4 大核心验收标准的完整自动化回归测试
 
-- [ ] **Step 1: 编写全量端到端验收测试用例**
+- [x] **Step 1: 编写全量端到端验收测试用例**
 编写 `tests/test_ch04_acceptance.py`，严格对应用户四大验收标准：
 1. **验收标准 1（四策略对比报告能跑出数字）**：运行评估套件子集，验证能成功计算出各策略的 Recall@K、MRR 与 Faithfulness 指标矩阵；
 2. **验收标准 2（问带具体型号的问题 BM25 那路能命中）**：针对“星光PRO-X99智能手表充电规格”，验证 BM25 单路及 Hybrid 均能准确命中对应 chunk；
 3. **验收标准 3（答案引用编号能定位回原文）**：验证回答文本包含 `[n]` 角标，且与下发的 `citations` 快照中 `n` 对应的 chunk 原文和 `section_path` 严格吻合；
 4. **验收标准 4（问知识库没有的内容得到明确拒答且入池）**：针对超纲提问，大模型给出标准拒答语，且在 `low_confidence_questions` 表中查询到新插入的记录（`raw_question` 与 `reason` 明确）。
 
-- [ ] **Step 2: 运行端到端验收测试**
+- [x] **Step 2: 运行端到端验收测试**
 运行 `pytest tests/test_ch04_acceptance.py -v`，验证 4 项验收标准全部 PASS。
 
-- [ ] **Step 3: 运行全量测试套件回归验证**
+- [x] **Step 3: 运行全量测试套件回归验证**
 运行 `pytest -v`，验证包含 Chapter 1~3 的 121 个既有测试以及 Chapter 4 的所有新增测试，达到 100% PASS。
 
-- [ ] **Step 4: 提交代码**
+- [x] **Step 4: 提交代码**
 ```bash
 git add tests/test_ch04_acceptance.py
 git commit -m "test(acceptance): add end-to-end acceptance tests for ch04 requirements"

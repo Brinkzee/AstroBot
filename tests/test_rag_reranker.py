@@ -27,6 +27,14 @@ from app.services.rag.reorder import (
 from app.services.rag.reranker import BGERerankerClient
 
 
+@pytest.fixture(autouse=True)
+def reset_circuit_breaker():
+    """每次测试前后重置熔断标记，避免跨测试状态污染。"""
+    BGERerankerClient._circuit_broken_until = 0.0
+    yield
+    BGERerankerClient._circuit_broken_until = 0.0
+
+
 # ==============================================================================
 # 1. lost_in_the_middle_reorder 单测
 # ==============================================================================

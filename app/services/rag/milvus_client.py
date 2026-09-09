@@ -91,7 +91,14 @@ class MilvusKnowledgeStore:
 
             index_params = self.client.prepare_index_params()
             index_params.add_index(field_name="vector", index_type="FLAT", metric_type="COSINE")
-            index_params.add_index(field_name="sparse_vector", index_type="AUTOINDEX", metric_type="BM25")
+            # 兼容处理：在 milvus-lite 本地嵌入式模式下，sparse_vector 为二进制存储，
+            # 若创建 AUTOINDEX 会触发 milvus_lite segment 重新从磁盘加载时的 FixedSizeList 类型校验崩溃；
+            # 仅在非 sqlite 本地文件（独立 Milvus 服务）时添加 sparse_vector 索引。
+            if not (self.uri and (self.uri.endswith(".db") or "./" in self.uri or "\\" in self.uri)):
+                try:
+                    index_params.add_index(field_name="sparse_vector", index_type="AUTOINDEX", metric_type="BM25")
+                except Exception:
+                    pass
 
             self.client.create_collection(
                 collection_name=collection_name,
