@@ -286,10 +286,19 @@ class ChatService:
 
                 citations: List[Dict[str, Any]] = []
                 query_kw = str(args_dict.get("keyword") or message or "").strip()
-                if retriever is not None and hasattr(retriever, "retrieve_with_strategy"):
+                last_res = getattr(retriever, "last_result", None) if retriever else None
+                if (
+                    last_res is not None
+                    and hasattr(last_res, "citations")
+                    and isinstance(getattr(last_res, "citations"), list)
+                    and last_res.citations
+                ):
+                    citations = last_res.citations
+                elif retriever is not None and hasattr(retriever, "retrieve_with_strategy"):
                     try:
                         retrieval_res = await retriever.retrieve_with_strategy(query=query_kw)
-                        citations = getattr(retrieval_res, "citations", []) or []
+                        raw_cits = getattr(retrieval_res, "citations", [])
+                        citations = raw_cits if isinstance(raw_cits, list) else []
                     except Exception as e:
                         logger.warning(f"调用进阶检索器获取 citations 失败: {e}")
 

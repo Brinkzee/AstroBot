@@ -60,6 +60,7 @@ class AdvancedKnowledgeRetriever:
         self.query_processor = query_processor or QueryProcessor()
         self.reranker_client = reranker_client or BGERerankerClient()
         self.collection_name = collection_name
+        self.last_result: Optional[AdvancedRetrievalResult] = None
         logger.info(
             f"AdvancedKnowledgeRetriever 已初始化 (collection={self.collection_name})"
         )
@@ -120,12 +121,14 @@ class AdvancedKnowledgeRetriever:
             )
             docs = hits[:top_k]
             citations = build_citation_items(docs)
-            return AdvancedRetrievalResult(
+            result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
             )
+            self.last_result = result
+            return result
 
         if strategy == "bm25_only":
             hits = await asyncio.to_thread(
@@ -137,12 +140,14 @@ class AdvancedKnowledgeRetriever:
             )
             docs = hits[:top_k]
             citations = build_citation_items(docs)
-            return AdvancedRetrievalResult(
+            result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
             )
+            self.last_result = result
+            return result
 
         if strategy == "hybrid":
             dense_vector = await self.embedding_client.aembed_query(dense_query_text)
@@ -157,12 +162,14 @@ class AdvancedKnowledgeRetriever:
             )
             docs = hits[:top_k]
             citations = build_citation_items(docs)
-            return AdvancedRetrievalResult(
+            result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
             )
+            self.last_result = result
+            return result
 
         if strategy == "hybrid_rerank":
             # a. 向量化 + Milvus 原生 BM25 双路并发召回并经 RRF 融合
@@ -178,12 +185,14 @@ class AdvancedKnowledgeRetriever:
             )
 
             if not candidates:
-                return AdvancedRetrievalResult(
+                result = AdvancedRetrievalResult(
                     docs=[],
                     citations=[],
                     strategy=strategy,
                     query_understanding=qu,
                 )
+                self.last_result = result
+                return result
 
             # b. BGE-Reranker-v2-m3 交叉编码语义精排 Top-K
             reranked_docs = await self.reranker_client.rerank(
@@ -198,12 +207,14 @@ class AdvancedKnowledgeRetriever:
             # d. 组装标准 1..K citations 快照
             citations = build_citation_items(reordered_docs)
 
-            return AdvancedRetrievalResult(
+            result = AdvancedRetrievalResult(
                 docs=reordered_docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
             )
+            self.last_result = result
+            return result
 
         raise ValueError(f"未知检索策略: {strategy}")
 
@@ -285,3 +296,17 @@ class AdvancedKnowledgeRetriever:
             category_filter=category_filter,
         )
         return self.format_faq_hits(hits, keyword=keyword)
+
+    def close(self) -> None:
+        """释放底层向量库与重排客户端的连接资源。"""
+        if hasattr(self.store, "close"):
+            try:
+                self.store.close()
+            except Exception:
+                pass
+        if hasattr(self.reranker_client, "close"):
+            try:
+                self.reranker_client.close()
+            except Exception:
+                pass
+

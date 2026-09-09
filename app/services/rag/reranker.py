@@ -25,17 +25,22 @@ logger = logging.getLogger(__name__)
 class BGERerankerClient:
     """BAAI/bge-reranker-v2-m3 交叉编码 (Cross-Encoder) 重排客户端。"""
 
+    # 类级别断路熔断标记，进程内所有实例共享，杜绝连续阻塞
+    _circuit_broken_until: float = 0.0
+
     def __init__(
         self,
         token: Optional[str] = None,
         model: str = "BAAI/bge-reranker-v2-m3",
         max_retries: int = 3,
-        retry_delay: float = 1.0,
+        retry_delay: float = 0.5,
+        timeout: float = 2.0,
         mock: bool = False,
     ):
         self.model = model
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.timeout = timeout
 
         if mock or os.getenv("MOCK_RERANKER") == "1" or os.getenv("ASTRO_MOCK_RERANKER") == "1":
             self.token = "mock"
@@ -64,9 +69,9 @@ class BGERerankerClient:
             try:
                 from huggingface_hub import InferenceClient
 
-                self.client = InferenceClient(token=self.token)
+                self.client = InferenceClient(token=self.token, timeout=self.timeout)
                 logger.info(
-                    f"BGERerankerClient: 已初始化 HuggingFace InferenceClient (model={self.model})"
+                    f"BGERerankerClient: 已初始化 HuggingFace InferenceClient (model={self.model}, timeout={self.timeout}s)"
                 )
             except Exception as e:
                 logger.warning(f"初始化 HuggingFace InferenceClient 失败: {e}，优雅降级为 Mock 模式")
@@ -173,6 +178,11 @@ class BGERerankerClient:
         if isinstance(res_json, dict) and "error" in res_json:
             raise RuntimeError(f"HuggingFace API 错误: {res_json['error']}")
 
+        # 兼容处理：若 HuggingFace Router 将整个批次的分类结果包裹在单层外层列表中 (如 [[{...}, {...}]])
+        if isinstance(res_json, list) and len(res_json) == 1 and isinstance(res_json[0], list):
+            if len(res_json[0]) == len(doc_texts):
+                res_json = res_json[0]
+
         scores: List[float] = []
         if isinstance(res_json, list):
             for item in res_json:
@@ -194,43 +204,61 @@ class BGERerankerClient:
 
         return scores
 
-    def _rerank_with_retry(self, query: str, doc_texts: List[str]) -> List[float]:
-        """带 3 次指数退避重试与 Mock 兜底的推理调用。"""
+    def _rerank_with_retry(self, query: str, doc_texts: List[str], batch_size: int = 8) -> List[float]:
+        """带分批推理、短超时控制、断路熔断器与确定性 Mock 兜底的重排调用。"""
         if self.is_mock or not self.client:
             return [self._compute_mock_score(query, text) for text in doc_texts]
 
-        success = False
-        last_err = None
-        scores: List[float] = []
+        # 检查断路器熔断状态（若处于熔断期，直接走 Mock 保证毫秒级响应）
+        now = time.time()
+        if now < BGERerankerClient._circuit_broken_until:
+            logger.debug("BGE-Reranker: 熔断保护生效中，直接使用 Mock 语义打分")
+            return [self._compute_mock_score(query, text) for text in doc_texts]
 
-        for attempt in range(self.max_retries):
-            try:
-                scores = self._call_hf_api(query, doc_texts)
-                success = True
-                break
-            except Exception as exc:
-                last_err = exc
-                if attempt < self.max_retries - 1:
-                    sleep_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(
-                        f"BGE-Reranker 推理异常（尝试 {attempt + 1}/{self.max_retries}）: {exc}，"
-                        f"{sleep_time:.3f}s 后重试"
-                    )
-                    time.sleep(sleep_time)
+        all_scores: List[float] = []
+        circuit_tripped = False
 
-        if not success:
-            logger.warning(
-                f"BGE-Reranker 重试 {self.max_retries} 次后仍失败 ({last_err})，优雅降级为 Mock 打分"
-            )
-            scores = [self._compute_mock_score(query, text) for text in doc_texts]
+        # 分批请求 HuggingFace Router 端点（单批 batch_size 避免单请求超载 504）
+        for i in range(0, len(doc_texts), batch_size):
+            batch = doc_texts[i : i + batch_size]
+            if circuit_tripped:
+                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
+                continue
 
-        return scores
+            batch_scores = None
+            last_err = None
+            for attempt in range(self.max_retries):
+                try:
+                    batch_scores = self._call_hf_api(query, batch)
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    err_msg = str(exc).lower()
+                    if "timeout" in err_msg or "504" in err_msg or "timed out" in err_msg:
+                        break
+                    if attempt < self.max_retries - 1:
+                        sleep_time = self.retry_delay * (2 ** attempt)
+                        time.sleep(sleep_time)
+
+            if batch_scores is not None and len(batch_scores) == len(batch):
+                all_scores.extend(batch_scores)
+            else:
+                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断 300 秒，本批及后续全部优雅降级
+                logger.warning(
+                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 300s 并平滑降级为 Mock 语义打分"
+                )
+                BGERerankerClient._circuit_broken_until = time.time() + 300.0
+                circuit_tripped = True
+                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
+
+        return all_scores
 
     def rerank_sync(
         self,
         query: str,
         candidates: List[Dict[str, Any]],
         top_k: int = 10,
+        max_candidates: int = 15,
     ) -> List[Dict[str, Any]]:
         """同步执行候选列表重排与打分。
 
@@ -238,6 +266,7 @@ class BGERerankerClient:
             query: 用户提问
             candidates: 待重排的文档字典列表
             top_k: 截断保留的最大条目数，默认 10
+            max_candidates: 参与 Cross-Encoder 精排的最大候选数（其余作为保底）
 
         Returns:
             按 rerank_score 降序排列的 Top-K 候选列表
@@ -245,16 +274,29 @@ class BGERerankerClient:
         if not candidates:
             return []
 
-        doc_texts = [self._extract_doc_text(c) for c in candidates]
+        # 截取前 max_candidates 条送入 Cross-Encoder，兼顾召回效果与端点负载
+        target_cands = candidates[:max_candidates]
+        tail_cands = candidates[max_candidates:]
+
+        doc_texts = [self._extract_doc_text(c) for c in target_cands]
         scores = self._rerank_with_retry(query, doc_texts)
 
         scored_candidates = []
-        for cand, score in zip(candidates, scores):
+        for cand, score in zip(target_cands, scores):
             item = dict(cand)
             item["rerank_score"] = float(score)
             scored_candidates.append(item)
 
         scored_candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+
+        if len(scored_candidates) < top_k and tail_cands:
+            for cand in tail_cands:
+                item = dict(cand)
+                item["rerank_score"] = item.get("rerank_score", 0.0)
+                scored_candidates.append(item)
+                if len(scored_candidates) >= top_k:
+                    break
+
         return scored_candidates[:top_k]
 
     async def rerank(
@@ -265,3 +307,12 @@ class BGERerankerClient:
     ) -> List[Dict[str, Any]]:
         """异步执行候选列表重排与打分。"""
         return await asyncio.to_thread(self.rerank_sync, query, candidates, top_k)
+
+    def close(self) -> None:
+        """关闭底层 HTTP 客户端以释放连接池与 socket 句柄。"""
+        if self.client is not None and hasattr(self.client, "close"):
+            try:
+                self.client.close()
+            except Exception:
+                pass
+
