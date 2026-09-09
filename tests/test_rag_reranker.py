@@ -333,3 +333,101 @@ async def test_bge_reranker_retry_failure_fallback_to_mock():
         assert len(reranked) == 2
         assert reranked[0]["id"] == 2
         assert reranked[0]["rerank_score"] > reranked[1]["rerank_score"]
+
+
+@pytest.mark.asyncio
+async def test_bge_reranker_timeout_and_batch_configuration():
+    """测试 BGERerankerClient 具备合理的生产级超时、批次与熔断窗口配置。"""
+    reranker = BGERerankerClient(token="hf_test_token", mock=False)
+    # 默认超时时间应至少为 15.0s（避免公网高延迟下 2.0s 频繁超时）
+    assert reranker.timeout >= 15.0
+    # 默认批次应为 4（降低单次推理负载）
+    assert reranker.batch_size == 4
+    # 默认熔断窗口应为 30.0s（而非硬编码 300s 长期降级）
+    assert reranker.circuit_breaker_seconds == 30.0
+
+    # 支持显式参数自定义覆盖
+    custom_reranker = BGERerankerClient(
+        token="hf_test_token",
+        timeout=25.0,
+        batch_size=2,
+        circuit_breaker_seconds=10.0,
+        mock=False,
+    )
+    assert custom_reranker.timeout == 25.0
+    assert custom_reranker.batch_size == 2
+    assert custom_reranker.circuit_breaker_seconds == 10.0
+
+
+@pytest.mark.asyncio
+async def test_bge_reranker_timeout_retry_and_recovery():
+    """测试当遇到 'The read operation timed out' 时，能够进行退避重试并成功恢复，不触发断路熔断。"""
+    reranker = BGERerankerClient(
+        token="hf_test_token",
+        max_retries=2,
+        retry_delay=0.001,
+        mock=False,
+    )
+
+    candidates = [
+        {"id": 1, "answer": "测试解答1"},
+    ]
+
+    fake_hf_response = [
+        [{"label": "LABEL_0", "score": 0.95}],
+    ]
+
+    call_count = 0
+
+    def mock_inner_post(req):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # 模拟第 1 次调用发生读超时 (The read operation timed out)
+            raise TimeoutError("The read operation timed out")
+        return json.dumps(fake_hf_response).encode("utf-8")
+
+    with patch.object(reranker.client, "_inner_post", side_effect=mock_inner_post):
+        reranked = await reranker.rerank("测试", candidates, top_k=1)
+
+        # 核心断言：读超时不应直接放弃，而是重试第 2 次并成功
+        assert call_count == 2
+        assert len(reranked) == 1
+        assert reranked[0]["rerank_score"] == pytest.approx(0.95, abs=1e-4)
+        # 熔断器不应被触发
+        assert not BGERerankerClient.is_circuit_broken()
+
+
+@pytest.mark.asyncio
+async def test_bge_reranker_timeout_exhaustion_trips_configurable_circuit_breaker():
+    """测试读超时在耗尽重试后，熔断器使用配置的 circuit_breaker_seconds (如 30s) 而非固化的 300s。"""
+    reranker = BGERerankerClient(
+        token="hf_test_token",
+        max_retries=2,
+        retry_delay=0.001,
+        circuit_breaker_seconds=45.0,
+        mock=False,
+    )
+
+    candidates = [
+        {"id": 1, "answer": "测试解答内容"},
+    ]
+
+    with patch.object(
+        reranker.client,
+        "_inner_post",
+        side_effect=TimeoutError("The read operation timed out"),
+    ) as mock_post:
+        import time
+        before_call = time.time()
+        reranked = await reranker.rerank("测试", candidates, top_k=1)
+        after_call = time.time()
+
+        # 重试 2 次后耗尽
+        assert mock_post.call_count == 2
+        # 成功降级为 Mock 给出分数
+        assert len(reranked) == 1
+        # 断言熔断器被激活，且解冻时间在 [before_call + 45s, after_call + 45s]
+        assert BGERerankerClient.is_circuit_broken()
+        assert before_call + 44.0 <= BGERerankerClient._circuit_broken_until <= after_call + 46.0
+

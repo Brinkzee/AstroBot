@@ -28,19 +28,63 @@ class BGERerankerClient:
     # 类级别断路熔断标记，进程内所有实例共享，杜绝连续阻塞
     _circuit_broken_until: float = 0.0
 
+    @classmethod
+    def reset_circuit_breaker(cls) -> None:
+        """重置熔断器状态，供自测与单测使用。"""
+        cls._circuit_broken_until = 0.0
+
+    @classmethod
+    def is_circuit_broken(cls) -> bool:
+        """检查当前熔断保护是否生效中。"""
+        return time.time() < cls._circuit_broken_until
+
     def __init__(
         self,
         token: Optional[str] = None,
         model: str = "BAAI/bge-reranker-v2-m3",
-        max_retries: int = 3,
+        max_retries: int = 2,
         retry_delay: float = 0.5,
-        timeout: float = 2.0,
+        timeout: Optional[float] = None,
+        batch_size: Optional[int] = None,
+        circuit_breaker_seconds: Optional[float] = None,
         mock: bool = False,
     ):
         self.model = model
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.timeout = timeout
+
+        # 解析超时时间：显式参数 > settings.HUGGINGFACE_TIMEOUT > 环境变量 > 默认 15.0s
+        if timeout is not None:
+            self.timeout = float(timeout)
+        else:
+            resolved_timeout = (
+                getattr(settings, "HUGGINGFACE_TIMEOUT", None)
+                or getattr(settings, "huggingface_timeout", None)
+                or os.getenv("HUGGINGFACE_TIMEOUT")
+            )
+            self.timeout = float(resolved_timeout) if resolved_timeout is not None else 15.0
+
+        # 解析批次大小：显式参数 > settings.RERANKER_BATCH_SIZE > 默认 4
+        if batch_size is not None:
+            self.batch_size = int(batch_size)
+        else:
+            resolved_bs = (
+                getattr(settings, "RERANKER_BATCH_SIZE", None)
+                or getattr(settings, "reranker_batch_size", None)
+                or os.getenv("RERANKER_BATCH_SIZE")
+            )
+            self.batch_size = int(resolved_bs) if resolved_bs is not None else 4
+
+        # 解析熔断保护窗口：显式参数 > settings.RERANKER_CIRCUIT_BREAKER_SECONDS > 默认 30.0s
+        if circuit_breaker_seconds is not None:
+            self.circuit_breaker_seconds = float(circuit_breaker_seconds)
+        else:
+            resolved_cb = (
+                getattr(settings, "RERANKER_CIRCUIT_BREAKER_SECONDS", None)
+                or getattr(settings, "reranker_circuit_breaker_seconds", None)
+                or os.getenv("RERANKER_CIRCUIT_BREAKER_SECONDS")
+            )
+            self.circuit_breaker_seconds = float(resolved_cb) if resolved_cb is not None else 30.0
 
         if mock or os.getenv("MOCK_RERANKER") == "1" or os.getenv("ASTRO_MOCK_RERANKER") == "1":
             self.token = "mock"
@@ -71,7 +115,7 @@ class BGERerankerClient:
 
                 self.client = InferenceClient(token=self.token, timeout=self.timeout)
                 logger.info(
-                    f"BGERerankerClient: 已初始化 HuggingFace InferenceClient (model={self.model}, timeout={self.timeout}s)"
+                    f"BGERerankerClient: 已初始化 HuggingFace InferenceClient (model={self.model}, timeout={self.timeout}s, batch_size={self.batch_size})"
                 )
             except Exception as e:
                 logger.warning(f"初始化 HuggingFace InferenceClient 失败: {e}，优雅降级为 Mock 模式")
@@ -204,8 +248,13 @@ class BGERerankerClient:
 
         return scores
 
-    def _rerank_with_retry(self, query: str, doc_texts: List[str], batch_size: int = 8) -> List[float]:
-        """带分批推理、短超时控制、断路熔断器与确定性 Mock 兜底的重排调用。"""
+    def _rerank_with_retry(
+        self,
+        query: str,
+        doc_texts: List[str],
+        batch_size: Optional[int] = None,
+    ) -> List[float]:
+        """带分批推理、自适应超时控制、断路熔断器与确定性 Mock 兜底的重排调用。"""
         if self.is_mock or not self.client:
             return [self._compute_mock_score(query, text) for text in doc_texts]
 
@@ -215,12 +264,13 @@ class BGERerankerClient:
             logger.debug("BGE-Reranker: 熔断保护生效中，直接使用 Mock 语义打分")
             return [self._compute_mock_score(query, text) for text in doc_texts]
 
+        effective_batch_size = batch_size if batch_size is not None else self.batch_size
         all_scores: List[float] = []
         circuit_tripped = False
 
-        # 分批请求 HuggingFace Router 端点（单批 batch_size 避免单请求超载 504）
-        for i in range(0, len(doc_texts), batch_size):
-            batch = doc_texts[i : i + batch_size]
+        # 分批请求 HuggingFace Router 端点（单批 batch_size 避免单请求超载 504 / 超时）
+        for i in range(0, len(doc_texts), effective_batch_size):
+            batch = doc_texts[i : i + effective_batch_size]
             if circuit_tripped:
                 all_scores.extend([self._compute_mock_score(query, text) for text in batch])
                 continue
@@ -233,21 +283,25 @@ class BGERerankerClient:
                     break
                 except Exception as exc:
                     last_err = exc
-                    err_msg = str(exc).lower()
-                    if "timeout" in err_msg or "504" in err_msg or "timed out" in err_msg:
-                        break
                     if attempt < self.max_retries - 1:
                         sleep_time = self.retry_delay * (2 ** attempt)
+                        logger.warning(
+                            f"BGE-Reranker 批次推理第 {attempt + 1}/{self.max_retries} 次失败 ({exc})，{sleep_time:.2f}s 后重试..."
+                        )
                         time.sleep(sleep_time)
+                    else:
+                        logger.error(
+                            f"BGE-Reranker 批次推理重试 {self.max_retries} 次全部耗尽，最后错误: {exc}"
+                        )
 
             if batch_scores is not None and len(batch_scores) == len(batch):
                 all_scores.extend(batch_scores)
             else:
-                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断 300 秒，本批及后续全部优雅降级
+                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断，本批及后续全部优雅降级
                 logger.warning(
-                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 300s 并平滑降级为 Mock 语义打分"
+                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 {self.circuit_breaker_seconds:.1f}s 并平滑降级为 Mock 语义打分"
                 )
-                BGERerankerClient._circuit_broken_until = time.time() + 300.0
+                BGERerankerClient._circuit_broken_until = time.time() + self.circuit_breaker_seconds
                 circuit_tripped = True
                 all_scores.extend([self._compute_mock_score(query, text) for text in batch])
 
@@ -279,7 +333,7 @@ class BGERerankerClient:
         tail_cands = candidates[max_candidates:]
 
         doc_texts = [self._extract_doc_text(c) for c in target_cands]
-        scores = self._rerank_with_retry(query, doc_texts)
+        scores = self._rerank_with_retry(query, doc_texts, batch_size=self.batch_size)
 
         scored_candidates = []
         for cand, score in zip(target_cands, scores):

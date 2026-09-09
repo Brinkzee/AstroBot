@@ -27,6 +27,21 @@ class Settings(BaseSettings):
         default=None,
         description="HuggingFace API Token 用于在线 BGE-M3 推理"
     )
+    huggingface_timeout: float = Field(
+        default=15.0,
+        gt=0.0,
+        description="HuggingFace API 推理请求超时时间（秒），适配公网及跨境访问延迟"
+    )
+    reranker_batch_size: int = Field(
+        default=4,
+        gt=0,
+        description="BGE-Reranker 批量推理批次大小，降低单请求负载与推理耗时"
+    )
+    reranker_circuit_breaker_seconds: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="BGE-Reranker 连续异常熔断保护窗口（秒），避免频繁阻塞并支持快速自愈"
+    )
 
     @property
     def MILVUS_URI(self) -> str:
@@ -37,6 +52,21 @@ class Settings(BaseSettings):
     def HUGGINGFACE_TOKEN(self) -> Optional[str]:
         """保持与 SDD 规范中大写属性名称的完全兼容"""
         return self.huggingface_token
+
+    @property
+    def HUGGINGFACE_TIMEOUT(self) -> float:
+        """保持与 SDD 规范中大写属性名称的完全兼容"""
+        return self.huggingface_timeout
+
+    @property
+    def RERANKER_BATCH_SIZE(self) -> int:
+        """保持与 SDD 规范中大写属性名称的完全兼容"""
+        return self.reranker_batch_size
+
+    @property
+    def RERANKER_CIRCUIT_BREAKER_SECONDS(self) -> float:
+        """保持与 SDD 规范中大写属性名称的完全兼容"""
+        return self.reranker_circuit_breaker_seconds
 
     @property
     def effective_base_url(self) -> Optional[str]:
