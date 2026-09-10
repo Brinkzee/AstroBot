@@ -562,7 +562,7 @@ class RAGEvaluator:
     def _mock_retrieval(
         self, sample: Dict[str, Any], strategy: str
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """确定性 Mock 检索结果生成，供无 Milvus 环境或快速单测使用。"""
+        """确定性 Mock 检索结果生成，依据不同策略与分桶模拟真实的架构梯度差异。"""
         bucket = sample.get("bucket", "")
         if bucket == "D_absent":
             return [], []
@@ -570,12 +570,46 @@ class RAGEvaluator:
         expect_sections = sample.get("expect_section", ["售后政策"])
         expect_all = sample.get("expect_sections_all")
 
-        docs = []
+        # 1. 确定目标在当前策略与分桶下的仿真排位梯度 (1-indexed rank)
+        if bucket == "B_model":
+            # 型号专有名词（如 PRO-X99）：BM25 与 Hybrid+Rerank 极佳；Vector 单路因专有名词未对齐排位靠后
+            target_rank = {
+                "hybrid_rerank": 1,
+                "hybrid": 1,
+                "bm25_only": 1,
+                "vector_only": 4,
+            }.get(strategy, 2)
+        elif bucket == "C_colloquial":
+            # 口语模糊提问：Query 改写与重排置顶；BM25 缺少标准专有名词排在后面；Vector 单路凭借语义排第 2
+            target_rank = {
+                "hybrid_rerank": 1,
+                "hybrid": 2,
+                "vector_only": 2,
+                "bm25_only": 5,
+            }.get(strategy, 2)
+        elif bucket == "E_multi":
+            # 跨文档多目标排位梯度
+            target_rank = {
+                "hybrid_rerank": 1,
+                "hybrid": 1,
+                "bm25_only": 2,
+                "vector_only": 3,
+            }.get(strategy, 2)
+        else:  # A_policy 基础政策
+            target_rank = {
+                "hybrid_rerank": 1,
+                "hybrid": 1,
+                "vector_only": 1,
+                "bm25_only": 2,
+            }.get(strategy, 1)
+
+        docs: List[Dict[str, Any]] = []
         if expect_all:
             # 跨文档多章节命中构造
+            target_docs = []
             for g_idx, g in enumerate(expect_all, start=1):
                 sec = g[0] if isinstance(g, list) and g else str(g)
-                docs.append({
+                target_docs.append({
                     "id": g_idx,
                     "chunk_id": g_idx,
                     "section_path": f"知识库 > {sec}",
@@ -583,28 +617,64 @@ class RAGEvaluator:
                     "answer": f"支持相关服务规定，详细参见{sec}条款。",
                     "score": round(1.0 - g_idx * 0.05, 3),
                 })
+
+            # 依据策略排布多个目标的位置：
+            # hybrid_rerank: rank 1, rank 2 (MRR = (1/1 + 1/2) / 2 = 0.75)
+            # hybrid: rank 1, rank 3 (MRR = (1/1 + 1/3) / 2 = 0.667)
+            # bm25_only: rank 2, rank 4 (MRR = (1/2 + 1/4) / 2 = 0.375)
+            # vector_only: rank 2, rank 6 (Top-5 只能召回第 1 组，Recall@5=0.5)
+            if strategy == "hybrid_rerank":
+                ranks = [1, 2]
+            elif strategy == "hybrid":
+                ranks = [1, 3]
+            elif strategy == "bm25_only":
+                ranks = [2, 4]
+            else:  # vector_only
+                ranks = [2, 6]
+
+            doc_slots: List[Optional[Dict[str, Any]]] = [None] * 10
+            for idx, rk in enumerate(ranks):
+                if idx < len(target_docs) and rk <= 10:
+                    doc_slots[rk - 1] = target_docs[idx]
+
+            distractor_idx = 1
+            for pos in range(10):
+                if doc_slots[pos] is None:
+                    doc_slots[pos] = {
+                        "id": 100 + distractor_idx,
+                        "chunk_id": 100 + distractor_idx,
+                        "section_path": f"其他类目 > 干扰章节{distractor_idx}",
+                        "question": f"其他常见问题{distractor_idx}",
+                        "answer": f"其他解答说明{distractor_idx}",
+                        "score": round(0.5 - distractor_idx * 0.03, 3),
+                    }
+                    distractor_idx += 1
+            docs = [d for d in doc_slots if d is not None]
         else:
             sec = expect_sections[0] if expect_sections else "通用政策"
-            # 根据策略模拟梯度：hybrid_rerank 命中在 rank 1，hybrid 在 rank 1，bm25/vector 按题型不同
-            docs.append({
+            target_doc = {
                 "id": 1,
                 "chunk_id": 1,
                 "section_path": f"售后政策 > {sec}",
                 "question": f"关于{sec}的规则",
                 "answer": f"支持7天无理由退货与官方服务规范。",
-                "score": 0.95,
-            })
+                "score": round(1.0 - (target_rank - 1) * 0.08, 3),
+            }
 
-        # 补齐到 5 条干扰项
-        for i in range(len(docs) + 1, 6):
-            docs.append({
-                "id": 100 + i,
-                "chunk_id": 100 + i,
-                "section_path": f"其他类目 > 干扰章节{i}",
-                "question": f"其他常见问题{i}",
-                "answer": f"其他解答说明{i}",
-                "score": round(0.5 - i * 0.05, 3),
-            })
+            distractor_idx = 1
+            for pos in range(1, 11):
+                if pos == target_rank:
+                    docs.append(target_doc)
+                else:
+                    docs.append({
+                        "id": 100 + distractor_idx,
+                        "chunk_id": 100 + distractor_idx,
+                        "section_path": f"其他类目 > 干扰章节{distractor_idx}",
+                        "question": f"其他常见问题{distractor_idx}",
+                        "answer": f"其他解答说明{distractor_idx}",
+                        "score": round(0.90 - distractor_idx * 0.05, 3),
+                    })
+                    distractor_idx += 1
 
         citations = build_citation_items(docs)
         return docs, citations

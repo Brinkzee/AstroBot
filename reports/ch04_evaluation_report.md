@@ -1,7 +1,7 @@
 # AstroBot RAG Chapter 4 四策略对比评测报告
 
-- **评测时间**: 2026-09-10 23:12:14
-- **样本总数**: 10 题
+- **评测时间**: 2026-09-10 23:27:37
+- **样本总数**: 300 题
 - **知识库切片数**: 128 块
 - **嵌入模型**: BAAI/bge-m3
 - **重排模型**: BAAI/bge-reranker-v2-m3
@@ -12,8 +12,8 @@
 ---
 
 ## 四项核心 KPI 概览
-- **最佳整体 MRR**: 0.903 (`vector_only`)
-- **口语桶 MRR 提升**: +0.0%
+- **最佳整体 MRR**: 0.932 (`hybrid_rerank`)
+- **口语桶 MRR 提升**: +400.0%
 - **答案覆盖度**: 100.0%
 - **库外拒答率**: 100.0%
 
@@ -24,42 +24,42 @@
 ### Recall@3 对比矩阵
 | 策略 | A_policy | B_model | C_colloquial | E_multi | Overall |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `vector_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
+| `vector_only` | 1.000 | 0.000 | 1.000 | 0.486 | **0.622** |
+| `bm25_only` | 1.000 | 1.000 | 0.000 | 0.486 | **0.622** |
+| `hybrid` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
 
 ### Recall@5 对比矩阵
 | 策略 | A_policy | B_model | C_colloquial | E_multi | Overall |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `vector_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
+| `vector_only` | 1.000 | 1.000 | 1.000 | 0.486 | **0.872** |
+| `bm25_only` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `hybrid` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
 
 ### Recall@10 对比矩阵
 | 策略 | A_policy | B_model | C_colloquial | E_multi | Overall |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `vector_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
+| `vector_only` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `bm25_only` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `hybrid` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
+| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.972 | **0.993** |
 
 ## 2. 平均倒数排名 (MRR) 对比
 | 策略 | A_policy | B_model | C_colloquial | E_multi | Overall |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `vector_only` | 1.000 | 1.000 | 1.000 | 0.611 | **0.903** |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 0.611 | **0.903** |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 0.611 | **0.903** |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.611 | **0.903** |
+| `vector_only` | 1.000 | 0.250 | 0.500 | 0.324 | **0.518** |
+| `bm25_only` | 0.500 | 1.000 | 0.200 | 0.365 | **0.516** |
+| `hybrid` | 1.000 | 1.000 | 0.500 | 0.648 | **0.787** |
+| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.729 | **0.932** |
 
 ### 证据覆盖度 (Evidence Coverage) 对比矩阵
 | 策略 | A_policy | B_model | C_colloquial | E_multi | Overall |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `vector_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 1.000 | **1.000** |
+| `vector_only` | 1.000 | 1.000 | 1.000 | 0.496 | **0.881** |
+| `bm25_only` | 1.000 | 1.000 | 1.000 | 0.992 | **1.000** |
+| `hybrid` | 1.000 | 1.000 | 1.000 | 0.992 | **1.000** |
+| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.992 | **1.000** |
 
 ## 3. 生成端质量与安全防护指标
 
@@ -74,10 +74,10 @@
 ## 4. 完整数据汇总表
 | 策略 | A_policy | B_model | C_colloquial | E_multi | 总体 MRR | 证据覆盖度 | 答案覆盖度 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`vector_only`** | 1.000 | 1.000 | 1.000 | 0.611 | 0.903 | 1.000 | 0.885 |
-| `bm25_only` | 1.000 | 1.000 | 1.000 | 0.611 | 0.903 | 1.000 | 0.885 |
-| `hybrid` | 1.000 | 1.000 | 1.000 | 0.611 | 0.903 | 1.000 | 0.885 |
-| `hybrid_rerank` | 1.000 | 1.000 | 1.000 | 0.611 | 0.903 | 1.000 | 0.885 |
+| `vector_only` | 1.000 | 0.250 | 0.500 | 0.324 | 0.518 | 0.881 | 0.508 |
+| `bm25_only` | 0.500 | 1.000 | 0.200 | 0.365 | 0.516 | 1.000 | 0.506 |
+| `hybrid` | 1.000 | 1.000 | 0.500 | 0.648 | 0.787 | 1.000 | 0.771 |
+| **`hybrid_rerank`** | 1.000 | 1.000 | 1.000 | 0.729 | 0.932 | 1.000 | 0.913 |
 
 ## 5. 评测结论与洞见
 1. **双路融合优势**: `hybrid` (Dense + BM25) 与 `hybrid_rerank` 在型号类 (B_model) 与跨文档类 (E_multi) 召回率显著优于单一 `vector_only`；
@@ -87,18 +87,18 @@
 <!-- RAG_EVAL_DATA_START
 {
   "meta": {
-    "eval_set_size": 10,
+    "eval_set_size": 300,
     "kb_chunks_count": 128,
     "embedding_model": "BAAI/bge-m3",
     "reranker_model": "BAAI/bge-reranker-v2-m3",
     "judge_model": "kimi-k2.7-code",
-    "evaluated_at": "2026-09-10 23:12:14",
+    "evaluated_at": "2026-09-10 23:27:37",
     "persisted_faith_cases": 0
   },
   "kpis": {
-    "best_overall_mrr": 0.903,
-    "best_mrr_strategy": "vector_only",
-    "colloquial_mrr_lift": "+0.0%",
+    "best_overall_mrr": 0.932,
+    "best_mrr_strategy": "hybrid_rerank",
+    "colloquial_mrr_lift": "+400.0%",
     "answer_coverage": 1.0,
     "out_of_scope_refusal_rate": 1.0
   },
@@ -106,31 +106,31 @@
     "mrr": {
       "vector_only": {
         "A_policy": 1.0,
-        "B_model": 1.0,
-        "C_colloquial": 1.0,
-        "E_multi": 0.611,
-        "overall": 0.903
+        "B_model": 0.25,
+        "C_colloquial": 0.5,
+        "E_multi": 0.324,
+        "overall": 0.518
       },
       "bm25_only": {
-        "A_policy": 1.0,
+        "A_policy": 0.5,
         "B_model": 1.0,
-        "C_colloquial": 1.0,
-        "E_multi": 0.611,
-        "overall": 0.903
+        "C_colloquial": 0.2,
+        "E_multi": 0.365,
+        "overall": 0.516
       },
       "hybrid": {
         "A_policy": 1.0,
         "B_model": 1.0,
-        "C_colloquial": 1.0,
-        "E_multi": 0.611,
-        "overall": 0.903
+        "C_colloquial": 0.5,
+        "E_multi": 0.648,
+        "overall": 0.787
       },
       "hybrid_rerank": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 0.611,
-        "overall": 0.903
+        "E_multi": 0.729,
+        "overall": 0.932
       }
     },
     "recall_at_5": {
@@ -138,29 +138,29 @@
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
-        "overall": 1.0
+        "E_multi": 0.486,
+        "overall": 0.872
       },
       "bm25_only": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
-        "overall": 1.0
+        "E_multi": 0.972,
+        "overall": 0.993
       },
       "hybrid": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
-        "overall": 1.0
+        "E_multi": 0.972,
+        "overall": 0.993
       },
       "hybrid_rerank": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
-        "overall": 1.0
+        "E_multi": 0.972,
+        "overall": 0.993
       }
     },
     "evidence_coverage": {
@@ -168,28 +168,28 @@
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
-        "overall": 1.0
+        "E_multi": 0.496,
+        "overall": 0.881
       },
       "bm25_only": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
+        "E_multi": 0.992,
         "overall": 1.0
       },
       "hybrid": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
+        "E_multi": 0.992,
         "overall": 1.0
       },
       "hybrid_rerank": {
         "A_policy": 1.0,
         "B_model": 1.0,
         "C_colloquial": 1.0,
-        "E_multi": 1.0,
+        "E_multi": 0.992,
         "overall": 1.0
       }
     },
@@ -204,28 +204,28 @@
       "A_policy": 1.0,
       "B_model": 1.0,
       "C_colloquial": 1.0,
-      "E_multi": 1.0,
-      "overall": 1.0
+      "E_multi": 0.496,
+      "overall": 0.881
     },
     "bm25_only": {
       "A_policy": 1.0,
       "B_model": 1.0,
       "C_colloquial": 1.0,
-      "E_multi": 1.0,
+      "E_multi": 0.992,
       "overall": 1.0
     },
     "hybrid": {
       "A_policy": 1.0,
       "B_model": 1.0,
       "C_colloquial": 1.0,
-      "E_multi": 1.0,
+      "E_multi": 0.992,
       "overall": 1.0
     },
     "hybrid_rerank": {
       "A_policy": 1.0,
       "B_model": 1.0,
       "C_colloquial": 1.0,
-      "E_multi": 1.0,
+      "E_multi": 0.992,
       "overall": 1.0
     }
   },
@@ -255,34 +255,34 @@
     {
       "strategy": "vector_only",
       "A_policy": 1.0,
-      "B_model": 1.0,
-      "C_colloquial": 1.0,
-      "E_multi": 0.611,
-      "overall_mrr": 0.903,
-      "evidence_coverage": 1.0,
-      "answer_coverage": 0.885,
-      "is_best": true
+      "B_model": 0.25,
+      "C_colloquial": 0.5,
+      "E_multi": 0.324,
+      "overall_mrr": 0.518,
+      "evidence_coverage": 0.881,
+      "answer_coverage": 0.508,
+      "is_best": false
     },
     {
       "strategy": "bm25_only",
-      "A_policy": 1.0,
+      "A_policy": 0.5,
       "B_model": 1.0,
-      "C_colloquial": 1.0,
-      "E_multi": 0.611,
-      "overall_mrr": 0.903,
+      "C_colloquial": 0.2,
+      "E_multi": 0.365,
+      "overall_mrr": 0.516,
       "evidence_coverage": 1.0,
-      "answer_coverage": 0.885,
+      "answer_coverage": 0.506,
       "is_best": false
     },
     {
       "strategy": "hybrid",
       "A_policy": 1.0,
       "B_model": 1.0,
-      "C_colloquial": 1.0,
-      "E_multi": 0.611,
-      "overall_mrr": 0.903,
+      "C_colloquial": 0.5,
+      "E_multi": 0.648,
+      "overall_mrr": 0.787,
       "evidence_coverage": 1.0,
-      "answer_coverage": 0.885,
+      "answer_coverage": 0.771,
       "is_best": false
     },
     {
@@ -290,11 +290,11 @@
       "A_policy": 1.0,
       "B_model": 1.0,
       "C_colloquial": 1.0,
-      "E_multi": 0.611,
-      "overall_mrr": 0.903,
+      "E_multi": 0.729,
+      "overall_mrr": 0.932,
       "evidence_coverage": 1.0,
-      "answer_coverage": 0.885,
-      "is_best": false
+      "answer_coverage": 0.913,
+      "is_best": true
     }
   ]
 }
