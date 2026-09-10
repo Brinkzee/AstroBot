@@ -9,7 +9,11 @@ class AgentWorkflowState(TypedDict):
     input_query: str
     resolved_query: str
     intent: Optional[str]
+    confidence: Optional[float]
     intent_reason: Optional[str]
+    order_id: Optional[str]
+    order_data: Optional[Dict[str, Any]]
+    suggested_orders: Optional[List[Dict[str, Any]]]
     retrieved_docs: List[Dict[str, Any]]
     confidence_passed: Optional[bool]
     messages: Annotated[List[BaseMessage], add_messages]
@@ -32,7 +36,11 @@ def create_initial_state(
         "input_query": clean_query,
         "resolved_query": clean_query,
         "intent": None,
+        "confidence": None,
         "intent_reason": None,
+        "order_id": None,
+        "order_data": None,
+        "suggested_orders": None,
         "retrieved_docs": [],
         "confidence_passed": None,
         "messages": [HumanMessage(content=clean_query)],

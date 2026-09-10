@@ -10,6 +10,10 @@ def test_create_initial_state_defaults():
     assert state["input_query"] == "我要查物流"
     assert state["resolved_query"] == "我要查物流"
     assert state["intent"] is None
+    assert state["confidence"] is None
+    assert state["order_id"] is None
+    assert state["order_data"] is None
+    assert state["suggested_orders"] is None
     assert state["retrieved_docs"] == []
     assert state["confidence_passed"] is None
     assert state["suggested_actions"] == []
@@ -35,7 +39,11 @@ def test_agent_workflow_state_keys():
         "input_query",
         "resolved_query",
         "intent",
+        "confidence",
         "intent_reason",
+        "order_id",
+        "order_data",
+        "suggested_orders",
         "retrieved_docs",
         "confidence_passed",
         "messages",
