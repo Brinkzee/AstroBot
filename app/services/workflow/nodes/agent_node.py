@@ -23,7 +23,102 @@ AGENT_SYSTEM_BASE = """你是电商平台的生产级主力客服 Agent。
 3. 工具返回结果后，结合已有知识与上下文进行有条理、亲切专业的回答。
 """
 
+REFUND_SPECIALIZED_INSTRUCTIONS = """【退款退货/售后专注裁决专项指令】
+1. 核心任务：结合上述订单真实状态与官方政策条款，专注判定「该订单是否支持退款/退换货/售后」；
+2. 结论与依据：给出明确结论（支持退款或不支持退款）及判断依据（如时效、运费承担方、品类免责约束）；
+3. 严禁重复查单：严禁重复发起 query_order 等冗余工具调用（订单数据已在上下文完整提供）；
+4. 严禁冗长追问：严禁在对话中反复追问用户复杂的退款原因（用户后续提交申请时从固定类目自选）；
+5. 引导退款动作：若判定支持退款，明确提示用户「可点击下方“申请退款”按钮提交退款申请单」。"""
+
 MAX_STEPS = 5
+
+
+def format_order_context(order_data: Dict[str, Any]) -> str:
+    """将订单数据规范化格式化为系统提示词中的订单真实状态卡片"""
+    oid = order_data.get("order_id") or order_data.get("订单编号") or "未知"
+    status = order_data.get("订单状态") or order_data.get("status") or "未知"
+    amount = order_data.get("支付金额") or order_data.get("amount") or order_data.get("price") or "未知"
+    order_time = order_data.get("下单时间") or order_data.get("order_time") or "未知"
+
+    items = order_data.get("商品明细") or order_data.get("items") or []
+    items_desc = []
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                name = item.get("商品名称") or item.get("product_name") or item.get("name") or ""
+                qty = item.get("数量") or item.get("count") or item.get("quantity") or 1
+                price = item.get("单价") or item.get("price") or ""
+                part = f"{name}"
+                details = []
+                if qty:
+                    details.append(f"数量: {qty}")
+                if price:
+                    details.append(f"单价: {price}")
+                if details:
+                    part += f" ({', '.join(details)})"
+                items_desc.append(part)
+            elif isinstance(item, str):
+                items_desc.append(item)
+    elif isinstance(items, str):
+        items_desc.append(items)
+
+    items_str = ", ".join(items_desc) if items_desc else "无明细"
+
+    lines = [
+        "【当前订单真实状态】",
+        f"- 订单编号: {oid}",
+        f"- 订单状态: {status}",
+        f"- 支付金额: {amount}",
+        f"- 下单时间: {order_time}",
+        f"- 商品明细: {items_str}",
+    ]
+    return "\n".join(lines)
+
+
+def is_refund_approved(response_text: str) -> bool:
+    """判定大模型回答是否明确支持退款/退货/售后"""
+    if not response_text:
+        return False
+    text = response_text.strip()
+
+    # 明确否定/不支持退款的特征
+    neg_phrases = [
+        "不支持退",
+        "不支持申请退",
+        "无法退",
+        "无法办理退",
+        "无法申请退",
+        "不能退",
+        "不可退",
+        "不予退",
+        "不符合退",
+        "拒绝退",
+        "超出退货",
+        "超出退换",
+        "超过退货",
+        "超过退换",
+        "超出售后",
+        "超过售后",
+        "不满足退",
+    ]
+    for neg in neg_phrases:
+        if neg in text:
+            return False
+
+    # 支持退款的正向语义
+    pos_phrases = [
+        "支持退",
+        "可以退",
+        "符合退",
+        "允许退",
+        "申请退款",
+        "办理退款",
+        "可退",
+        "支持7天",
+        "支持七天",
+    ]
+    return any(pos in text for pos in pos_phrases)
+
 
 async def main_agent_node(
     state: AgentWorkflowState,
@@ -35,15 +130,30 @@ async def main_agent_node(
     available_tools = tools if tools is not None else default_tool_registry.get_all_tools()
     tools_map = {t.name: t for t in available_tools}
 
-    # 1. 构造上下文提示词（融合上游知识库证据）
+    # 1. 构造上下文提示词（融合上游知识库证据与订单真实状态）
     sys_content = AGENT_SYSTEM_BASE
+
+    order_data = state.get("order_data")
+    if order_data and isinstance(order_data, dict):
+        sys_content += "\n" + format_order_context(order_data)
+        sys_content += "\n" + REFUND_SPECIALIZED_INSTRUCTIONS
+
     docs = state.get("retrieved_docs") or []
     if docs:
-        knowledge_texts = []
-        for i, doc in enumerate(docs[:3], 1):
-            text = doc.get("text") or doc.get("content") or str(doc)
-            knowledge_texts.append(f"【参考知识 {i}】{text}")
-        sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
+        if order_data and isinstance(order_data, dict):
+            # 退款专项场景：取 Top 3~5 篇政策证据，标注【参考政策条款 i】
+            policy_texts = []
+            for i, doc in enumerate(docs[:5], 1):
+                text = doc.get("text") or doc.get("content") or str(doc)
+                policy_texts.append(f"【参考政策条款 {i}】{text}")
+            sys_content += "\n以下为检索到的官方退换货与售后政策条款，请严格遵照执行：\n" + "\n".join(policy_texts)
+        else:
+            # 普通业务场景：取 Top 3 篇，标注【参考知识 i】
+            knowledge_texts = []
+            for i, doc in enumerate(docs[:3], 1):
+                text = doc.get("text") or doc.get("content") or str(doc)
+                knowledge_texts.append(f"【参考知识 {i}】{text}")
+            sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
 
     # 2. 准备消息列表（以状态中原有历史为基础）
     messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
@@ -125,10 +235,18 @@ async def main_agent_node(
             total_tokens["completion_tokens"] += comp_t
             total_tokens["total_tokens"] += tot_t
 
+    # 动作推荐下发 (suggested_actions)
+    suggested_actions = list(state.get("suggested_actions") or [])
+    is_refund_scenario = bool(order_data or (state.get("intent") in ("退款退货", "售后", "refund")))
+    if is_refund_scenario and is_refund_approved(final_text):
+        if "apply_refund" not in suggested_actions:
+            suggested_actions.append("apply_refund")
+
     return {
         "response_text": final_text,
         "messages": messages,
         "steps_taken": steps,
         "token_usage": total_tokens,
+        "suggested_actions": suggested_actions,
         "status": "success",
     }
