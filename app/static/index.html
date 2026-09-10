@@ -615,6 +615,83 @@
       margin-left: 6px;
       transition: opacity 0.2s ease;
     }
+
+    /* 建议操作按钮容器与解耦按钮 */
+    .action-buttons-container {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+
+    .btn-action-agent {
+      background: #eff6ff;
+      color: #2563eb;
+      border-color: #bfdbfe;
+    }
+
+    .btn-action-agent:hover:not(:disabled) {
+      background: #dbeafe;
+      border-color: #93c5fd;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+    }
+
+    .btn-action-ticket {
+      background: #f0fdf4;
+      color: #16a34a;
+      border-color: #bbf7d0;
+    }
+
+    .btn-action-ticket:hover:not(:disabled) {
+      background: #dcfce7;
+      border-color: #86efac;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(22, 163, 74, 0.15);
+    }
+
+    .btn-action.btn-disabled,
+    .btn-action:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    /* 系统通知提示 (居中浅灰) */
+    .msg-row.system-hint {
+      align-self: center;
+      justify-content: center;
+      max-width: 90%;
+      margin: 4px 0;
+    }
+
+    .system-msg {
+      font-size: 12px;
+      color: #64748b;
+      background: #f1f5f9;
+      padding: 6px 16px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      text-align: center;
+      display: inline-block;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -663,6 +740,7 @@
       <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
       <button class="chip-btn" onclick="sendQuickText('查询订单 1001 的信息')">📦 查订单1001</button>
       <button class="chip-btn" onclick="sendQuickText('帮我创建售后工单，手机收到后外壳有划痕')">🎫 创建售后工单</button>
+      <button class="chip-btn highlight" onclick="sendQuickText('我要投诉')">⚠️ 验收4: 我要投诉(建议操作)</button>
     </div>
 
     <!-- 底部输入栏 -->
@@ -751,6 +829,34 @@
       row.innerHTML = `<div class="msg-content">${escapeHtml(text)}</div>`;
       messagesContainer.appendChild(row);
       scrollToBottom();
+    }
+
+    function appendSystemMessage(text) {
+      const row = document.createElement('div');
+      row.className = 'msg-row system-hint';
+      row.innerHTML = `<div class="system-msg">${escapeHtml(text)}</div>`;
+      messagesContainer.appendChild(row);
+      scrollToBottom();
+    }
+
+    function appendAssistantMessage(text, avatarChar = '🐱') {
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.style.cssText = 'width:36px; height:36px; font-size:18px;';
+      avatar.innerText = avatarChar;
+
+      const content = document.createElement('div');
+      content.className = 'msg-content';
+      content.innerHTML = `<div class="text-body">${renderContentWithCitations(text)}</div>`;
+
+      row.appendChild(avatar);
+      row.appendChild(content);
+      messagesContainer.appendChild(row);
+      scrollToBottom();
+      return content;
     }
 
     function createBotPlaceholder() {
@@ -852,6 +958,8 @@
               if (data.event_type === 'citations') {
                 botContentEl._citations = data.citations || [];
                 console.log('Received citations snapshot:', botContentEl._citations);
+              } else if (data.event_type === 'actions') {
+                renderActionButtons(botContentEl, data.actions || []);
               } else if (data.event_type === 'tool_start') {
                 toolContainer.style.display = 'block';
                 const label = data.tool_label || data.tool_name;
@@ -920,6 +1028,84 @@
         isStreaming = false;
         btnSend.disabled = false;
         userInput.focus();
+      }
+    }
+
+    function renderActionButtons(botContentEl, actions) {
+      if (!actions || !actions.length) return;
+
+      let container = botContentEl.querySelector('.action-buttons-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'action-buttons-container';
+        const fbBar = botContentEl.querySelector('.feedback-bar');
+        if (fbBar) {
+          botContentEl.insertBefore(container, fbBar);
+        } else {
+          botContentEl.appendChild(container);
+        }
+      } else {
+        container.innerHTML = '';
+      }
+
+      for (const action of actions) {
+        if (action === 'transfer_agent') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-agent';
+          btn.innerHTML = '<span>👤</span><span>转人工</span>';
+          btn.onclick = () => handleTransferAgent(btn);
+          container.appendChild(btn);
+        } else if (action === 'create_ticket') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-ticket';
+          btn.innerHTML = '<span>🎫</span><span>建工单</span>';
+          btn.onclick = () => handleCreateTicket(btn);
+          container.appendChild(btn);
+        }
+      }
+      scrollToBottom();
+    }
+
+    function handleTransferAgent(btn) {
+      appendSystemMessage('已转接人工客服');
+      appendAssistantMessage('您好，我是客服小猫，请问有什么可以帮您的 🐱', '🐱');
+      btn.disabled = true;
+      btn.classList.add('btn-disabled');
+    }
+
+    async function handleCreateTicket(btn) {
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span><span>创建中...</span>';
+
+      try {
+        const res = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            conversation_id: currentConversationId,
+            description: '用户申请客服工单',
+            ticket_type: '投诉'
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + res.status));
+        }
+
+        const data = await res.json();
+        appendSystemMessage(`已为您成功创建人工工单【${data.ticket_no}】，客服将在24小时内跟进处理。`);
+        btn.innerHTML = '<span>✅</span><span>已建工单</span>';
+        btn.classList.add('btn-disabled');
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        appendSystemMessage(`创建工单失败: ${err.message}`);
       }
     }
 
