@@ -10,6 +10,7 @@ from app.services.workflow.nodes.knowledge_node import (
     knowledge_fallback_node,
 )
 from app.services.workflow.nodes.gate import confidence_gate
+from app.services.workflow.nodes.agent_node import main_agent_node
 
 __all__ = [
     "coreference_resolution_node",
@@ -20,4 +21,5 @@ __all__ = [
     "knowledge_retrieval_node",
     "knowledge_fallback_node",
     "confidence_gate",
+    "main_agent_node",
 ]
