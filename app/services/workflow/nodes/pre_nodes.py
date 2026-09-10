@@ -165,68 +165,133 @@ def coreference_resolution_node(
 coreference_rewrite_node = coreference_resolution_node
 
 VALID_INTENTS = {"物流", "订单", "商品咨询", "退款退货", "售后", "投诉", "闲聊"}
+ALL_INTENTS = VALID_INTENTS | {"其他"}
 
-INTENT_SYSTEM_PROMPT = """你是一个电商客服意图识别专家。
-请将用户的输入严格分类为以下七类之一：
-1. 物流：询问包裹轨迹、发货进度、快递单号等
-2. 订单：询问订单详情、金额、明细、下单时间等
-3. 商品咨询：询问商品价格、规格、尺码、库存等
-4. 退款退货：询问退款政策、退换货流程、运费规则等
-5. 售后：质保维修、商品损坏等售后支持
+INTENT_FOUR_ELEMENTS_PROMPT = """你是一个电商客服意图识别专家。
+请将用户的输入严格分类为以下 8 种意图之一，并评估你的判定置信度（0.0 ~ 1.0 之间的浮点数）。
+
+【要素 1: 8 分类枚举说明】
+1. 物流：包裹轨迹、发货时效、快递单号、派送进度等
+2. 订单：订单详情、金额、明细、下单时间、订单修改等
+3. 商品咨询：商品价格、规格、尺码、库存、功能等咨询
+4. 退款退货：退货政策、退款流程、运费承担、是否能退等
+5. 售后：质保维修、商品损坏、少件漏发补寄等售后技术服务
 6. 投诉：对服务态度不满、虚假宣传、强烈抗议、明确表示要投诉等
-7. 闲聊：打招呼、问候、感谢、非业务寒暄等
+7. 闲聊：打招呼、问候、感谢、非业务日常寒暄等
+8. 其他：非电商商城业务问题（例如询问天气、算算术、讲故事、写诗）、语义含混无法辨识的怪问题
 
-请严格返回如下 JSON 格式，不要返回任何额外文字：
-{"intent": "分类名称", "reason": "判定依据简述"}
-"""
+【要素 2: 强制 JSON 输出格式】
+请严格返回如下 JSON 格式，不要返回任何额外文字、解释或代码标记：
+{"intent": "分类名称", "confidence": 0.95, "reason": "判定依据简述"}
+
+【要素 3: 边界 Few-shot 样例】
+- 用户："羽绒服拉链坏了怎么修" -> {"intent": "售后", "confidence": 0.95, "reason": "商品拉链损坏维修质保属于售后"}
+- 用户："衣服收到了码数小了想退掉" -> {"intent": "退款退货", "confidence": 0.98, "reason": "尺码不合申请退货退款"}
+- 用户："我的快递到哪了赶紧催催" -> {"intent": "物流", "confidence": 0.95, "reason": "催促快递进度属于物流轨迹"}
+- 用户："退款怎么还没到账" -> {"intent": "退款退货", "confidence": 0.96, "reason": "催退款进度属于退款流程"}
+- 用户："今天北京天气怎么样" -> {"intent": "其他", "confidence": 0.99, "reason": "天气等非电商商城业务问题"}
+- 用户："你们什么态度，我要投诉你们店铺" -> {"intent": "投诉", "confidence": 0.98, "reason": "对服务态度强烈抗议明确要求投诉"}
+
+【要素 4: 「其他」兜底保护规则】
+拿不准、信息缺失无法判断、或超出上述 7 类电商业务领域的怪问题，一律判定为「其他」，置信度依语义评估，绝不硬塞进业务意图！"""
+
+INTENT_SYSTEM_PROMPT = INTENT_FOUR_ELEMENTS_PROMPT
 
 CHITCHAT_FIXED_TEXT = "您好！我是您的智能客服助手，请问有什么可以帮您？如果您需要查询订单、追踪物流或咨询售后退换货政策，随时发给我哦~"
 
 COMPLAINT_SOOTHING_TEXT = "非常抱歉给您带来了不好的体验，请您消消气。我们非常重视您的反馈与诉求！您可以点击下方选项转接人工客服实时沟通，或直接提交人工客服工单，我们将由专人第一时间跟进为您处理。"
 
-async def intent_recognition_node(
-    state: AgentWorkflowState,
-    model: Optional[Any] = None,
-) -> Dict[str, Any]:
-    """意图识别节点：单次轻量 Prompt 判定 7 分类，输出 JSON"""
-    query = state.get("resolved_query") or state.get("input_query", "")
-    llm = model or get_chat_model(streaming=False)
-    
-    messages = [
-        SystemMessage(content=INTENT_SYSTEM_PROMPT),
-        HumanMessage(content=f"用户提问：{query}"),
-    ]
-    try:
-        resp = await llm.ainvoke(messages)
-        content = str(resp.content or "").strip()
-        # 清除可能的 markdown 代码块标识
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        data = json.loads(content.strip())
-        raw_intent = str(data.get("intent", "")).strip()
-        intent = raw_intent if raw_intent in VALID_INTENTS else "售后"
-        reason = str(data.get("reason", ""))
-    except Exception as e:
-        logger.warning(f"意图识别 JSON 解析异常，自动降级为业务数据类-售后: {e}")
-        intent = "售后"
-        reason = f"解析兜底: {str(e)}"
+OTHER_FALLBACK_TEXT = "您好，我是电商智能客服助手，专注于为您解答商品咨询、查询订单物流、办理售后与退换货等商城业务问题。关于您刚才提到的问题已超出我的业务范围，如需其他协助可选择转接人工客服。"
 
+
+def _clean_json_markdown(content: str) -> str:
+    """清除 LLM 输出中可能包含的 markdown 代码块标记"""
+    text = content.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _parse_intent_payload(content: str) -> Dict[str, Any]:
+    """解析大模型返回的 JSON 意图及置信度 payload，具备异常兜底能力"""
+    text = _clean_json_markdown(content)
+    data = json.loads(text)
+    raw_intent = str(data.get("intent", "")).strip()
+    if raw_intent in ALL_INTENTS:
+        intent = raw_intent
+    else:
+        intent = "其他"
+
+    raw_conf = data.get("confidence")
+    if raw_conf is None:
+        confidence = 1.0
+    else:
+        confidence = float(raw_conf)
+
+    reason = str(data.get("reason") or data.get("intent_reason") or "")
     return {
         "intent": intent,
+        "confidence": confidence,
         "intent_reason": reason,
     }
 
+
+async def _invoke_intent_model(target_model: Any, query: str) -> Dict[str, Any]:
+    """调用单个意图识别模型并返回标准化意图字典，解析失败优雅降级为「其他」"""
+    messages = [
+        SystemMessage(content=INTENT_FOUR_ELEMENTS_PROMPT),
+        HumanMessage(content=f"用户提问：{query}"),
+    ]
+    try:
+        resp = await target_model.ainvoke(messages)
+        content = str(resp.content or "").strip()
+        return _parse_intent_payload(content)
+    except Exception as e:
+        logger.warning(f"意图识别模型调用或 JSON 解析异常，自动降级为「其他」: {e}")
+        return {
+            "intent": "其他",
+            "confidence": 0.0,
+            "intent_reason": "解析异常降级",
+        }
+
+
+async def intent_recognition_node(
+    state: AgentWorkflowState,
+    model: Optional[Any] = None,
+    small_model: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """意图识别节点：严格执行 Prompt 四件套与置信度双层模型级联降级策略"""
+    query = state.get("resolved_query") or state.get("input_query", "")
+
+    # 策略 1: 若未传入小模型，直接使用主力大模型判定
+    if small_model is None:
+        primary_model = model or get_chat_model(streaming=False)
+        return await _invoke_intent_model(primary_model, query)
+
+    # 策略 2: 传入小模型时，先由小模型轻量判定
+    small_result = await _invoke_intent_model(small_model, query)
+
+    # 若置信度 >= 0.85 且意图属于 7 类常规业务之一（非「其他」），直接采纳
+    if small_result["confidence"] >= 0.85 and small_result["intent"] in VALID_INTENTS:
+        return small_result
+
+    # 若置信度 < 0.85 或分类落入「其他」，触发级联重评：调用主力大模型重新判定
+    primary_model = model or get_chat_model(streaming=False)
+    return await _invoke_intent_model(primary_model, query)
+
+
 def chitchat_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    """闲聊节点：直接返回预设固定亲和话术，不花大模型调用"""
+    """闲聊节点：直接返回预设固定亲和话术，不消耗模型调用"""
     return {
         "response_text": CHITCHAT_FIXED_TEXT,
         "suggested_actions": [],
         "status": "chitchat",
     }
+
 
 def complaint_node(state: AgentWorkflowState) -> Dict[str, Any]:
     """投诉节点：安抚话术 + 推荐双按钮，不进 Agent，后端不自动执行动作"""
@@ -234,4 +299,13 @@ def complaint_node(state: AgentWorkflowState) -> Dict[str, Any]:
         "response_text": COMPLAINT_SOOTHING_TEXT,
         "suggested_actions": ["transfer_agent", "create_ticket"],
         "status": "complaint",
+    }
+
+
+def other_fallback_node(state: AgentWorkflowState) -> Dict[str, Any]:
+    """兜底节点：超出电商业务领域或怪问题的统一兜底话术与转人工建议动作"""
+    return {
+        "response_text": OTHER_FALLBACK_TEXT,
+        "suggested_actions": ["transfer_agent"],
+        "status": "other_fallback",
     }
