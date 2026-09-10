@@ -163,6 +163,7 @@ class ChatService:
         Yields:
             {"event_type": "tool_start", "conversation_id": int, "tool_name": str, "tool_label": str, "args": dict}
             {"event_type": "tool_end", "conversation_id": int, "tool_name": str, "success": bool}
+            {"event_type": "order_selector", "conversation_id": int, "orders": list}
             {"event_type": "text", "conversation_id": int, "content": str}
             {"event_type": "actions", "conversation_id": int, "actions": list}
             {"event_type": "error", "conversation_id": Optional[int], "error": str}
@@ -228,7 +229,15 @@ class ChatService:
                             tool_call_id=t_call_id,
                         )
 
-                # 5. 输出 text 文本事件
+                # 5. 若状态为 need_order_selection 或存在 suggested_orders，发射 order_selector 卡片选择事件
+                if final_state.get("status") == "need_order_selection" or final_state.get("suggested_orders"):
+                    yield {
+                        "event_type": "order_selector",
+                        "conversation_id": conv_id,
+                        "orders": final_state.get("suggested_orders") or [],
+                    }
+
+                # 6. 输出 text 文本事件
                 resp_text = str(final_state.get("response_text") or "")
                 if resp_text:
                     yield {
@@ -243,7 +252,7 @@ class ChatService:
                         content=resp_text,
                     )
 
-                # 6. 如果有建议操作 suggested_actions，发射 actions 事件
+                # 7. 如果有建议操作 suggested_actions，发射 actions 事件
                 actions = final_state.get("suggested_actions") or []
                 if actions:
                     yield {
