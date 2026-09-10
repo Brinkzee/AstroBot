@@ -673,6 +673,292 @@
       box-shadow: none !important;
     }
 
+    .btn-action-refund {
+      background: #fff7ed;
+      color: #c2410c;
+      border-color: #ffedd5;
+    }
+
+    .btn-action-refund:hover:not(:disabled) {
+      background: #ffedd5;
+      border-color: #fed7aa;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(194, 65, 12, 0.15);
+    }
+
+    /* 订单选择卡片容器 */
+    .order-selector-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 10px 0 6px 0;
+      animation: fadeIn 0.25s ease-out forwards;
+    }
+
+    .order-cards-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .order-card-item {
+      background: #ffffff;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-align: left;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      user-select: none;
+    }
+
+    .order-card-item:hover:not(.disabled) {
+      border-color: var(--primary);
+      background: #f8faff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+    }
+
+    .order-card-item.selected {
+      border-color: #2563eb;
+      background: #eff6ff;
+      cursor: default;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+    }
+
+    .order-card-item.disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      background: #f8fafc;
+    }
+
+    .order-card-left {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .order-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .order-card-id {
+      font-family: monospace;
+      font-weight: 700;
+      font-size: 13px;
+      color: #1e293b;
+      background: #f1f5f9;
+      padding: 1px 6px;
+      border-radius: 6px;
+    }
+
+    .order-card-tag {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .order-tag-shipped { background: #dbeafe; color: #1e40af; }
+    .order-tag-pending { background: #fef3c7; color: #92400e; }
+    .order-tag-completed { background: #dcfce7; color: #166534; }
+    .order-tag-default { background: #f1f5f9; color: #475569; }
+
+    .order-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .order-card-time {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .order-card-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .order-card-price {
+      font-size: 14px;
+      font-weight: 700;
+      color: #dc2626;
+    }
+
+    .btn-select-order {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: var(--primary);
+      border: 1px solid #bfdbfe;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .order-card-item:hover:not(.disabled) .btn-select-order {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+    .order-card-item.selected .btn-select-order {
+      background: #22c55e;
+      color: #ffffff;
+      border-color: #22c55e;
+    }
+
+    /* 退款弹窗 Modal */
+    .refund-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(4px);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+
+    .refund-modal-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .refund-modal {
+      background: #ffffff;
+      border-radius: 18px;
+      width: 90%;
+      max-width: 480px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+      transform: translateY(12px) scale(0.97);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      border: 1px solid var(--border-color);
+    }
+
+    .refund-modal-overlay.open .refund-modal {
+      transform: translateY(0) scale(1);
+    }
+
+    .refund-modal-header {
+      padding: 16px 20px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .refund-modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .refund-modal-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .refund-form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .refund-form-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    .refund-form-input, .refund-form-select, .refund-form-textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      font-size: 14px;
+      color: var(--text-main);
+      background: #ffffff;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .refund-form-input:focus, .refund-form-select:focus, .refund-form-textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .refund-form-input:disabled, .refund-form-input[readonly] {
+      background: #f1f5f9;
+      color: #475569;
+      cursor: default;
+    }
+
+    .refund-modal-footer {
+      padding: 14px 20px;
+      background: #f8fafc;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .btn-modal-cancel {
+      padding: 7px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      background: #ffffff;
+      color: #64748b;
+      font-size: 13.5px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-modal-cancel:hover {
+      background: #f1f5f9;
+      color: #334155;
+    }
+
+    .btn-modal-submit {
+      padding: 7px 18px;
+      border-radius: 10px;
+      border: none;
+      background: var(--primary-gradient);
+      color: #ffffff;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .btn-modal-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+    .btn-modal-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     /* 系统通知提示 (居中浅灰) */
     .msg-row.system-hint {
       align-self: center;
@@ -735,6 +1021,7 @@
 
     <!-- 快捷提问胶囊 -->
     <div class="quick-chips-container">
+      <button class="chip-btn highlight" style="background:#fef3c7; border-color:#fde68a; color:#b45309;" onclick="sendQuickText('这个能退吗')">🔄 Ch06验收: 这个能退吗(触发缺单卡片)</button>
       <button class="chip-btn highlight" onclick="sendQuickText('订单 1001 的物流到哪了')">🚚 验收1: 查物流到哪了</button>
       <button class="chip-btn highlight" onclick="sendQuickText('退货政策是什么')">📋 验收2: 查退货政策</button>
       <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
@@ -773,9 +1060,48 @@
     </div>
   </div>
 
+  <!-- 退款申请弹窗 Modal -->
+  <div class="refund-modal-overlay" id="refund-modal-overlay" onclick="closeRefundModalOnOverlay(event)">
+    <div class="refund-modal" onclick="event.stopPropagation()">
+      <div class="refund-modal-header">
+        <div class="refund-modal-title">
+          <span>📝</span>
+          <span>申请售后退款</span>
+        </div>
+        <button class="btn-drawer-close" onclick="closeRefundModal()">&times;</button>
+      </div>
+      <div class="refund-modal-body">
+        <div class="refund-form-group">
+          <label class="refund-form-label">关联退款订单号</label>
+          <input type="text" id="refund-modal-order-id" class="refund-form-input" readonly value="1001">
+        </div>
+        <div class="refund-form-group">
+          <label class="refund-form-label">退款原因 <span style="color:#ef4444;">*</span></label>
+          <select id="refund-modal-reason" class="refund-form-select">
+            <option value="7天无理由退货">7天无理由退货</option>
+            <option value="商品质量问题/破损">商品质量问题/破损</option>
+            <option value="少件/漏发/错发">少件/漏发/错发</option>
+            <option value="尺码/规格不合">尺码/规格不合</option>
+            <option value="物流停滞想退款">物流停滞想退款</option>
+          </select>
+        </div>
+        <div class="refund-form-group">
+          <label class="refund-form-label">补充说明 (可选)</label>
+          <textarea id="refund-modal-notes" class="refund-form-textarea" rows="3" placeholder="请描述具体退款原因或商品情况..."></textarea>
+        </div>
+      </div>
+      <div class="refund-modal-footer">
+        <button type="button" class="btn-modal-cancel" onclick="closeRefundModal()">取消</button>
+        <button type="button" class="btn-modal-submit" id="btn-refund-submit" onclick="submitRefundModal()">确认提交</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentConversationId = null;
     let isStreaming = false;
+    let currentRefundOrderId = null;
+    let activeRefundBtn = null;
 
     const messagesContainer = document.getElementById('messages-container');
     const userInput = document.getElementById('user-input');
@@ -801,6 +1127,8 @@
 
     btnClear.addEventListener('click', () => {
       currentConversationId = null;
+      currentRefundOrderId = null;
+      activeRefundBtn = null;
       sessionDisplay.innerText = '会话: 自动生成';
       messagesContainer.innerHTML = `
         <div class="msg-row bot">
@@ -890,6 +1218,12 @@
       const text = userInput.value.trim();
       if (!text || isStreaming) return;
 
+      // 提取提问中可能包含的订单号 (如 退款订单: 1001 或 订单1001)
+      const orderMatch = text.match(/\b(100[1-9])\b/);
+      if (orderMatch) {
+        currentRefundOrderId = orderMatch[1];
+      }
+
       appendUserMessage(text);
       userInput.value = '';
       userInput.style.height = 'auto';
@@ -955,7 +1289,9 @@
               }
 
               // 事件分流处理
-              if (data.event_type === 'citations') {
+              if (data.event_type === 'order_selector') {
+                renderOrderSelectorCards(botContentEl, data.orders || []);
+              } else if (data.event_type === 'citations') {
                 botContentEl._citations = data.citations || [];
                 console.log('Received citations snapshot:', botContentEl._citations);
               } else if (data.event_type === 'actions') {
@@ -1062,6 +1398,13 @@
           btn.className = 'btn-action btn-action-ticket';
           btn.innerHTML = '<span>🎫</span><span>建工单</span>';
           btn.onclick = () => handleCreateTicket(btn);
+          container.appendChild(btn);
+        } else if (action === 'apply_refund') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-refund';
+          btn.innerHTML = '<span>📝</span><span>申请退款</span>';
+          btn.onclick = () => openRefundModal(btn);
           container.appendChild(btn);
         }
       }
@@ -1180,12 +1523,146 @@
       if (drawerEl) drawerEl.classList.remove('open');
     }
 
-    // ESC 键平滑收起抽屉
+    // ESC 键平滑收起抽屉与退款弹窗
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeCitationDrawer();
+        closeRefundModal();
       }
     });
+
+    /* ==========================================================================
+       Ch06: 订单卡片选择与退款表单交互
+       ========================================================================== */
+    function renderOrderSelectorCards(botContentEl, orders) {
+      if (!orders || !orders.length) return;
+      let container = botContentEl.querySelector('.order-selector-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'order-selector-container';
+        const textBody = botContentEl.querySelector('.text-body');
+        if (textBody) {
+          botContentEl.insertBefore(container, textBody);
+        } else {
+          botContentEl.appendChild(container);
+        }
+      }
+
+      container.innerHTML = `
+        <div style="font-size:12.5px; color:#475569; margin-bottom:4px; font-weight:600;">📋 请点选需要办理退款的订单：</div>
+        <div class="order-cards-list">
+          ${orders.map(order => {
+            const tagClass = order.status === '已发货' ? 'order-tag-shipped' :
+                             order.status === '待支付' ? 'order-tag-pending' :
+                             order.status === '已完成' ? 'order-tag-completed' : 'order-tag-default';
+            return `
+              <div class="order-card-item" data-order-id="${escapeHtml(order.order_id)}" onclick="selectOrderCard(this, '${escapeHtml(order.order_id)}')">
+                <div class="order-card-left">
+                  <div class="order-card-header">
+                    <span class="order-card-id">#${escapeHtml(order.order_id)}</span>
+                    <span class="order-card-tag ${tagClass}">${escapeHtml(order.status || '未知')}</span>
+                  </div>
+                  <div class="order-card-title">${escapeHtml(order.product_name || '商品')}</div>
+                  <div class="order-card-time">${escapeHtml(order.create_time || '')}</div>
+                </div>
+                <div class="order-card-right">
+                  <span class="order-card-price">${escapeHtml(order.amount || '')}</span>
+                  <button type="button" class="btn-select-order">选择此单</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+      scrollToBottom();
+    }
+
+    function selectOrderCard(cardEl, orderId) {
+      if (isStreaming) return;
+      const list = cardEl.closest('.order-cards-list');
+      if (list) {
+        list.querySelectorAll('.order-card-item').forEach(c => {
+          c.classList.remove('selected');
+          c.classList.add('disabled');
+          const btn = c.querySelector('.btn-select-order');
+          if (btn) btn.innerText = '未选择';
+        });
+      }
+      cardEl.classList.remove('disabled');
+      cardEl.classList.add('selected');
+      const btn = cardEl.querySelector('.btn-select-order');
+      if (btn) btn.innerText = '✓ 已选';
+
+      currentRefundOrderId = orderId;
+
+      // 自动回填输入框并无缝发送，驱动工作流继续推进
+      userInput.value = `退款订单: ${orderId}`;
+      sendMessage();
+    }
+
+    function openRefundModal(btn) {
+      activeRefundBtn = btn;
+      const orderInput = document.getElementById('refund-modal-order-id');
+      orderInput.value = currentRefundOrderId || '1001';
+      document.getElementById('refund-modal-notes').value = '';
+      document.getElementById('refund-modal-overlay').classList.add('open');
+    }
+
+    function closeRefundModal() {
+      const overlay = document.getElementById('refund-modal-overlay');
+      if (overlay) overlay.classList.remove('open');
+      activeRefundBtn = null;
+    }
+
+    function closeRefundModalOnOverlay(e) {
+      if (e.target === document.getElementById('refund-modal-overlay')) {
+        closeRefundModal();
+      }
+    }
+
+    async function submitRefundModal() {
+      const orderId = document.getElementById('refund-modal-order-id').value.trim() || (currentRefundOrderId || '1001');
+      const reason = document.getElementById('refund-modal-reason').value;
+      const notes = document.getElementById('refund-modal-notes').value.trim();
+      const submitBtn = document.getElementById('btn-refund-submit');
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = '提交中...';
+
+      try {
+        const description = `【退款申请】订单号: ${orderId}，原因: ${reason}${notes ? '，补充说明: ' + notes : ''}`;
+        const res = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            conversation_id: currentConversationId,
+            description: description,
+            ticket_type: '售后'
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + res.status));
+        }
+
+        const data = await res.json();
+        closeRefundModal();
+        appendSystemMessage(`您的退款申请已提交，工单号:【${data.ticket_no}】，专员将在 24 小时内为您审核。`);
+        if (activeRefundBtn) {
+          activeRefundBtn.disabled = true;
+          activeRefundBtn.classList.add('btn-disabled');
+          activeRefundBtn.innerHTML = '<span>✅</span><span>退款已申请</span>';
+        }
+      } catch (err) {
+        alert('提交退款工单失败: ' + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = '确认提交';
+      }
+    }
 
     function handleFeedback(btn, type) {
       const bar = btn.closest('.feedback-bar');
