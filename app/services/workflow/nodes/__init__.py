@@ -16,6 +16,7 @@ from app.services.workflow.nodes.refund_nodes import (
     extract_order_id,
     refund_order_check_node,
     emit_order_selector_node,
+    refund_expansion_retrieval_node,
 )
 
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "extract_order_id",
     "refund_order_check_node",
     "emit_order_selector_node",
+    "refund_expansion_retrieval_node",
 ]
 
