@@ -9,8 +9,10 @@ from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
 from app.services.after_sale_service import extract_after_sale_ticket
 from app.services.chat_service import ChatService
 from app.db.session import get_db
+from app.api.rag_eval_routes import router as rag_eval_router
 
 router = APIRouter(prefix="/api")
+router.include_router(rag_eval_router)
 
 chat_service = ChatService()
 default_chat_service = chat_service
