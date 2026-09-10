@@ -5,6 +5,11 @@ from app.services.workflow.nodes.pre_nodes import (
     complaint_node,
 )
 from app.services.workflow.nodes.router import route_by_intent
+from app.services.workflow.nodes.knowledge_node import (
+    knowledge_retrieval_node,
+    knowledge_fallback_node,
+)
+from app.services.workflow.nodes.gate import confidence_gate
 
 __all__ = [
     "coreference_resolution_node",
@@ -12,4 +17,7 @@ __all__ = [
     "chitchat_node",
     "complaint_node",
     "route_by_intent",
+    "knowledge_retrieval_node",
+    "knowledge_fallback_node",
+    "confidence_gate",
 ]
