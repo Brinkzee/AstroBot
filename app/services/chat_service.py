@@ -20,6 +20,7 @@ except ImportError:
     default_tool_executor = ToolExecutor(registry=default_tool_registry)
 from app.llm import get_chat_model
 from app.prompts.customer_service import customer_service_prompt
+from app.services.workflow.engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,8 @@ class ChatService:
         stream_model: Optional[Any] = None,
         retriever: Optional[Any] = None,
         rag_generator: Optional[Any] = None,
+        workflow_engine: Optional[Any] = None,
+        use_workflow: Optional[bool] = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
@@ -53,6 +56,12 @@ class ChatService:
         self.stream_model = stream_model
         self.retriever = retriever
         self.rag_generator = rag_generator
+        self.workflow_engine = workflow_engine
+        if use_workflow is not None:
+            self.use_workflow = use_workflow
+        else:
+            self.use_workflow = (workflow_engine is not None) or (model is None)
+
 
     async def get_or_create_conversation(
         self,
@@ -153,15 +162,101 @@ class ChatService:
             {"event_type": "tool_start", "conversation_id": int, "tool_name": str, "tool_label": str, "args": dict}
             {"event_type": "tool_end", "conversation_id": int, "tool_name": str, "success": bool}
             {"event_type": "text", "conversation_id": int, "content": str}
+            {"event_type": "actions", "conversation_id": int, "actions": list}
             {"event_type": "error", "conversation_id": Optional[int], "error": str}
         """
         conv_id: Optional[int] = conversation_id
         try:
+            if self.use_workflow:
+                # 1. 会话初始化
+                conv = await self.get_or_create_conversation(db, conversation_id)
+                conv_id = conv.id
+
+                # 2. 用户消息持久化
+                await self.save_message(db, conversation_id=conv_id, role="user", content=message)
+
+                # 3. 执行工作流
+                if self.workflow_engine is None:
+                    self.workflow_engine = WorkflowEngine()
+                engine = self.workflow_engine
+                final_state = await engine.run(conversation_id=conv_id, query=message, db=db)
+
+                # 4. 如果有工具调用历史（在 final_state["messages"] 中提取）
+                # 遍历消息，回显 tool_start 与 tool_end 并入库
+                msgs = final_state.get("messages") or []
+                tool_call_map: Dict[str, str] = {}
+                for i, m in enumerate(msgs):
+                    if hasattr(m, "tool_calls") and m.tool_calls:
+                        for tc in m.tool_calls:
+                            t_name = tc.get("name", "")
+                            t_id = str(tc.get("id") or "")
+                            if t_id:
+                                tool_call_map[t_id] = t_name
+                            t_label = self.TOOL_LABELS.get(t_name, t_name)
+                            t_args = tc.get("args") or {}
+                            yield {
+                                "event_type": "tool_start",
+                                "conversation_id": conv_id,
+                                "tool_name": t_name,
+                                "tool_label": t_label,
+                                "args": t_args,
+                            }
+                            await self.save_message(
+                                db,
+                                conversation_id=conv_id,
+                                role="assistant",
+                                content=m.content if m.content else None,
+                                tool_calls=[tc],
+                            )
+                    elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+                        t_content = str(m.content or "")
+                        t_call_id = str(getattr(m, "tool_call_id", "") or "")
+                        t_name = getattr(m, "name", "") or tool_call_map.get(t_call_id, "")
+                        yield {
+                            "event_type": "tool_end",
+                            "conversation_id": conv_id,
+                            "tool_name": t_name,
+                            "success": not t_content.startswith("执行异常"),
+                        }
+                        await self.save_message(
+                            db,
+                            conversation_id=conv_id,
+                            role="tool",
+                            content=t_content,
+                            tool_call_id=t_call_id,
+                        )
+
+                # 5. 输出 text 文本事件
+                resp_text = str(final_state.get("response_text") or "")
+                if resp_text:
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": resp_text,
+                    }
+                    await self.save_message(
+                        db,
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=resp_text,
+                    )
+
+                # 6. 如果有建议操作 suggested_actions，发射 actions 事件
+                actions = final_state.get("suggested_actions") or []
+                if actions:
+                    yield {
+                        "event_type": "actions",
+                        "conversation_id": conv_id,
+                        "actions": actions,
+                    }
+                return
+
             # 1. 会话初始化与历史回溯
             conv = await self.get_or_create_conversation(db, conversation_id)
             conv_id = conv.id
 
             history = await self.load_conversation_messages(db, conv_id)
+
 
             # 2. 用户消息持久化落盘
             await self.save_message(
