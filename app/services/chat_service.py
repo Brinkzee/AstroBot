@@ -59,8 +59,10 @@ class ChatService:
         self.workflow_engine = workflow_engine
         if use_workflow is not None:
             self.use_workflow = use_workflow
+        elif workflow_engine is not None:
+            self.use_workflow = True
         else:
-            self.use_workflow = (workflow_engine is not None) or (model is None)
+            self.use_workflow = False
 
 
     async def get_or_create_conversation(

@@ -16,7 +16,7 @@ from app.api.rag_eval_routes import router as rag_eval_router
 router = APIRouter(prefix="/api")
 router.include_router(rag_eval_router)
 
-chat_service = ChatService()
+chat_service = ChatService(use_workflow=True)
 default_chat_service = chat_service
 
 
