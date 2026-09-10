@@ -100,6 +100,12 @@ def is_refund_approved(response_text: str) -> bool:
         "超出售后",
         "超过售后",
         "不满足退",
+        "不支持7天",
+        "不支持七天",
+        "不满足7天",
+        "超过7天",
+        "无法支持",
+        "不支持该",
     ]
     for neg in neg_phrases:
         if neg in text:
@@ -118,6 +124,7 @@ def is_refund_approved(response_text: str) -> bool:
         "支持七天",
     ]
     return any(pos in text for pos in pos_phrases)
+
 
 
 async def main_agent_node(
@@ -238,9 +245,14 @@ async def main_agent_node(
     # 动作推荐下发 (suggested_actions)
     suggested_actions = list(state.get("suggested_actions") or [])
     is_refund_scenario = bool(order_data or (state.get("intent") in ("退款退货", "售后", "refund")))
-    if is_refund_scenario and is_refund_approved(final_text):
-        if "apply_refund" not in suggested_actions:
-            suggested_actions.append("apply_refund")
+    if is_refund_scenario:
+        if is_refund_approved(final_text):
+            if "apply_refund" not in suggested_actions:
+                suggested_actions.append("apply_refund")
+        else:
+            if "apply_refund" in suggested_actions:
+                suggested_actions.remove("apply_refund")
+
 
     return {
         "response_text": final_text,
