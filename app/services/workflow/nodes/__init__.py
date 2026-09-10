@@ -5,7 +5,10 @@ from app.services.workflow.nodes.pre_nodes import (
     complaint_node,
     other_fallback_node,
 )
-from app.services.workflow.nodes.router import route_by_intent
+from app.services.workflow.nodes.router import (
+    route_by_intent,
+    route_refund_slot,
+)
 from app.services.workflow.nodes.knowledge_node import (
     knowledge_retrieval_node,
     knowledge_fallback_node,
@@ -26,6 +29,7 @@ __all__ = [
     "complaint_node",
     "other_fallback_node",
     "route_by_intent",
+    "route_refund_slot",
     "knowledge_retrieval_node",
     "knowledge_fallback_node",
     "confidence_gate",
@@ -35,4 +39,3 @@ __all__ = [
     "emit_order_selector_node",
     "refund_expansion_retrieval_node",
 ]
-
