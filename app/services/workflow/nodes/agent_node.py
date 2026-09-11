@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from langchain_core.messages import (
     AIMessage,
@@ -76,12 +77,93 @@ def format_order_context(order_data: Dict[str, Any]) -> str:
 
 
 def is_refund_approved(response_text: str) -> bool:
-    """判定大模型回答是否明确支持退款/退货/售后"""
+    """判定大模型回答是否明确支持退款/退货/售后
+
+    采用分层精准判定策略：
+    1. 强否定主结论拦截：文本开头或主结论直接拒退（如“**不支持退款**”、“经核实...不支持退款”、“已超出时效”）；
+    2. 强正向动作引导：命中引导点击申请退款按钮（专项 Prompt 第 5 条规约：仅在支持退款时触发）；
+    3. 强正向主表态：标题或开头明确表态（如“**支持退款**”、“符合7天无理由退换”）；
+    4. 逐句语义分析：排除“不属于...等不支持七天特殊品类”等双重否定与免责举例的全局子串误伤；
+    5. 兜底词库降级匹配。
+    """
     if not response_text:
         return False
     text = response_text.strip()
 
-    # 明确否定/不支持退款的特征
+    # 1. 强否定主结论拦截：如果文本明确以拒退为开门见山的结论，判定为不支持
+    primary_rejection_patterns = [
+        r"^\s*[*#\s]*不支持(?:申请|办理)?(?:退款|退货|退换|售后)",
+        r"^\s*[*#\s]*(?:无法|不能|不可|不予)(?:办理|申请)?(?:退款|退货|退换)",
+        r"^\s*[*#\s]*不符合(?:退款|退货|退换|售后|7天|七天)",
+        r"(?:经核实|经核对|很抱歉|抱歉|非常抱歉)[^。\n]*?(?:不支持|无法|不能|不可)(?:办理|申请)?(?:退款|退货|退换)",
+        r"(?:已超出|已超过|超过)(?:7天|七天|15天|十五天|售后|退货|退换)[^。\n]*?(?:不支持|无法|不能|不可)(?:退款|退货|退换)",
+    ]
+    for pattern in primary_rejection_patterns:
+        if re.search(pattern, text):
+            return False
+
+    # 2. 强正向动作引导（Prompt 第 5 条专项指令引导词）：
+    # “若判定支持退款，明确提示用户「可点击下方“申请退款”按钮提交退款申请单」”
+    action_prompt_pattern = r"(?:点击|通过|在)下方.*?(?:“|\"|”)?申请退款(?:”|\"|')?.*?按钮|开启(?:了)?退款申请|点击下方.*?申请退款"
+    if re.search(action_prompt_pattern, text):
+        return True
+
+    # 3. 强正向总结论判断（开头、标题或第一句明确表态支持）
+    primary_approval_patterns = [
+        r"^\s*[*#\s]*支持(?:办理)?(?:退款|退货|退换|售后)",
+        r"^\s*[*#\s]*(?:可以|可|允许)(?:办理|申请)?(?:退款|退货|退换)",
+        r"^\s*[*#\s]*符合(?:7天|七天)?无理由(?:退货|退换)?",
+        r"^\s*[*#\s]*符合(?:退款|退货|退换)条件",
+    ]
+    for pattern in primary_approval_patterns:
+        if re.search(pattern, text):
+            return True
+
+    # 4. 逐句语义分析（过滤掉说明商品不属于不支持特殊品类的双重否定句）
+    sentences = re.split(r"[。！!\n；;]+", text)
+    has_pos_sentence = False
+    has_neg_sentence = False
+
+    order_neg_patterns = [
+        r"(?:本商品|该商品|该订单|您的订单|订单\s*\d+)[^，,。]*?(?:不支持|无法|不能|不可|不符合)(?:办理|申请)?(?:退款|退货|退换)",
+        r"(?:不支持|无法|不能|不可)(?:办理|申请)?(?:退款|退货|退换)",
+        r"超出(?:退货|退换|售后)时效",
+        r"超过(?:7天|七天|15天|十五天)",
+    ]
+
+    order_pos_patterns = [
+        r"(?:支持|可以|可|允许)(?:办理|申请)?(?:退款|退货|退换)",
+        r"支持(?:7天|七天)",
+        r"符合(?:7天|七天)?无理由(?:退款|退货|退换)",
+        r"符合(?:退款|退货|退换)条件",
+        r"在(?:7天|七天)无理由退货期内",
+        r"在(?:7天|七天)内",
+    ]
+
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+
+        # 排除“不属于...等不支持七天无理由退货的特殊品类”等双重否定与免责举例
+        if "不属于" in s and any(k in s for k in ("不支持", "不可", "无法")):
+            continue
+        if any(k in s for k in ("特殊品类", "除外", "免责", "例如定制", "定制商品")) and ("不属于" in s or "并非" in s):
+            continue
+
+        if any(re.search(p, s) for p in order_neg_patterns):
+            has_neg_sentence = True
+
+        if any(re.search(p, s) for p in order_pos_patterns):
+            if not re.search(r"(?:不|无法|不能|不可|不予)支持(?:7天|七天|退)", s):
+                has_pos_sentence = True
+
+    if has_neg_sentence and not has_pos_sentence:
+        return False
+    if has_pos_sentence and not has_neg_sentence:
+        return True
+
+    # 5. 兜底通用词库匹配（保留基础兼容）
     neg_phrases = [
         "不支持退",
         "不支持申请退",
@@ -100,8 +182,6 @@ def is_refund_approved(response_text: str) -> bool:
         "超出售后",
         "超过售后",
         "不满足退",
-        "不支持7天",
-        "不支持七天",
         "不满足7天",
         "超过7天",
         "无法支持",
@@ -111,7 +191,6 @@ def is_refund_approved(response_text: str) -> bool:
         if neg in text:
             return False
 
-    # 支持退款的正向语义
     pos_phrases = [
         "支持退",
         "可以退",
