@@ -35,18 +35,171 @@
       padding: 16px;
     }
 
-    /* 聊天主视窗 */
+    /* 聊天主视窗容器 - Flex 双栏弹性结构 */
     .chat-card {
       width: 100%;
-      max-width: 900px;
+      max-width: 1180px;
       height: 92vh;
       background: var(--card-bg);
       border-radius: 20px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       overflow: hidden;
       border: 1px solid var(--border-color);
+    }
+
+    /* 左侧会话侧栏 */
+    .session-sidebar {
+      width: 260px;
+      min-width: 260px;
+      max-width: 260px;
+      height: 100%;
+      background: #f8fafc;
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      background: #ffffff;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .sidebar-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-new-chat {
+      background: var(--primary-gradient);
+      color: #ffffff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .btn-new-chat:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .session-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      user-select: none;
+    }
+
+    .session-item:hover {
+      border-color: #cbd5e1;
+      background: #f1f5f9;
+    }
+
+    .session-item.active {
+      border-color: var(--primary);
+      background: #eff6ff;
+      box-shadow: 0 0 0 1.5px var(--primary);
+    }
+
+    .session-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .session-item-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .session-item.active .session-item-title {
+      color: var(--primary);
+    }
+
+    .summary-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      background: #fef3c7;
+      color: #b45309;
+      border: 1px solid #fde68a;
+      border-radius: 4px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .session-item-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .session-empty-hint {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12.5px;
+      padding: 36px 12px;
+      line-height: 1.6;
+    }
+
+    /* 右侧主聊天视窗 */
+    .chat-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+      background: var(--card-bg);
+    }
+
+    @media (max-width: 768px) {
+      .session-sidebar {
+        display: none;
+      }
     }
 
     /* 顶栏 Header */
@@ -983,66 +1136,86 @@
 <body>
 
   <div class="chat-card">
-    <!-- 头部信息 -->
-    <header class="chat-header">
-      <div class="bot-info">
-        <div class="avatar-wrapper">
-          <div class="avatar">🌟</div>
-          <div class="online-indicator"></div>
+    <!-- 左侧会话侧栏 -->
+    <aside class="session-sidebar" id="session-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title">
+          <span>💬</span>
+          <span>会话列表</span>
         </div>
-        <div class="title-area">
-          <h1>智能客服小星 <span class="badge">Function Calling 赋能</span></h1>
-          <div class="status-text">支持自主工具调用 · 实时状态帧与逐 Token 流式推送</div>
+        <button type="button" class="btn-new-chat" id="btnNewChat" title="开启新对话">+ 新对话</button>
+      </div>
+      <div class="session-list" id="sessionList">
+        <div class="session-empty-hint">
+          <div style="font-size:24px; margin-bottom:6px;">💬</div>
+          暂无历史会话
         </div>
       </div>
-      <div class="header-actions">
-        <a href="/kb" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="知识库管理工作台">📚 知识库</a>
-        <a href="/rag-eval" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="RAG 质量评估工作台">📊 RAG 评估</a>
-        <div class="session-badge" id="session-display">会话: 自动生成</div>
-        <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
-      </div>
-    </header>
+    </aside>
 
-    <!-- 消息滚动流 -->
-    <main class="chat-messages" id="messages-container">
-      <!-- 欢迎卡片 -->
-      <div class="msg-row bot">
-        <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
-        <div class="msg-content">
-          您好！我是星光优选智能客服<strong>小星</strong>。我已经具备自主业务工具查询能力！
-          您可以随时咨询：
-          • 查物流：「订单 1001 的物流到哪了」
-          • 查常见问答：「退货政策是什么」
-          • 查订单/商品：「查询商品羽绒服」
-          • 转人工工单：「帮我创建售后工单」
+    <!-- 右侧主聊天面板 -->
+    <div class="chat-main">
+      <!-- 头部信息 -->
+      <header class="chat-header">
+        <div class="bot-info">
+          <div class="avatar-wrapper">
+            <div class="avatar">🌟</div>
+            <div class="online-indicator"></div>
+          </div>
+          <div class="title-area">
+            <h1>智能客服小星 <span class="badge">Function Calling 赋能</span></h1>
+            <div class="status-text">支持自主工具调用 · 实时状态帧与逐 Token 流式推送</div>
+          </div>
         </div>
-      </div>
-    </main>
+        <div class="header-actions">
+          <a href="/kb" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="知识库管理工作台">📚 知识库</a>
+          <a href="/rag-eval" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="RAG 质量评估工作台">📊 RAG 评估</a>
+          <div class="session-badge" id="session-display">会话: 自动生成</div>
+          <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
+        </div>
+      </header>
 
-    <!-- 快捷提问胶囊 -->
-    <div class="quick-chips-container">
-      <button class="chip-btn highlight" style="background:#fef3c7; border-color:#fde68a; color:#b45309;" onclick="sendQuickText('这个能退吗')">🔄 Ch06验收: 这个能退吗(触发缺单卡片)</button>
-      <button class="chip-btn highlight" onclick="sendQuickText('订单 1001 的物流到哪了')">🚚 验收1: 查物流到哪了</button>
-      <button class="chip-btn highlight" onclick="sendQuickText('退货政策是什么')">📋 验收2: 查退货政策</button>
-      <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
-      <button class="chip-btn" onclick="sendQuickText('查询订单 1001 的信息')">📦 查订单1001</button>
-      <button class="chip-btn" onclick="sendQuickText('帮我创建售后工单，手机收到后外壳有划痕')">🎫 创建售后工单</button>
-      <button class="chip-btn highlight" onclick="sendQuickText('我要投诉')">⚠️ 验收4: 我要投诉(建议操作)</button>
+      <!-- 消息滚动流 -->
+      <main class="chat-messages" id="messages-container">
+        <!-- 欢迎卡片 -->
+        <div class="msg-row bot">
+          <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
+          <div class="msg-content">
+            您好！我是星光优选智能客服<strong>小星</strong>。我已经具备自主业务工具查询能力！
+            您可以随时咨询：
+            • 查物流：「订单 1001 的物流到哪了」
+            • 查常见问答：「退货政策是什么」
+            • 查订单/商品：「查询商品羽绒服」
+            • 转人工工单：「帮我创建售后工单」
+          </div>
+        </div>
+      </main>
+
+      <!-- 快捷提问胶囊 -->
+      <div class="quick-chips-container">
+        <button class="chip-btn highlight" style="background:#fef3c7; border-color:#fde68a; color:#b45309;" onclick="sendQuickText('这个能退吗')">🔄 Ch06验收: 这个能退吗(触发缺单卡片)</button>
+        <button class="chip-btn highlight" onclick="sendQuickText('订单 1001 的物流到哪了')">🚚 验收1: 查物流到哪了</button>
+        <button class="chip-btn highlight" onclick="sendQuickText('退货政策是什么')">📋 验收2: 查退货政策</button>
+        <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
+        <button class="chip-btn" onclick="sendQuickText('查询订单 1001 的信息')">📦 查订单1001</button>
+        <button class="chip-btn" onclick="sendQuickText('帮我创建售后工单，手机收到后外壳有划痕')">🎫 创建售后工单</button>
+        <button class="chip-btn highlight" onclick="sendQuickText('我要投诉')">⚠️ 验收4: 我要投诉(建议操作)</button>
+      </div>
+
+      <!-- 底部输入栏 -->
+      <footer class="chat-footer">
+        <div class="input-wrapper">
+          <textarea id="user-input" rows="1" placeholder="输入您的问题... (按 Enter 发送，Shift+Enter 换行)"></textarea>
+          <button id="btn-send" title="发送提问">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+        <div class="footer-tip">由 FastAPI + SQLAlchemy Async + LangChain @tool 驱动 · 单轮精准收敛</div>
+      </footer>
     </div>
-
-    <!-- 底部输入栏 -->
-    <footer class="chat-footer">
-      <div class="input-wrapper">
-        <textarea id="user-input" rows="1" placeholder="输入您的问题... (按 Enter 发送，Shift+Enter 换行)"></textarea>
-        <button id="btn-send" title="发送提问">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
-      </div>
-      <div class="footer-tip">由 FastAPI + SQLAlchemy Async + LangChain @tool 驱动 · 单轮精准收敛</div>
-    </footer>
   </div>
 
   <!-- 引用溯源侧滑抽屉 -->
@@ -1108,6 +1281,44 @@
     const btnSend = document.getElementById('btn-send');
     const sessionDisplay = document.getElementById('session-display');
     const btnClear = document.getElementById('btn-clear');
+    const btnNewChat = document.getElementById('btnNewChat');
+    const sessionListEl = document.getElementById('sessionList');
+
+    const defaultWelcomeHtml = `
+      <div class="msg-row bot">
+        <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
+        <div class="msg-content">
+          您好！我是星光优选智能客服<strong>小星</strong>。我已经具备自主业务工具查询能力！
+          您可以随时咨询：
+          • 查物流：「订单 1001 的物流到哪了」
+          • 查常见问答：「退货政策是什么」
+          • 查订单/商品：「查询商品羽绒服」
+          • 转人工工单：「帮我创建售后工单」
+        </div>
+      </div>
+    `;
+
+    function createNewChat() {
+      currentConversationId = null;
+      currentRefundOrderId = null;
+      activeRefundBtn = null;
+      sessionDisplay.innerText = '会话: 自动生成';
+      messagesContainer.innerHTML = `
+        <div class="msg-row bot">
+          <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
+          <div class="msg-content">
+            已开启全新会话！我是星光优选客服<strong>小星</strong>，请问有什么可以帮您？
+          </div>
+        </div>
+      `;
+      document.querySelectorAll('.session-item').forEach(item => item.classList.remove('active'));
+      userInput.focus();
+    }
+
+    if (btnNewChat) {
+      btnNewChat.addEventListener('click', createNewChat);
+    }
+    btnClear.addEventListener('click', createNewChat);
 
     // 自动调整输入框高度
     userInput.addEventListener('input', () => {
@@ -1125,21 +1336,159 @@
 
     btnSend.addEventListener('click', sendMessage);
 
-    btnClear.addEventListener('click', () => {
-      currentConversationId = null;
-      currentRefundOrderId = null;
-      activeRefundBtn = null;
-      sessionDisplay.innerText = '会话: 自动生成';
-      messagesContainer.innerHTML = `
-        <div class="msg-row bot">
-          <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
-          <div class="msg-content">
-            已开启全新会话！我是星光优选客服<strong>小星</strong>，请问有什么可以帮您？
+    function formatSessionTime(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString);
+        if (isNaN(d.getTime())) return isoString;
+        const now = new Date();
+        const isToday = d.toDateString() === now.toDateString();
+        const pad = (n) => n < 10 ? '0' + n : n;
+        const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        if (isToday) return timeStr;
+        return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${timeStr}`;
+      } catch (e) {
+        return isoString;
+      }
+    }
+
+    async function loadSessions(activeId = null) {
+      const sessionList = document.getElementById('sessionList');
+      if (!sessionList) return;
+      try {
+        const res = await fetch('/api/conversations');
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const sessions = await res.json();
+        if (!sessions || sessions.length === 0) {
+          sessionList.innerHTML = `
+            <div class="session-empty-hint">
+              <div style="font-size:24px; margin-bottom:6px;">💬</div>
+              暂无历史会话
+            </div>
+          `;
+          return;
+        }
+
+        const targetActiveId = activeId !== null ? activeId : currentConversationId;
+        sessionList.innerHTML = sessions.map(s => {
+          const isActive = targetActiveId && String(s.id) === String(targetActiveId);
+          const title = escapeHtml(s.title || '新会话');
+          const timeStr = formatSessionTime(s.updated_at || s.created_at);
+          const summaryBadgeHtml = s.has_summary ? `<span class="summary-badge">[已摘要]</span>` : '';
+          return `
+            <div class="session-item ${isActive ? 'active' : ''}" data-id="${s.id}" onclick="selectSession(${s.id})">
+              <div class="session-item-header">
+                <span class="session-item-title" title="${title}">${title}</span>
+                ${summaryBadgeHtml}
+              </div>
+              <div class="session-item-time">
+                <span>#${s.id}</span>
+                <span>${escapeHtml(timeStr)}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.warn('获取历史会话失败，静默降级:', err);
+        sessionList.innerHTML = `
+          <div class="session-empty-hint">
+            <div style="font-size:24px; margin-bottom:6px;">💬</div>
+            暂无历史会话
           </div>
+        `;
+      }
+    }
+
+    async function selectSession(conversationId) {
+      if (isStreaming) return;
+      currentConversationId = conversationId;
+      sessionDisplay.innerText = '会话: #' + conversationId;
+
+      document.querySelectorAll('.session-item').forEach(item => {
+        if (String(item.getAttribute('data-id')) === String(conversationId)) {
+          item.classList.add('active');
+        } else {
+          item.classList.remove('active');
+        }
+      });
+
+      messagesContainer.innerHTML = `
+        <div class="msg-row system-hint">
+          <div class="system-msg">正在加载会话 #${conversationId} 历史消息...</div>
         </div>
       `;
-      userInput.focus();
-    });
+
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}/messages`);
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const messages = await res.json();
+        renderConversationMessages(messages);
+      } catch (err) {
+        console.warn('获取会话历史消息失败:', err);
+        messagesContainer.innerHTML = `
+          <div class="msg-row system-hint">
+            <div class="system-msg">加载历史消息失败: ${escapeHtml(err.message)}</div>
+          </div>
+        `;
+      } finally {
+        userInput.focus();
+      }
+    }
+
+    function renderConversationMessages(messages) {
+      messagesContainer.innerHTML = '';
+      if (!messages || messages.length === 0) {
+        messagesContainer.innerHTML = defaultWelcomeHtml;
+        return;
+      }
+
+      for (const m of messages) {
+        if (m.role === 'user') {
+          appendUserMessage(m.content || '');
+        } else if (m.role === 'assistant') {
+          if (m.tool_calls && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+            for (const call of m.tool_calls) {
+              const callName = call.name || '业务工具';
+              const row = document.createElement('div');
+              row.className = 'msg-row bot';
+              row.innerHTML = `
+                <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
+                <div class="msg-content">
+                  <div class="tool-badge-container">
+                    <div class="tool-badge completed">
+                      <span>📦 已调用工具: <strong>${escapeHtml(callName)}</strong></span>
+                      <span style="opacity:0.8; font-size:11px;">[已执行]</span>
+                    </div>
+                  </div>
+                </div>
+              `;
+              messagesContainer.appendChild(row);
+            }
+          }
+          if (m.content) {
+            appendAssistantMessage(m.content);
+          }
+        } else if (m.role === 'tool') {
+          const row = document.createElement('div');
+          row.className = 'msg-row bot';
+          row.innerHTML = `
+            <div class="avatar" style="width:36px; height:36px; font-size:18px;">🔧</div>
+            <div class="msg-content" style="background:#f1f5f9; font-family:monospace; font-size:12px;">
+              <div style="font-weight:600; margin-bottom:4px; color:#475569;">⚙️ 工具返回结果:</div>
+              <div style="white-space:pre-wrap; word-break:break-all;">${escapeHtml(m.content || '')}</div>
+            </div>
+          `;
+          messagesContainer.appendChild(row);
+        } else if (m.role === 'system') {
+          appendSystemMessage(m.content || '');
+        }
+      }
+      scrollToBottom();
+    }
 
     function sendQuickText(text) {
       if (isStreaming) return;
@@ -1284,8 +1633,12 @@
 
               // 记录会话 ID
               if (data.conversation_id) {
+                const isNewConv = currentConversationId !== data.conversation_id;
                 currentConversationId = data.conversation_id;
                 sessionDisplay.innerText = '会话: #' + currentConversationId;
+                if (isNewConv) {
+                  loadSessions(currentConversationId);
+                }
               }
 
               // 事件分流处理
@@ -1364,6 +1717,7 @@
         isStreaming = false;
         btnSend.disabled = false;
         userInput.focus();
+        loadSessions(currentConversationId);
       }
     }
 
@@ -1700,6 +2054,10 @@
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
     }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSessions();
+    });
   </script>
 </body>
 </html>
