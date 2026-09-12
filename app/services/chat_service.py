@@ -20,6 +20,7 @@ except ImportError:
     default_tool_executor = ToolExecutor(registry=default_tool_registry)
 from app.llm import get_chat_model
 from app.prompts.customer_service import customer_service_prompt
+from app.services.workflow.engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,25 @@ class ChatService:
         executor: ToolExecutor = default_tool_executor,
         model: Optional[Any] = None,
         stream_model: Optional[Any] = None,
+        retriever: Optional[Any] = None,
+        rag_generator: Optional[Any] = None,
+        workflow_engine: Optional[Any] = None,
+        use_workflow: Optional[bool] = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
         self.model = model
         self.stream_model = stream_model
+        self.retriever = retriever
+        self.rag_generator = rag_generator
+        self.workflow_engine = workflow_engine
+        if use_workflow is not None:
+            self.use_workflow = use_workflow
+        elif workflow_engine is not None:
+            self.use_workflow = True
+        else:
+            self.use_workflow = False
+
 
     async def get_or_create_conversation(
         self,
@@ -148,16 +163,111 @@ class ChatService:
         Yields:
             {"event_type": "tool_start", "conversation_id": int, "tool_name": str, "tool_label": str, "args": dict}
             {"event_type": "tool_end", "conversation_id": int, "tool_name": str, "success": bool}
+            {"event_type": "order_selector", "conversation_id": int, "orders": list}
             {"event_type": "text", "conversation_id": int, "content": str}
+            {"event_type": "actions", "conversation_id": int, "actions": list}
             {"event_type": "error", "conversation_id": Optional[int], "error": str}
         """
         conv_id: Optional[int] = conversation_id
         try:
+            if self.use_workflow:
+                # 1. 会话初始化
+                conv = await self.get_or_create_conversation(db, conversation_id)
+                conv_id = conv.id
+
+                # 2. 用户消息持久化
+                await self.save_message(db, conversation_id=conv_id, role="user", content=message)
+
+                # 3. 执行工作流
+                if self.workflow_engine is None:
+                    self.workflow_engine = WorkflowEngine()
+                engine = self.workflow_engine
+                final_state = await engine.run(conversation_id=conv_id, query=message, db=db)
+
+                # 4. 如果有工具调用历史（在 final_state["messages"] 中提取）
+                # 遍历消息，回显 tool_start 与 tool_end 并入库
+                msgs = final_state.get("messages") or []
+                tool_call_map: Dict[str, str] = {}
+                for i, m in enumerate(msgs):
+                    if hasattr(m, "tool_calls") and m.tool_calls:
+                        for tc in m.tool_calls:
+                            t_name = tc.get("name", "")
+                            t_id = str(tc.get("id") or "")
+                            if t_id:
+                                tool_call_map[t_id] = t_name
+                            t_label = self.TOOL_LABELS.get(t_name, t_name)
+                            t_args = tc.get("args") or {}
+                            yield {
+                                "event_type": "tool_start",
+                                "conversation_id": conv_id,
+                                "tool_name": t_name,
+                                "tool_label": t_label,
+                                "args": t_args,
+                            }
+                            await self.save_message(
+                                db,
+                                conversation_id=conv_id,
+                                role="assistant",
+                                content=m.content if m.content else None,
+                                tool_calls=[tc],
+                            )
+                    elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+                        t_content = str(m.content or "")
+                        t_call_id = str(getattr(m, "tool_call_id", "") or "")
+                        t_name = getattr(m, "name", "") or tool_call_map.get(t_call_id, "")
+                        yield {
+                            "event_type": "tool_end",
+                            "conversation_id": conv_id,
+                            "tool_name": t_name,
+                            "success": not t_content.startswith("执行异常"),
+                        }
+                        await self.save_message(
+                            db,
+                            conversation_id=conv_id,
+                            role="tool",
+                            content=t_content,
+                            tool_call_id=t_call_id,
+                        )
+
+                # 5. 若状态为 need_order_selection 或存在 suggested_orders，发射 order_selector 卡片选择事件
+                if final_state.get("status") == "need_order_selection" or final_state.get("suggested_orders"):
+                    yield {
+                        "event_type": "order_selector",
+                        "conversation_id": conv_id,
+                        "orders": final_state.get("suggested_orders") or [],
+                    }
+
+                # 6. 输出 text 文本事件
+                resp_text = str(final_state.get("response_text") or "")
+                if resp_text:
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": resp_text,
+                    }
+                    await self.save_message(
+                        db,
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=resp_text,
+                    )
+
+                # 7. 如果有建议操作 suggested_actions，发射 actions 事件
+                actions = final_state.get("suggested_actions") or []
+                if actions:
+                    yield {
+                        "event_type": "actions",
+                        "conversation_id": conv_id,
+                        "actions": actions,
+                    }
+                return
+
             # 1. 会话初始化与历史回溯
             conv = await self.get_or_create_conversation(db, conversation_id)
             conv_id = conv.id
 
             history = await self.load_conversation_messages(db, conv_id)
+
 
             # 2. 用户消息持久化落盘
             await self.save_message(
@@ -270,7 +380,96 @@ class ChatService:
                 tool_call_id=call_id,
             )
 
-            # 7.6 回灌模型上下文，执行流式输出
+            # 若为知识库问答 (query_faq)，执行两阶段自评与受控流式生成
+            if tool_name == "query_faq":
+                retriever = self.retriever
+                if retriever is None:
+                    try:
+                        from app.tools.business_tools import get_retriever
+                        retriever = get_retriever()
+                    except Exception as e:
+                        logger.warning(f"获取知识库检索器失败: {e}")
+
+                citations: List[Dict[str, Any]] = []
+                query_kw = str(args_dict.get("keyword") or message or "").strip()
+                last_res = getattr(retriever, "last_result", None) if retriever else None
+                if (
+                    last_res is not None
+                    and hasattr(last_res, "citations")
+                    and isinstance(getattr(last_res, "citations"), list)
+                    and last_res.citations
+                ):
+                    citations = last_res.citations
+                elif retriever is not None and hasattr(retriever, "retrieve_with_strategy"):
+                    try:
+                        retrieval_res = await retriever.retrieve_with_strategy(query=query_kw, min_score=0.25)
+                        raw_cits = getattr(retrieval_res, "citations", [])
+                        citations = raw_cits if isinstance(raw_cits, list) else []
+                    except Exception as e:
+                        logger.warning(f"调用进阶检索器获取 citations 失败: {e}")
+
+                rag_gen = self.rag_generator
+                if rag_gen is None:
+                    from app.services.rag.generator import RAGControlledGenerator
+                    rag_gen = RAGControlledGenerator(model=self.model, stream_model=self.stream_model)
+
+                # Phase 1: 知识充分度自检
+                check_res = await rag_gen.check_sufficiency(
+                    query=message,
+                    citations=citations,
+                    db=db,
+                    conversation_id=conv_id,
+                )
+
+                if not check_res.useful:
+                    # 自评不足或超纲，下发标准拒答语，截断后续生成
+                    refusal_text = getattr(
+                        rag_gen,
+                        "refusal_text",
+                        "非常抱歉，当前知识库中暂未收录相关信息，已为您登记至后台人工处理，我们的客服专员将尽快为您核实解答。",
+                    )
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": refusal_text,
+                    }
+                    await self.save_message(
+                        db,
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=refusal_text,
+                    )
+                    return
+
+                # Phase 2: 知识证据充分，首帧下发 citations 事件
+                yield {
+                    "event_type": "citations",
+                    "conversation_id": conv_id,
+                    "citations": citations,
+                }
+
+                # 流式下发受控生成的带角标文本
+                final_content = ""
+                async for chunk_text in rag_gen.astream_generate(
+                    query=message, citations=citations, history=history
+                ):
+                    if chunk_text:
+                        final_content += chunk_text
+                        yield {
+                            "event_type": "text",
+                            "conversation_id": conv_id,
+                            "content": chunk_text,
+                        }
+
+                await self.save_message(
+                    db,
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=final_content,
+                )
+                return
+
+            # 7.6 回灌模型上下文，执行流式输出 (非 FAQ 业务工具)
             feedback_messages = list(prompt_messages) + [
                 AIMessage(content=resp.content or "", tool_calls=[tool_call]),
                 ToolMessage(content=tool_output, tool_call_id=call_id),

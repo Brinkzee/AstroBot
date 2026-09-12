@@ -36,6 +36,12 @@ def get_kb_page():
     kb_file = os.path.join(static_dir, "kb.html")
     return FileResponse(kb_file)
 
+@app.get("/rag-eval")
+@app.get("/rag_eval")
+def get_rag_eval_page():
+    eval_file = os.path.join(static_dir, "rag_eval.html")
+    return FileResponse(eval_file)
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

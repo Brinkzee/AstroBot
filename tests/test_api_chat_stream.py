@@ -1,10 +1,25 @@
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from langchain_core.messages import AIMessage, ToolMessage
 
 from main import app
+from app.db.session import get_db
 from app.schemas.chat import ChatStreamRequest
+from app.services.chat_service import ChatService
+from tests.test_chat_service import FakeAsyncSession
+
+
+@pytest.fixture(autouse=True)
+def mock_db_session():
+    fake_db = FakeAsyncSession()
+    async def override_get_db():
+        yield fake_db
+    app.dependency_overrides[get_db] = override_get_db
+    yield fake_db
+    app.dependency_overrides.pop(get_db, None)
 
 
 def parse_sse_events(sse_text: str):
@@ -167,3 +182,84 @@ def test_chat_stream_error_event():
         assert len(events) == 1
         assert events[0]["event_type"] == "error"
         assert "服务暂时不可用" in events[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_actions_for_complaint():
+    """测试投诉流式输出下发 actions 事件"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/chat/stream",
+            json={"message": "我要投诉你们平台", "conversation_id": None},
+        )
+        assert resp.status_code == 200
+        text = resp.text
+        assert "event_type\": \"actions\"" in text
+        assert "transfer_agent" in text
+        assert "create_ticket" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_workflow_tool_events_and_persistence():
+    """测试在工作流模式下，工具调用事件(tool_start, tool_end)、文本及动作的完整回显与数据库落盘"""
+
+    mock_engine = MagicMock()
+    mock_final_state = {
+        "conversation_id": 10,
+        "input_query": "查订单1001物流",
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "call_1", "name": "query_logistics", "args": {"order_id": "1001"}}],
+            ),
+            ToolMessage(
+                content='{"status": "派送中"}',
+                tool_call_id="call_1",
+                name="query_logistics",
+            ),
+        ],
+        "response_text": "您的订单1001正在派件中，预计今日送达。",
+        "suggested_actions": ["transfer_agent"],
+    }
+    mock_engine.run = AsyncMock(return_value=mock_final_state)
+
+    fake_db = FakeAsyncSession()
+    service = ChatService(workflow_engine=mock_engine)
+
+    events = [e async for e in service.stream_chat(db=fake_db, conversation_id=10, message="查订单1001物流")]
+
+    # 1. 验证事件流
+    assert len(events) == 4
+    assert events[0]["event_type"] == "tool_start"
+    assert events[0]["tool_name"] == "query_logistics"
+    assert events[0]["tool_label"] == "查询物流"
+    assert events[0]["args"] == {"order_id": "1001"}
+
+    assert events[1]["event_type"] == "tool_end"
+    assert events[1]["tool_name"] == "query_logistics"
+    assert events[1]["success"] is True
+
+    assert events[2]["event_type"] == "text"
+    assert "正在派件中" in events[2]["content"]
+
+    assert events[3]["event_type"] == "actions"
+    assert events[3]["actions"] == ["transfer_agent"]
+
+    # 2. 验证数据库落盘 4 条消息: user, assistant(tool_calls), tool, assistant(final)
+    assert len(fake_db.messages) == 4
+    assert fake_db.messages[0].role == "user"
+    assert fake_db.messages[0].content == "查订单1001物流"
+
+    assert fake_db.messages[1].role == "assistant"
+    assert len(fake_db.messages[1].tool_calls) == 1
+    assert fake_db.messages[1].tool_calls[0]["name"] == "query_logistics"
+
+    assert fake_db.messages[2].role == "tool"
+    assert fake_db.messages[2].tool_call_id == "call_1"
+    assert "派送中" in fake_db.messages[2].content
+
+    assert fake_db.messages[3].role == "assistant"
+    assert "正在派件中" in fake_db.messages[3].content
+
+

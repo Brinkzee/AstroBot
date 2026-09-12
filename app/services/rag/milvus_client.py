@@ -1,8 +1,15 @@
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from pymilvus import MilvusClient
+from pymilvus import (
+    AnnSearchRequest,
+    DataType,
+    Function,
+    FunctionType,
+    MilvusClient,
+    RRFRanker,
+)
 
 from app.config import settings
 
@@ -10,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class MilvusKnowledgeStore:
-    """基于 Milvus-Lite / Milvus 的 RAG 知识库向量存储管理器。
+    """基于 Milvus-Lite / Milvus 的 RAG 知识库向量与原生 BM25 混合存储管理器。
     
-    支持 1024 维 Dense 语义向量的存储、按 MySQL chunk ID 幂等 Upsert、
-    COSINE 相似度 Top-K 检索、标量过滤及安全生命周期管理。
+    支持 1024 维 Dense 语义向量与原生 BM25 稀疏向量的混合存储、按 MySQL chunk ID 幂等 Upsert、
+    COSINE 相似度、BM25 稀疏检索、RRFRanker(k=60) 倒数排名融合检索、标量过滤及安全生命周期管理。
     """
 
     def __init__(self, uri: Optional[str] = None):
@@ -36,40 +43,75 @@ class MilvusKnowledgeStore:
         logger.info(f"MilvusKnowledgeStore 已初始化，连接至: {self.uri}")
 
     def init_collection(self, collection_name: str = "knowledge", drop_existing: bool = False):
-        """初始化知识库向量集合。
+        """初始化知识库向量与 BM25 稀疏集合。
         
         若集合已存在且 drop_existing=False 则保持不变；
         若 drop_existing=True 则强制删除并重新创建。
         
         集合规范：
-        - dimension = 1024
-        - primary_field_name = 'id', id_type = 'int', auto_id = False
-        - vector_field_name = 'vector'
-        - metric_type = 'COSINE'
-        - enable_dynamic_field = True
+        - auto_id = False, enable_dynamic_field = True
+        - id: INT64, primary=True (与 MySQL knowledge_chunks.id 对齐)
+        - chunk_text: VARCHAR(65535), enable_analyzer=True, analyzer_params={"type": "jieba"}
+        - sparse_vector: SPARSE_FLOAT_VECTOR (BM25 函数自动输出)
+        - vector: FLOAT_VECTOR(dim=1024), metric_type=COSINE
+        - category, section_path, questions, answer, content_type, is_key_clause 等标量元数据
         """
         if drop_existing and self.client.has_collection(collection_name):
             logger.info(f"drop_existing=True，正在删除已有集合: {collection_name}")
             self.client.drop_collection(collection_name)
 
         if not self.client.has_collection(collection_name):
-            logger.info(f"正在创建集合: {collection_name} (dim=1024, metric=COSINE, id=INT64)")
+            logger.info(f"正在创建 Milvus 2.5 混合检索集合: {collection_name} (dim=1024, BM25 jieba, COSINE)")
+            schema = self.client.create_schema(auto_id=False, enable_dynamic_field=True)
+            schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+            schema.add_field(
+                field_name="chunk_text",
+                datatype=DataType.VARCHAR,
+                max_length=65535,
+                enable_analyzer=True,
+                analyzer_params={"type": "jieba"},
+                nullable=True,
+            )
+            schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+            schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=1024)
+            schema.add_field(field_name="category", datatype=DataType.VARCHAR, max_length=128, nullable=True)
+            schema.add_field(field_name="section_path", datatype=DataType.VARCHAR, max_length=512, nullable=True)
+            schema.add_field(field_name="questions", datatype=DataType.VARCHAR, max_length=2048, nullable=True)
+            schema.add_field(field_name="answer", datatype=DataType.VARCHAR, max_length=8192, nullable=True)
+            schema.add_field(field_name="content_type", datatype=DataType.VARCHAR, max_length=32, nullable=True)
+            schema.add_field(field_name="is_key_clause", datatype=DataType.BOOL, nullable=True)
+
+            bm25_fn = Function(
+                name="chunk_bm25",
+                function_type=FunctionType.BM25,
+                input_field_names=["chunk_text"],
+                output_field_names=["sparse_vector"],
+            )
+            schema.add_function(bm25_fn)
+
+            index_params = self.client.prepare_index_params()
+            index_params.add_index(field_name="vector", index_type="FLAT", metric_type="COSINE")
+            # 兼容处理：在 milvus-lite 本地嵌入式模式下，sparse_vector 为二进制存储，
+            # 若创建 AUTOINDEX 会触发 milvus_lite segment 重新从磁盘加载时的 FixedSizeList 类型校验崩溃；
+            # 仅在非 sqlite 本地文件（独立 Milvus 服务）时添加 sparse_vector 索引。
+            if not (self.uri and (self.uri.endswith(".db") or "./" in self.uri or "\\" in self.uri)):
+                try:
+                    index_params.add_index(field_name="sparse_vector", index_type="AUTOINDEX", metric_type="BM25")
+                except Exception:
+                    pass
+
             self.client.create_collection(
                 collection_name=collection_name,
-                dimension=1024,
-                primary_field_name="id",
-                id_type="int",
-                vector_field_name="vector",
-                metric_type="COSINE",
-                auto_id=False,
-                enable_dynamic_field=True,
+                schema=schema,
+                index_params=index_params,
             )
 
     def upsert(self, records: List[Dict], collection_name: str = "knowledge") -> int:
         """批量插入或按主键 ID 覆盖记录。
         
-        每个 record 预期包含：
-        id, vector, category, questions, answer, chunk_text, content_type, is_key_clause 等字段。
+        每个 record 包含：
+        id, vector, chunk_text, category, questions, answer, section_path, content_type, is_key_clause 等字段。
+        若未提供 chunk_text，将自动基于 questions 和 answer 合成。
         
         返回写入条数。
         """
@@ -79,21 +121,50 @@ class MilvusKnowledgeStore:
         if not self.client.has_collection(collection_name):
             self.init_collection(collection_name)
 
-        res = self.client.upsert(collection_name=collection_name, data=records)
-        return int(res.get("upsert_count", len(records)))
+        clean_records = []
+        for r in records:
+            rec = dict(r)
+            if "chunk_text" not in rec or rec["chunk_text"] is None:
+                q = rec.get("questions") or ""
+                a = rec.get("answer") or ""
+                cat = rec.get("category") or ""
+                rec["chunk_text"] = f"【类目】{cat}\n【标准问法】{q}\n【解答】{a}".strip()
+            clean_records.append(rec)
 
-    def search(
+        res = self.client.upsert(collection_name=collection_name, data=clean_records)
+        return int(res.get("upsert_count", len(clean_records)))
+
+    @staticmethod
+    def _format_hits(raw_hits: List[Dict], min_score: Optional[float] = None) -> List[Dict]:
+        """格式化检索命中的原始结果，展开 entity 并去除大体积向量。"""
+        formatted: List[Dict] = []
+        for raw_hit in raw_hits:
+            dist = float(raw_hit.get("distance", 0.0))
+            if min_score is not None and dist < min_score:
+                continue
+
+            entity = raw_hit.get("entity") or {}
+            item = dict(entity)
+            item.pop("vector", None)
+            item.pop("sparse_vector", None)
+            item["id"] = raw_hit.get("id")
+            item["distance"] = dist
+            item["entity"] = entity
+            formatted.append(item)
+        return formatted
+
+    def search_dense(
         self,
         query_vector: List[float],
-        top_k: int = 3,
+        top_k: int = 50,
         min_score: float = 0.0,
         filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
         collection_name: str = "knowledge",
     ) -> List[Dict]:
-        """基于 COSINE 相似度的 Top-K 向量近邻检索。
+        """单路 Dense 向量检索（COSINE 相似度）。
         
-        返回近邻列表，每个命中包含 id, distance, 以及 payload 字段。
-        按相似度降序排序，过滤 distance >= min_score 的命中项。
+        专供四策略对比评测及密集语义召回。
         """
         if not self.client or not self.client.has_collection(collection_name):
             return []
@@ -101,41 +172,166 @@ class MilvusKnowledgeStore:
         if not query_vector:
             return []
 
-        # 确保集合处于已加载状态 (防止 released 状态导致 code=101 错误)
         try:
             self.client.load_collection(collection_name)
         except Exception as e:
             logger.debug(f"load_collection({collection_name}) 提示: {e}")
 
+        expr_parts = []
+        if filter:
+            expr_parts.append(f"({filter})")
+        if category_filter:
+            expr_parts.append(f'(category == "{category_filter}")')
+        final_filter = " and ".join(expr_parts) if expr_parts else ""
+
         raw_results = self.client.search(
             collection_name=collection_name,
             data=[query_vector],
+            anns_field="vector",
             limit=top_k,
-            filter=filter if filter else "",
+            filter=final_filter,
             output_fields=["*"],
         )
 
         if not raw_results or len(raw_results) == 0:
             return []
 
-        hits: List[Dict] = []
-        for raw_hit in raw_results[0]:
-            dist = float(raw_hit.get("distance", 0.0))
-            if dist < min_score:
-                continue
-
-            entity = raw_hit.get("entity") or {}
-            # 组装返回结构：展开 payload，排除庞大的原始 vector 字段，保留 entity 引用以最大化调用方兼容性
-            item = dict(entity)
-            item.pop("vector", None)
-            item["id"] = raw_hit.get("id")
-            item["distance"] = dist
-            item["entity"] = entity
-            hits.append(item)
-
-        # 确保按相似度由高到低排序并截取 top_k
+        hits = self._format_hits(raw_results[0], min_score=min_score)
         hits.sort(key=lambda x: x["distance"], reverse=True)
         return hits[:top_k]
+
+    def search(
+        self,
+        query_vector: List[float],
+        top_k: int = 3,
+        min_score: float = 0.0,
+        filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        category: Optional[str] = None,
+        collection_name: str = "knowledge",
+        **kwargs: Any,
+    ) -> List[Dict]:
+        """基于 COSINE 相似度的 Top-K 向量检索（向后兼容接口）。"""
+        effective_category = category_filter or category or kwargs.get("category_filter") or kwargs.get("category")
+        return self.search_dense(
+            query_vector=query_vector,
+            top_k=top_k,
+            min_score=min_score,
+            filter=filter,
+            category_filter=effective_category,
+            collection_name=collection_name,
+        )
+
+    def search_bm25(
+        self,
+        query_text: str,
+        top_k: int = 50,
+        filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        collection_name: str = "knowledge",
+    ) -> List[Dict]:
+        """单路 Milvus 原生 BM25 稀疏检索。
+        
+        基于 jieba 词元切分与 BM25 打分，专供四策略对比评测及精准型号/专有名词召回。
+        """
+        if not self.client or not self.client.has_collection(collection_name):
+            return []
+
+        if not query_text or not query_text.strip():
+            return []
+
+        try:
+            self.client.load_collection(collection_name)
+        except Exception as e:
+            logger.debug(f"load_collection({collection_name}) 提示: {e}")
+
+        expr_parts = []
+        if filter:
+            expr_parts.append(f"({filter})")
+        if category_filter:
+            expr_parts.append(f'(category == "{category_filter}")')
+        final_filter = " and ".join(expr_parts) if expr_parts else ""
+
+        raw_results = self.client.search(
+            collection_name=collection_name,
+            data=[query_text],
+            anns_field="sparse_vector",
+            limit=top_k,
+            filter=final_filter,
+            output_fields=["*"],
+        )
+
+        if not raw_results or len(raw_results) == 0:
+            return []
+
+        hits = self._format_hits(raw_results[0])
+        hits.sort(key=lambda x: x["distance"], reverse=True)
+        return hits[:top_k]
+
+    def hybrid_search(
+        self,
+        dense_vector: List[float],
+        bm25_text: str,
+        category_filter: Optional[str] = None,
+        top_k_per_route: int = 50,
+        limit: int = 50,
+        collection_name: str = "knowledge",
+    ) -> List[Dict]:
+        """基于 Dense + 原生 BM25 的双路召回与 RRFRanker(k=60) 混合检索。
+        
+        Args:
+            dense_vector: 1024 维 Dense 语义向量
+            bm25_text: 待检索的关键词或文本
+            category_filter: 可选的类目标量过滤条件
+            top_k_per_route: 单路检索候选条数，默认 50
+            limit: RRF 融合截取总数，默认 50
+            collection_name: 集合名称，默认 "knowledge"
+        
+        Returns:
+            融合排序后的候选命中文档列表
+        """
+        if not self.client or not self.client.has_collection(collection_name):
+            return []
+
+        if not dense_vector and not bm25_text:
+            return []
+
+        try:
+            self.client.load_collection(collection_name)
+        except Exception as e:
+            logger.debug(f"load_collection({collection_name}) 提示: {e}")
+
+        filter_expr = f'category == "{category_filter}"' if category_filter else None
+
+        dense_req = AnnSearchRequest(
+            data=[dense_vector],
+            anns_field="vector",
+            param={"metric_type": "COSINE"},
+            limit=top_k_per_route,
+            expr=filter_expr,
+        )
+
+        bm25_req = AnnSearchRequest(
+            data=[bm25_text],
+            anns_field="sparse_vector",
+            param={"metric_type": "BM25"},
+            limit=top_k_per_route,
+            expr=filter_expr,
+        )
+
+        raw_results = self.client.hybrid_search(
+            collection_name=collection_name,
+            reqs=[dense_req, bm25_req],
+            ranker=RRFRanker(k=60),
+            limit=limit,
+            output_fields=["*"],
+        )
+
+        if not raw_results or len(raw_results) == 0:
+            return []
+
+        hits = self._format_hits(raw_results[0])
+        return hits[:limit]
 
     def count(self, collection_name: str = "knowledge") -> int:
         """返回当前集合中的记录总数。"""

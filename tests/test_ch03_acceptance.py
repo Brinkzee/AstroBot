@@ -24,10 +24,29 @@ def setup_mysql_ready():
 
 @pytest.fixture(autouse=True)
 async def reset_engine_connections():
-    """避免 pytest-asyncio 在多个测试函数间切换 event loop 时复用已关闭 loop 的连接"""
+    """避免 pytest-asyncio 在多个测试函数间切换 event loop 时复用已关闭 loop 的连接与单例"""
+    import gc
+    from app.llm import clear_llm_cache
+    from app.tools import business_tools
+
+    clear_llm_cache()
+    if hasattr(business_tools, "_retriever") and business_tools._retriever is not None:
+        if hasattr(business_tools._retriever, "close"):
+            business_tools._retriever.close()
+        business_tools._retriever = None
     await engine.dispose()
+    gc.collect()
+
     yield
+
+    clear_llm_cache()
+    if hasattr(business_tools, "_retriever") and business_tools._retriever is not None:
+        if hasattr(business_tools._retriever, "close"):
+            business_tools._retriever.close()
+        business_tools._retriever = None
     await engine.dispose()
+    gc.collect()
+
 
 
 

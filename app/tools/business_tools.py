@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import random
@@ -7,17 +8,28 @@ from langchain_core.tools import tool
 from sqlalchemy import select, or_
 from app.db.session import AsyncSessionLocal
 from app.models import FAQ, Ticket, Conversation
+from app.services.rag.advanced_retriever import AdvancedKnowledgeRetriever
 from app.services.rag.retriever import KnowledgeRetriever
 
 logger = logging.getLogger(__name__)
 
-_retriever: Optional[KnowledgeRetriever] = None
+_retriever: Optional[AdvancedKnowledgeRetriever] = None
 
 
-def get_retriever(force_refresh: bool = False) -> KnowledgeRetriever:
+def get_retriever(force_refresh: bool = False) -> AdvancedKnowledgeRetriever:
     global _retriever
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _retriever is not None and getattr(_retriever, "_bound_loop", None) is not None:
+        if _retriever._bound_loop is not current_loop:
+            force_refresh = True
+
     if _retriever is None or force_refresh:
-        _retriever = KnowledgeRetriever()
+        _retriever = AdvancedKnowledgeRetriever(min_score=0.25)
+        _retriever._bound_loop = current_loop
     return _retriever
 
 
@@ -217,14 +229,14 @@ async def query_faq(keyword: str) -> str:
     if not kw:
         return f"未找到与【{keyword}】相关的常见问题解答。"
 
-    # 1. 优先尝试 Milvus Dense 向量语义近邻检索
+    # 1. 优先尝试 AdvancedKnowledgeRetriever (hybrid_rerank) 进阶检索
     try:
         retriever = get_retriever()
         hits = await retriever.retrieve(kw, top_k=3)
         if hits:
             return retriever.format_faq_hits(hits, keyword=keyword)
     except Exception as e:
-        logger.warning(f"KnowledgeRetriever 语义检索异常，优雅降级为 SQL 查询: {e}")
+        logger.warning(f"AdvancedKnowledgeRetriever 进阶检索异常，优雅降级为 SQL 查询: {e}")
         global _retriever
         _retriever = None
 

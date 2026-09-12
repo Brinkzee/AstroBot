@@ -404,6 +404,580 @@
       margin-top: 8px;
       text-align: center;
     }
+
+    /* 引用角标 */
+    .cite-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      line-height: 1.2;
+      padding: 1px 5px;
+      margin: 0 2px;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: var(--primary);
+      border: 1px solid #bfdbfe;
+      font-weight: 600;
+      cursor: pointer;
+      vertical-align: super;
+      transition: all 0.15s ease;
+    }
+    .cite-pill:hover {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: #1d4ed8;
+      transform: translateY(-1px);
+    }
+
+    /* 引用抽屉与蒙层 */
+    .citation-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    .citation-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .citation-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 100%;
+      max-width: 440px;
+      height: 100vh;
+      background: #ffffff;
+      box-shadow: -8px 0 30px rgba(0, 0, 0, 0.12);
+      z-index: 101;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .citation-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+    }
+    .drawer-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .drawer-title h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .btn-drawer-close {
+      background: transparent;
+      border: none;
+      font-size: 24px;
+      color: var(--text-muted);
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .btn-drawer-close:hover {
+      background: #e2e8f0;
+      color: var(--text-main);
+    }
+
+    .drawer-body {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .cite-card-section {
+      background: #f8fafc;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .cite-badge-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .cite-n-badge {
+      display: inline-block;
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 12px;
+    }
+    .cite-category-tag {
+      font-size: 11px;
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-weight: 500;
+    }
+    .cite-meta-row {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      word-break: break-all;
+    }
+    .cite-meta-label {
+      font-weight: 600;
+      color: #475569;
+      flex-shrink: 0;
+    }
+    .cite-text-block {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: #1e293b;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 满意度反馈栏 */
+    .feedback-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 6px;
+      border-top: 1px dashed #e2e8f0;
+    }
+    .btn-fb-thumb {
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #475569;
+    }
+    .btn-fb-thumb:hover:not(:disabled) {
+      background: #e2e8f0;
+      transform: scale(1.08);
+    }
+    .btn-fb-thumb.active-up {
+      background: #eff6ff;
+      border-color: #3b82f6;
+      color: #2563eb;
+      font-weight: bold;
+    }
+    .btn-fb-thumb.active-down {
+      background: #fef2f2;
+      border-color: #f87171;
+      color: #ef4444;
+      font-weight: bold;
+    }
+    .btn-fb-thumb:disabled {
+      cursor: default;
+      opacity: 0.85;
+    }
+    .fb-tip {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-left: 6px;
+      transition: opacity 0.2s ease;
+    }
+
+    /* 建议操作按钮容器与解耦按钮 */
+    .action-buttons-container {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+
+    .btn-action-agent {
+      background: #eff6ff;
+      color: #2563eb;
+      border-color: #bfdbfe;
+    }
+
+    .btn-action-agent:hover:not(:disabled) {
+      background: #dbeafe;
+      border-color: #93c5fd;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+    }
+
+    .btn-action-ticket {
+      background: #f0fdf4;
+      color: #16a34a;
+      border-color: #bbf7d0;
+    }
+
+    .btn-action-ticket:hover:not(:disabled) {
+      background: #dcfce7;
+      border-color: #86efac;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(22, 163, 74, 0.15);
+    }
+
+    .btn-action.btn-disabled,
+    .btn-action:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    .btn-action-refund {
+      background: #fff7ed;
+      color: #c2410c;
+      border-color: #ffedd5;
+    }
+
+    .btn-action-refund:hover:not(:disabled) {
+      background: #ffedd5;
+      border-color: #fed7aa;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(194, 65, 12, 0.15);
+    }
+
+    /* 订单选择卡片容器 */
+    .order-selector-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 10px 0 6px 0;
+      animation: fadeIn 0.25s ease-out forwards;
+    }
+
+    .order-cards-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .order-card-item {
+      background: #ffffff;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-align: left;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      user-select: none;
+    }
+
+    .order-card-item:hover:not(.disabled) {
+      border-color: var(--primary);
+      background: #f8faff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+    }
+
+    .order-card-item.selected {
+      border-color: #2563eb;
+      background: #eff6ff;
+      cursor: default;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+    }
+
+    .order-card-item.disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      background: #f8fafc;
+    }
+
+    .order-card-left {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .order-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .order-card-id {
+      font-family: monospace;
+      font-weight: 700;
+      font-size: 13px;
+      color: #1e293b;
+      background: #f1f5f9;
+      padding: 1px 6px;
+      border-radius: 6px;
+    }
+
+    .order-card-tag {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .order-tag-shipped { background: #dbeafe; color: #1e40af; }
+    .order-tag-pending { background: #fef3c7; color: #92400e; }
+    .order-tag-completed { background: #dcfce7; color: #166534; }
+    .order-tag-default { background: #f1f5f9; color: #475569; }
+
+    .order-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .order-card-time {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .order-card-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .order-card-price {
+      font-size: 14px;
+      font-weight: 700;
+      color: #dc2626;
+    }
+
+    .btn-select-order {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: var(--primary);
+      border: 1px solid #bfdbfe;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .order-card-item:hover:not(.disabled) .btn-select-order {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+    .order-card-item.selected .btn-select-order {
+      background: #22c55e;
+      color: #ffffff;
+      border-color: #22c55e;
+    }
+
+    /* 退款弹窗 Modal */
+    .refund-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(4px);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+
+    .refund-modal-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .refund-modal {
+      background: #ffffff;
+      border-radius: 18px;
+      width: 90%;
+      max-width: 480px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+      transform: translateY(12px) scale(0.97);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      border: 1px solid var(--border-color);
+    }
+
+    .refund-modal-overlay.open .refund-modal {
+      transform: translateY(0) scale(1);
+    }
+
+    .refund-modal-header {
+      padding: 16px 20px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .refund-modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .refund-modal-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .refund-form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .refund-form-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    .refund-form-input, .refund-form-select, .refund-form-textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      font-size: 14px;
+      color: var(--text-main);
+      background: #ffffff;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .refund-form-input:focus, .refund-form-select:focus, .refund-form-textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .refund-form-input:disabled, .refund-form-input[readonly] {
+      background: #f1f5f9;
+      color: #475569;
+      cursor: default;
+    }
+
+    .refund-modal-footer {
+      padding: 14px 20px;
+      background: #f8fafc;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .btn-modal-cancel {
+      padding: 7px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      background: #ffffff;
+      color: #64748b;
+      font-size: 13.5px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-modal-cancel:hover {
+      background: #f1f5f9;
+      color: #334155;
+    }
+
+    .btn-modal-submit {
+      padding: 7px 18px;
+      border-radius: 10px;
+      border: none;
+      background: var(--primary-gradient);
+      color: #ffffff;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .btn-modal-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+    .btn-modal-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* 系统通知提示 (居中浅灰) */
+    .msg-row.system-hint {
+      align-self: center;
+      justify-content: center;
+      max-width: 90%;
+      margin: 4px 0;
+    }
+
+    .system-msg {
+      font-size: 12px;
+      color: #64748b;
+      background: #f1f5f9;
+      padding: 6px 16px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      text-align: center;
+      display: inline-block;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -423,6 +997,7 @@
       </div>
       <div class="header-actions">
         <a href="/kb" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="知识库管理工作台">📚 知识库</a>
+        <a href="/rag-eval" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="RAG 质量评估工作台">📊 RAG 评估</a>
         <div class="session-badge" id="session-display">会话: 自动生成</div>
         <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
       </div>
@@ -446,11 +1021,13 @@
 
     <!-- 快捷提问胶囊 -->
     <div class="quick-chips-container">
+      <button class="chip-btn highlight" style="background:#fef3c7; border-color:#fde68a; color:#b45309;" onclick="sendQuickText('这个能退吗')">🔄 Ch06验收: 这个能退吗(触发缺单卡片)</button>
       <button class="chip-btn highlight" onclick="sendQuickText('订单 1001 的物流到哪了')">🚚 验收1: 查物流到哪了</button>
       <button class="chip-btn highlight" onclick="sendQuickText('退货政策是什么')">📋 验收2: 查退货政策</button>
       <button class="chip-btn highlight" onclick="sendQuickText('邮费是多少')">🔍 验收3: 邮费是多少(漏召回)</button>
       <button class="chip-btn" onclick="sendQuickText('查询订单 1001 的信息')">📦 查订单1001</button>
       <button class="chip-btn" onclick="sendQuickText('帮我创建售后工单，手机收到后外壳有划痕')">🎫 创建售后工单</button>
+      <button class="chip-btn highlight" onclick="sendQuickText('我要投诉')">⚠️ 验收4: 我要投诉(建议操作)</button>
     </div>
 
     <!-- 底部输入栏 -->
@@ -468,9 +1045,63 @@
     </footer>
   </div>
 
+  <!-- 引用溯源侧滑抽屉 -->
+  <div class="citation-overlay" id="citation-overlay" onclick="closeCitationDrawer()"></div>
+  <div class="citation-drawer" id="citation-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span style="font-size: 20px;">📖</span>
+        <h3>知识引用溯源详情</h3>
+      </div>
+      <button class="btn-drawer-close" onclick="closeCitationDrawer()" title="关闭抽屉">&times;</button>
+    </div>
+    <div class="drawer-body" id="citation-drawer-body">
+      <!-- 动态插入引用内容 -->
+    </div>
+  </div>
+
+  <!-- 退款申请弹窗 Modal -->
+  <div class="refund-modal-overlay" id="refund-modal-overlay" onclick="closeRefundModalOnOverlay(event)">
+    <div class="refund-modal" onclick="event.stopPropagation()">
+      <div class="refund-modal-header">
+        <div class="refund-modal-title">
+          <span>📝</span>
+          <span>申请售后退款</span>
+        </div>
+        <button class="btn-drawer-close" onclick="closeRefundModal()">&times;</button>
+      </div>
+      <div class="refund-modal-body">
+        <div class="refund-form-group">
+          <label class="refund-form-label">关联退款订单号</label>
+          <input type="text" id="refund-modal-order-id" class="refund-form-input" readonly value="1001">
+        </div>
+        <div class="refund-form-group">
+          <label class="refund-form-label">退款原因 <span style="color:#ef4444;">*</span></label>
+          <select id="refund-modal-reason" class="refund-form-select">
+            <option value="7天无理由退货">7天无理由退货</option>
+            <option value="商品质量问题/破损">商品质量问题/破损</option>
+            <option value="少件/漏发/错发">少件/漏发/错发</option>
+            <option value="尺码/规格不合">尺码/规格不合</option>
+            <option value="物流停滞想退款">物流停滞想退款</option>
+          </select>
+        </div>
+        <div class="refund-form-group">
+          <label class="refund-form-label">补充说明 (可选)</label>
+          <textarea id="refund-modal-notes" class="refund-form-textarea" rows="3" placeholder="请描述具体退款原因或商品情况..."></textarea>
+        </div>
+      </div>
+      <div class="refund-modal-footer">
+        <button type="button" class="btn-modal-cancel" onclick="closeRefundModal()">取消</button>
+        <button type="button" class="btn-modal-submit" id="btn-refund-submit" onclick="submitRefundModal()">确认提交</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentConversationId = null;
     let isStreaming = false;
+    let currentRefundOrderId = null;
+    let activeRefundBtn = null;
 
     const messagesContainer = document.getElementById('messages-container');
     const userInput = document.getElementById('user-input');
@@ -496,6 +1127,8 @@
 
     btnClear.addEventListener('click', () => {
       currentConversationId = null;
+      currentRefundOrderId = null;
+      activeRefundBtn = null;
       sessionDisplay.innerText = '会话: 自动生成';
       messagesContainer.innerHTML = `
         <div class="msg-row bot">
@@ -524,6 +1157,34 @@
       row.innerHTML = `<div class="msg-content">${escapeHtml(text)}</div>`;
       messagesContainer.appendChild(row);
       scrollToBottom();
+    }
+
+    function appendSystemMessage(text) {
+      const row = document.createElement('div');
+      row.className = 'msg-row system-hint';
+      row.innerHTML = `<div class="system-msg">${escapeHtml(text)}</div>`;
+      messagesContainer.appendChild(row);
+      scrollToBottom();
+    }
+
+    function appendAssistantMessage(text, avatarChar = '🐱') {
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.style.cssText = 'width:36px; height:36px; font-size:18px;';
+      avatar.innerText = avatarChar;
+
+      const content = document.createElement('div');
+      content.className = 'msg-content';
+      content.innerHTML = `<div class="text-body">${renderContentWithCitations(text)}</div>`;
+
+      row.appendChild(avatar);
+      row.appendChild(content);
+      messagesContainer.appendChild(row);
+      scrollToBottom();
+      return content;
     }
 
     function createBotPlaceholder() {
@@ -556,6 +1217,12 @@
     async function sendMessage() {
       const text = userInput.value.trim();
       if (!text || isStreaming) return;
+
+      // 提取提问中可能包含的订单号 (如 退款订单: 1001 或 订单1001)
+      const orderMatch = text.match(/\b(100[1-9])\b/);
+      if (orderMatch) {
+        currentRefundOrderId = orderMatch[1];
+      }
 
       appendUserMessage(text);
       userInput.value = '';
@@ -622,7 +1289,14 @@
               }
 
               // 事件分流处理
-              if (data.event_type === 'tool_start') {
+              if (data.event_type === 'order_selector') {
+                renderOrderSelectorCards(botContentEl, data.orders || []);
+              } else if (data.event_type === 'citations') {
+                botContentEl._citations = data.citations || [];
+                console.log('Received citations snapshot:', botContentEl._citations);
+              } else if (data.event_type === 'actions') {
+                renderActionButtons(botContentEl, data.actions || []);
+              } else if (data.event_type === 'tool_start') {
                 toolContainer.style.display = 'block';
                 const label = data.tool_label || data.tool_name;
                 toolContainer.innerHTML = `
@@ -652,7 +1326,7 @@
                     textBody.innerHTML = ''; // 移除 loading 三个点
                   }
                   fullText += chunk;
-                  textBody.innerHTML = escapeHtml(fullText) + '<span class="typing-cursor"></span>';
+                  textBody.innerHTML = renderContentWithCitations(fullText) + '<span class="typing-cursor"></span>';
                   scrollToBottom();
                 }
               } else if (data.event_type === 'error' || data.error) {
@@ -666,9 +1340,21 @@
           }
         }
 
-        // 流结束，移除光标
+        // 流结束，移除光标并渲染最终格式
         if (textBody) {
-          textBody.innerHTML = escapeHtml(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
+          textBody.innerHTML = renderContentWithCitations(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
+        }
+
+        // 为 Bot 回复挂载左下角满意度反馈 (👍/👎 点亮锁定)
+        if (fullText && !botContentEl.querySelector('.feedback-bar')) {
+          const fbBar = document.createElement('div');
+          fbBar.className = 'feedback-bar';
+          fbBar.innerHTML = `
+            <button type="button" class="btn-fb-thumb up" onclick="handleFeedback(this, 'up')" title="回答有帮助">👍 赞</button>
+            <button type="button" class="btn-fb-thumb down" onclick="handleFeedback(this, 'down')" title="回答不准确">👎 踩</button>
+            <span class="fb-tip"></span>
+          `;
+          botContentEl.appendChild(fbBar);
         }
         scrollToBottom();
 
@@ -679,6 +1365,330 @@
         btnSend.disabled = false;
         userInput.focus();
       }
+    }
+
+    function renderActionButtons(botContentEl, actions) {
+      if (!actions || !actions.length) return;
+
+      let container = botContentEl.querySelector('.action-buttons-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'action-buttons-container';
+        const fbBar = botContentEl.querySelector('.feedback-bar');
+        if (fbBar) {
+          botContentEl.insertBefore(container, fbBar);
+        } else {
+          botContentEl.appendChild(container);
+        }
+      } else {
+        container.innerHTML = '';
+      }
+
+      for (const action of actions) {
+        if (action === 'transfer_agent') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-agent';
+          btn.innerHTML = '<span>👤</span><span>转人工</span>';
+          btn.onclick = () => handleTransferAgent(btn);
+          container.appendChild(btn);
+        } else if (action === 'create_ticket') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-ticket';
+          btn.innerHTML = '<span>🎫</span><span>建工单</span>';
+          btn.onclick = () => handleCreateTicket(btn);
+          container.appendChild(btn);
+        } else if (action === 'apply_refund') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-action btn-action-refund';
+          btn.innerHTML = '<span>📝</span><span>申请退款</span>';
+          btn.onclick = () => openRefundModal(btn);
+          container.appendChild(btn);
+        }
+      }
+      scrollToBottom();
+    }
+
+    function handleTransferAgent(btn) {
+      appendSystemMessage('已转接人工客服');
+      appendAssistantMessage('您好，我是客服小猫，请问有什么可以帮您的 🐱', '🐱');
+      btn.disabled = true;
+      btn.classList.add('btn-disabled');
+    }
+
+    async function handleCreateTicket(btn) {
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span><span>创建中...</span>';
+
+      try {
+        const res = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            conversation_id: currentConversationId,
+            description: '用户申请客服工单',
+            ticket_type: '投诉'
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + res.status));
+        }
+
+        const data = await res.json();
+        appendSystemMessage(`已为您成功创建人工工单【${data.ticket_no}】，客服将在24小时内跟进处理。`);
+        btn.innerHTML = '<span>✅</span><span>已建工单</span>';
+        btn.classList.add('btn-disabled');
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        appendSystemMessage(`创建工单失败: ${err.message}`);
+      }
+    }
+
+    function renderContentWithCitations(text) {
+      if (!text) return '';
+      let safe = escapeHtml(text);
+      return safe.replace(/\[(\d+)\]/g, (match, num) => {
+        return `<button type="button" class="cite-pill" data-n="${num}" onclick="openCitationDrawer(event, this, ${num})" title="查看引用来源">[${num}]</button>`;
+      });
+    }
+
+    function openCitationDrawer(event, btnEl, n) {
+      if (event) event.stopPropagation();
+      const msgRow = btnEl.closest('.msg-content') || btnEl.closest('.msg-row');
+      const citations = (msgRow && msgRow._citations) || [];
+
+      const drawerOverlay = document.getElementById('citation-overlay');
+      const drawerEl = document.getElementById('citation-drawer');
+      const drawerBody = document.getElementById('citation-drawer-body');
+
+      const targetN = parseInt(n, 10);
+      const item = citations.find(c => c.n === targetN) || (citations[targetN - 1] || null);
+
+      if (!item) {
+        drawerBody.innerHTML = `
+          <div class="cite-card-section" style="text-align:center; padding:32px 20px;">
+            <div style="font-size:32px; margin-bottom:12px;">🔍</div>
+            <h4 style="color:#64748b; margin-bottom:8px;">暂未检索到【证据 ${n}】的对应引用快照</h4>
+            <p style="font-size:12px; color:#94a3b8; line-height:1.5;">该回答可能由直接生成或快照索引编号存在偏移。</p>
+          </div>
+        `;
+      } else {
+        const sectionPath = item.section_path || '售后政策 / 通用规范';
+        const category = item.category || '常见问答';
+        const question = item.question || '标准售后咨询';
+        const answer = item.answer || '(暂无知识解答原文)';
+        const chunkId = item.chunk_id ? `#${item.chunk_id}` : '';
+
+        drawerBody.innerHTML = `
+          <div class="cite-card-section">
+            <div class="cite-badge-header">
+              <span class="cite-n-badge">证据 [${escapeHtml(item.n || n)}]</span>
+              <span class="cite-category-tag">${escapeHtml(category)} ${escapeHtml(chunkId)}</span>
+            </div>
+
+            <div class="cite-meta-row">
+              <span class="cite-meta-label">📚 章节路径：</span>
+              <span>${escapeHtml(sectionPath)}</span>
+            </div>
+
+            <div class="cite-meta-row">
+              <span class="cite-meta-label">❓ 标准问法：</span>
+              <span style="font-weight:500; color:#334155;">${escapeHtml(question)}</span>
+            </div>
+
+            <div style="margin-top:12px;">
+              <div class="cite-meta-label" style="margin-bottom:6px;">📝 知识库解答原文：</div>
+              <div class="cite-text-block">${escapeHtml(answer)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      drawerOverlay.classList.add('open');
+      drawerEl.classList.add('open');
+    }
+
+    function closeCitationDrawer() {
+      const drawerOverlay = document.getElementById('citation-overlay');
+      const drawerEl = document.getElementById('citation-drawer');
+      if (drawerOverlay) drawerOverlay.classList.remove('open');
+      if (drawerEl) drawerEl.classList.remove('open');
+    }
+
+    // ESC 键平滑收起抽屉与退款弹窗
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeCitationDrawer();
+        closeRefundModal();
+      }
+    });
+
+    /* ==========================================================================
+       Ch06: 订单卡片选择与退款表单交互
+       ========================================================================== */
+    function renderOrderSelectorCards(botContentEl, orders) {
+      if (!orders || !orders.length) return;
+      let container = botContentEl.querySelector('.order-selector-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'order-selector-container';
+        const textBody = botContentEl.querySelector('.text-body');
+        if (textBody) {
+          botContentEl.insertBefore(container, textBody);
+        } else {
+          botContentEl.appendChild(container);
+        }
+      }
+
+      container.innerHTML = `
+        <div style="font-size:12.5px; color:#475569; margin-bottom:4px; font-weight:600;">📋 请点选需要办理退款的订单：</div>
+        <div class="order-cards-list">
+          ${orders.map(order => {
+            const tagClass = order.status === '已发货' ? 'order-tag-shipped' :
+                             order.status === '待支付' ? 'order-tag-pending' :
+                             order.status === '已完成' ? 'order-tag-completed' : 'order-tag-default';
+            return `
+              <div class="order-card-item" data-order-id="${escapeHtml(order.order_id)}" onclick="selectOrderCard(this, '${escapeHtml(order.order_id)}')">
+                <div class="order-card-left">
+                  <div class="order-card-header">
+                    <span class="order-card-id">#${escapeHtml(order.order_id)}</span>
+                    <span class="order-card-tag ${tagClass}">${escapeHtml(order.status || '未知')}</span>
+                  </div>
+                  <div class="order-card-title">${escapeHtml(order.product_name || '商品')}</div>
+                  <div class="order-card-time">${escapeHtml(order.create_time || '')}</div>
+                </div>
+                <div class="order-card-right">
+                  <span class="order-card-price">${escapeHtml(order.amount || '')}</span>
+                  <button type="button" class="btn-select-order">选择此单</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+      scrollToBottom();
+    }
+
+    function selectOrderCard(cardEl, orderId) {
+      if (isStreaming) return;
+      const list = cardEl.closest('.order-cards-list');
+      if (list) {
+        list.querySelectorAll('.order-card-item').forEach(c => {
+          c.classList.remove('selected');
+          c.classList.add('disabled');
+          const btn = c.querySelector('.btn-select-order');
+          if (btn) btn.innerText = '未选择';
+        });
+      }
+      cardEl.classList.remove('disabled');
+      cardEl.classList.add('selected');
+      const btn = cardEl.querySelector('.btn-select-order');
+      if (btn) btn.innerText = '✓ 已选';
+
+      currentRefundOrderId = orderId;
+
+      // 自动回填输入框并无缝发送，驱动工作流继续推进
+      userInput.value = `退款订单: ${orderId}`;
+      sendMessage();
+    }
+
+    function openRefundModal(btn) {
+      activeRefundBtn = btn;
+      const orderInput = document.getElementById('refund-modal-order-id');
+      orderInput.value = currentRefundOrderId || '1001';
+      document.getElementById('refund-modal-notes').value = '';
+      document.getElementById('refund-modal-overlay').classList.add('open');
+    }
+
+    function closeRefundModal() {
+      const overlay = document.getElementById('refund-modal-overlay');
+      if (overlay) overlay.classList.remove('open');
+      activeRefundBtn = null;
+    }
+
+    function closeRefundModalOnOverlay(e) {
+      if (e.target === document.getElementById('refund-modal-overlay')) {
+        closeRefundModal();
+      }
+    }
+
+    async function submitRefundModal() {
+      const orderId = document.getElementById('refund-modal-order-id').value.trim() || (currentRefundOrderId || '1001');
+      const reason = document.getElementById('refund-modal-reason').value;
+      const notes = document.getElementById('refund-modal-notes').value.trim();
+      const submitBtn = document.getElementById('btn-refund-submit');
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = '提交中...';
+
+      try {
+        const description = `【退款申请】订单号: ${orderId}，原因: ${reason}${notes ? '，补充说明: ' + notes : ''}`;
+        const res = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            conversation_id: currentConversationId,
+            description: description,
+            ticket_type: '售后'
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + res.status));
+        }
+
+        const data = await res.json();
+        closeRefundModal();
+        appendSystemMessage(`您的退款申请已提交，工单号:【${data.ticket_no}】，专员将在 24 小时内为您审核。`);
+        if (activeRefundBtn) {
+          activeRefundBtn.disabled = true;
+          activeRefundBtn.classList.add('btn-disabled');
+          activeRefundBtn.innerHTML = '<span>✅</span><span>退款已申请</span>';
+        }
+      } catch (err) {
+        alert('提交退款工单失败: ' + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = '确认提交';
+      }
+    }
+
+    function handleFeedback(btn, type) {
+      const bar = btn.closest('.feedback-bar');
+      if (!bar) return;
+      const buttons = bar.querySelectorAll('.btn-fb-thumb');
+      const tip = bar.querySelector('.fb-tip');
+
+      // 点亮对应按钮
+      if (type === 'up') {
+        btn.classList.add('active-up');
+        tip.innerText = '已反馈 (满意) 👍';
+      } else {
+        btn.classList.add('active-down');
+        tip.innerText = '已反馈 (待改进) 👎';
+      }
+
+      // 一次性锁定所有按钮
+      buttons.forEach(b => {
+        b.disabled = true;
+      });
+
+      console.log('Satisfaction feedback recorded:', {
+        type,
+        conversation_id: currentConversationId,
+        timestamp: new Date().toISOString()
+      });
     }
 
     function escapeHtml(str) {

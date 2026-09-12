@@ -1,0 +1,372 @@
+"""BGE-Reranker-v2-m3 在线重排客户端与确定性降级服务。
+
+特性：
+1. 生产环境对接 Hugging Face Inference Router 端点 (BAAI/bge-reranker-v2-m3)；
+2. 构造 text-classification 任务请求，传入 [{"text": query, "text_pair": doc_text}, ...] 批量推理；
+3. 内置 3 次指数退避重试 (Exponential Backoff)；
+4. 内置基于词覆盖率与 Jaccard 相似度的确定性 Mock 语义打分，供离线单测或线上 API 故障平滑降级；
+5. 提供异步 rerank 接口与结果 top_k 截断。
+"""
+
+import asyncio
+import json
+import logging
+import os
+import time
+from typing import Any, Dict, List, Optional
+
+import jieba
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class BGERerankerClient:
+    """BAAI/bge-reranker-v2-m3 交叉编码 (Cross-Encoder) 重排客户端。"""
+
+    # 类级别断路熔断标记，进程内所有实例共享，杜绝连续阻塞
+    _circuit_broken_until: float = 0.0
+
+    @classmethod
+    def reset_circuit_breaker(cls) -> None:
+        """重置熔断器状态，供自测与单测使用。"""
+        cls._circuit_broken_until = 0.0
+
+    @classmethod
+    def is_circuit_broken(cls) -> bool:
+        """检查当前熔断保护是否生效中。"""
+        return time.time() < cls._circuit_broken_until
+
+    def __init__(
+        self,
+        token: Optional[str] = None,
+        model: str = "BAAI/bge-reranker-v2-m3",
+        max_retries: int = 2,
+        retry_delay: float = 0.5,
+        timeout: Optional[float] = None,
+        batch_size: Optional[int] = None,
+        circuit_breaker_seconds: Optional[float] = None,
+        mock: bool = False,
+    ):
+        self.model = model
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+        # 解析超时时间：显式参数 > settings.HUGGINGFACE_TIMEOUT > 环境变量 > 默认 15.0s
+        if timeout is not None:
+            self.timeout = float(timeout)
+        else:
+            resolved_timeout = (
+                getattr(settings, "HUGGINGFACE_TIMEOUT", None)
+                or getattr(settings, "huggingface_timeout", None)
+                or os.getenv("HUGGINGFACE_TIMEOUT")
+            )
+            self.timeout = float(resolved_timeout) if resolved_timeout is not None else 15.0
+
+        # 解析批次大小：显式参数 > settings.RERANKER_BATCH_SIZE > 默认 4
+        if batch_size is not None:
+            self.batch_size = int(batch_size)
+        else:
+            resolved_bs = (
+                getattr(settings, "RERANKER_BATCH_SIZE", None)
+                or getattr(settings, "reranker_batch_size", None)
+                or os.getenv("RERANKER_BATCH_SIZE")
+            )
+            self.batch_size = int(resolved_bs) if resolved_bs is not None else 4
+
+        # 解析熔断保护窗口：显式参数 > settings.RERANKER_CIRCUIT_BREAKER_SECONDS > 默认 30.0s
+        if circuit_breaker_seconds is not None:
+            self.circuit_breaker_seconds = float(circuit_breaker_seconds)
+        else:
+            resolved_cb = (
+                getattr(settings, "RERANKER_CIRCUIT_BREAKER_SECONDS", None)
+                or getattr(settings, "reranker_circuit_breaker_seconds", None)
+                or os.getenv("RERANKER_CIRCUIT_BREAKER_SECONDS")
+            )
+            self.circuit_breaker_seconds = float(resolved_cb) if resolved_cb is not None else 30.0
+
+        if mock or os.getenv("MOCK_RERANKER") == "1" or os.getenv("ASTRO_MOCK_RERANKER") == "1":
+            self.token = "mock"
+            self.is_mock = True
+            self.client = None
+            logger.info("BGERerankerClient: 显式启用 Mock 语义打分模式")
+            return
+
+        # 解析 Hugging Face Token：参数 > settings.HUGGINGFACE_TOKEN > settings.huggingface_token > 环境变量
+        resolved_token = token
+        if resolved_token is None:
+            resolved_token = (
+                getattr(settings, "HUGGINGFACE_TOKEN", None)
+                or getattr(settings, "huggingface_token", None)
+                or os.getenv("HUGGINGFACE_TOKEN")
+            )
+
+        self.token = resolved_token
+        self.is_mock = False
+        self.client = None
+
+        if not self.token or self.token == "mock":
+            self.is_mock = True
+            logger.info("BGERerankerClient: 未配置有效 Token，自动启用内置 Mock 语义打分模式")
+        else:
+            try:
+                from huggingface_hub import InferenceClient
+
+                self.client = InferenceClient(token=self.token, timeout=self.timeout)
+                logger.info(
+                    f"BGERerankerClient: 已初始化 HuggingFace InferenceClient (model={self.model}, timeout={self.timeout}s, batch_size={self.batch_size})"
+                )
+            except Exception as e:
+                logger.warning(f"初始化 HuggingFace InferenceClient 失败: {e}，优雅降级为 Mock 模式")
+                self.is_mock = True
+
+    def _extract_doc_text(self, doc: Dict[str, Any]) -> str:
+        """从候选字典中提取代表文本，供与 query 进行 Cross-Encoder 匹配。"""
+        if not isinstance(doc, dict):
+            return str(doc)
+        if doc.get("chunk_text"):
+            return str(doc["chunk_text"])
+
+        parts = []
+        if doc.get("category"):
+            parts.append(f"【类目】{doc['category']}")
+        if doc.get("questions"):
+            qs = doc["questions"]
+            if isinstance(qs, list):
+                qs = "\n".join(str(q) for q in qs)
+            parts.append(f"【标准问法】{qs}")
+        elif doc.get("question"):
+            parts.append(f"【标准问法】{doc['question']}")
+        if doc.get("answer"):
+            parts.append(f"【解答】{doc['answer']}")
+
+        if parts:
+            return "\n".join(parts)
+        if doc.get("content"):
+            return str(doc["content"])
+        if doc.get("text"):
+            return str(doc["text"])
+        return str(doc)
+
+    def _compute_mock_score(self, query: str, doc_text: str) -> float:
+        """基于词重叠 (Word Recall / Jaccard) 与字符匹配的确定性 Mock 打分算法。"""
+        if not query or not doc_text:
+            return 0.0
+
+        q_clean = query.strip().lower()
+        d_clean = doc_text.strip().lower()
+
+        # 分词并过滤空白
+        q_words = [w for w in jieba.cut(q_clean) if len(w.strip()) > 0]
+        d_words = [w for w in jieba.cut(d_clean) if len(w.strip()) > 0]
+
+        q_set = set(q_words)
+        d_set = set(d_words)
+
+        if not q_set:
+            return 0.0
+
+        # 词汇覆盖率 (Recall) 与 Jaccard 相似度
+        intersect = q_set & d_set
+        union = q_set | d_set
+        recall = len(intersect) / len(q_set)
+        jaccard = len(intersect) / len(union) if union else 0.0
+
+        # 字符集合匹配
+        q_chars = set(q_clean.replace(" ", ""))
+        d_chars = set(d_clean.replace(" ", ""))
+        char_recall = len(q_chars & d_chars) / len(q_chars) if q_chars else 0.0
+
+        # 基础综合得分 (权重: 词覆盖 0.55, Jaccard 0.25, 字符覆盖 0.20)
+        score = 0.55 * recall + 0.25 * jaccard + 0.20 * char_recall
+
+        # 子串完全包含加权
+        if q_clean in d_clean:
+            score = min(1.0, score + 0.2)
+        elif len(q_clean) > 4 and any(
+            q_clean[i : i + 4] in d_clean for i in range(len(q_clean) - 3)
+        ):
+            score = min(1.0, score + 0.1)
+
+        return round(float(score), 4)
+
+    def _call_hf_api(self, query: str, doc_texts: List[str]) -> List[float]:
+        """调用 HuggingFace Inference Router 执行批量 text-classification 推理。"""
+        from huggingface_hub.inference._providers import get_provider_helper
+
+        helper = get_provider_helper(None, task="text-classification", model=self.model)
+        headers = getattr(self.client, "headers", {})
+        req = helper.prepare_request(
+            inputs="dummy",
+            parameters={},
+            headers=headers,
+            model=self.model,
+            api_key=self.token,
+        )
+        req.json = {
+            "inputs": [
+                {"text": query, "text_pair": doc_text}
+                for doc_text in doc_texts
+            ]
+        }
+
+        raw_res = self.client._inner_post(req)
+        if isinstance(raw_res, bytes):
+            res_json = json.loads(raw_res.decode("utf-8"))
+        elif isinstance(raw_res, str):
+            res_json = json.loads(raw_res)
+        else:
+            res_json = raw_res
+
+        if isinstance(res_json, dict) and "error" in res_json:
+            raise RuntimeError(f"HuggingFace API 错误: {res_json['error']}")
+
+        # 兼容处理：若 HuggingFace Router 将整个批次的分类结果包裹在单层外层列表中 (如 [[{...}, {...}]])
+        if isinstance(res_json, list) and len(res_json) == 1 and isinstance(res_json[0], list):
+            if len(res_json[0]) == len(doc_texts):
+                res_json = res_json[0]
+
+        scores: List[float] = []
+        if isinstance(res_json, list):
+            for item in res_json:
+                if isinstance(item, list) and len(item) > 0:
+                    scores.append(float(item[0].get("score", 0.0)))
+                elif isinstance(item, dict):
+                    scores.append(float(item.get("score", 0.0)))
+                elif isinstance(item, (int, float)):
+                    scores.append(float(item))
+                else:
+                    scores.append(0.0)
+        elif isinstance(res_json, dict) and "score" in res_json:
+            scores.append(float(res_json["score"]))
+
+        if len(scores) != len(doc_texts):
+            raise ValueError(
+                f"API 返回分数数量 ({len(scores)}) 与输入文档数量 ({len(doc_texts)}) 不匹配"
+            )
+
+        return scores
+
+    def _rerank_with_retry(
+        self,
+        query: str,
+        doc_texts: List[str],
+        batch_size: Optional[int] = None,
+    ) -> List[float]:
+        """带分批推理、自适应超时控制、断路熔断器与确定性 Mock 兜底的重排调用。"""
+        if self.is_mock or not self.client:
+            return [self._compute_mock_score(query, text) for text in doc_texts]
+
+        # 检查断路器熔断状态（若处于熔断期，直接走 Mock 保证毫秒级响应）
+        now = time.time()
+        if now < BGERerankerClient._circuit_broken_until:
+            logger.debug("BGE-Reranker: 熔断保护生效中，直接使用 Mock 语义打分")
+            return [self._compute_mock_score(query, text) for text in doc_texts]
+
+        effective_batch_size = batch_size if batch_size is not None else self.batch_size
+        all_scores: List[float] = []
+        circuit_tripped = False
+
+        # 分批请求 HuggingFace Router 端点（单批 batch_size 避免单请求超载 504 / 超时）
+        for i in range(0, len(doc_texts), effective_batch_size):
+            batch = doc_texts[i : i + effective_batch_size]
+            if circuit_tripped:
+                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
+                continue
+
+            batch_scores = None
+            last_err = None
+            for attempt in range(self.max_retries):
+                try:
+                    batch_scores = self._call_hf_api(query, batch)
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    if attempt < self.max_retries - 1:
+                        sleep_time = self.retry_delay * (2 ** attempt)
+                        logger.warning(
+                            f"BGE-Reranker 批次推理第 {attempt + 1}/{self.max_retries} 次失败 ({exc})，{sleep_time:.2f}s 后重试..."
+                        )
+                        time.sleep(sleep_time)
+                    else:
+                        logger.error(
+                            f"BGE-Reranker 批次推理重试 {self.max_retries} 次全部耗尽，最后错误: {exc}"
+                        )
+
+            if batch_scores is not None and len(batch_scores) == len(batch):
+                all_scores.extend(batch_scores)
+            else:
+                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断，本批及后续全部优雅降级
+                logger.warning(
+                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 {self.circuit_breaker_seconds:.1f}s 并平滑降级为 Mock 语义打分"
+                )
+                BGERerankerClient._circuit_broken_until = time.time() + self.circuit_breaker_seconds
+                circuit_tripped = True
+                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
+
+        return all_scores
+
+    def rerank_sync(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        top_k: int = 10,
+        max_candidates: int = 15,
+    ) -> List[Dict[str, Any]]:
+        """同步执行候选列表重排与打分。
+
+        Args:
+            query: 用户提问
+            candidates: 待重排的文档字典列表
+            top_k: 截断保留的最大条目数，默认 10
+            max_candidates: 参与 Cross-Encoder 精排的最大候选数（其余作为保底）
+
+        Returns:
+            按 rerank_score 降序排列的 Top-K 候选列表
+        """
+        if not candidates:
+            return []
+
+        # 截取前 max_candidates 条送入 Cross-Encoder，兼顾召回效果与端点负载
+        target_cands = candidates[:max_candidates]
+        tail_cands = candidates[max_candidates:]
+
+        doc_texts = [self._extract_doc_text(c) for c in target_cands]
+        scores = self._rerank_with_retry(query, doc_texts, batch_size=self.batch_size)
+
+        scored_candidates = []
+        for cand, score in zip(target_cands, scores):
+            item = dict(cand)
+            item["rerank_score"] = float(score)
+            scored_candidates.append(item)
+
+        scored_candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+
+        if len(scored_candidates) < top_k and tail_cands:
+            for cand in tail_cands:
+                item = dict(cand)
+                item["rerank_score"] = item.get("rerank_score", 0.0)
+                scored_candidates.append(item)
+                if len(scored_candidates) >= top_k:
+                    break
+
+        return scored_candidates[:top_k]
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        top_k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """异步执行候选列表重排与打分。"""
+        return await asyncio.to_thread(self.rerank_sync, query, candidates, top_k)
+
+    def close(self) -> None:
+        """关闭底层 HTTP 客户端以释放连接池与 socket 句柄。"""
+        if self.client is not None and hasattr(self.client, "close"):
+            try:
+                self.client.close()
+            except Exception:
+                pass
+

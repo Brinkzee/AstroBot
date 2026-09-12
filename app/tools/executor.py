@@ -174,5 +174,5 @@ class ToolExecutor:
         return _build_failure_response(tool_name, tool_call_id, error_detail)
 
 
-# 默认工具执行器单例
-default_tool_executor = ToolExecutor(registry=default_tool_registry)
+# 默认工具执行器单例 (适配复杂混合检索/重排链，超时设为 15.0s)
+default_tool_executor = ToolExecutor(registry=default_tool_registry, timeout=15.0)

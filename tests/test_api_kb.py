@@ -270,6 +270,47 @@ def test_kb_search_api():
         assert "latency_ms" in data
 
 
+def test_kb_search_api_with_category_filter():
+    """测试知识库语义检索自测接口支持 category 分类过滤参数，验证签名兼容真实 KnowledgeRetriever"""
+    from app.services.rag.retriever import KnowledgeRetriever
+
+    mock_store = MagicMock()
+    mock_store.search.return_value = [
+        {
+            "id": 15,
+            "distance": 0.92,
+            "category": "售后服务",
+            "questions": "退换货时限是几天？",
+            "answer": "签收后7天内可申请无理由退换货。",
+            "section_path": "售后 > 退换时效",
+            "content_type": "policy",
+            "is_key_clause": True,
+        }
+    ]
+    mock_embedding = MagicMock()
+    mock_embedding.aembed_query = AsyncMock(return_value=[0.05] * 1024)
+
+    real_retriever = KnowledgeRetriever(store=mock_store, embedding_client=mock_embedding)
+
+    with patch("app.api.routes.KnowledgeRetriever", return_value=real_retriever):
+        payload = {
+            "query": "几天内可以退货",
+            "top_k": 3,
+            "min_score": 0.6,
+            "category": "售后服务",
+        }
+        response = client.post("/api/kb/search", json=payload)
+        assert response.status_code == 200, f"Response error: {response.text}"
+        data = response.json()
+        assert data["query"] == "几天内可以退货"
+        assert data["total_hits"] == 1
+        assert data["hits"][0]["category"] == "售后服务"
+        # 验证底层 store.search 收到正确的 category_filter
+        mock_store.search.assert_called_once()
+        _, call_kwargs = mock_store.search.call_args
+        assert call_kwargs.get("category_filter") == "售后服务"
+
+
 def test_document_preview_api():
     """测试完整 Markdown 文档切块预览接口 POST /api/kb/documents/preview"""
     md_content = """# 会员积分体系

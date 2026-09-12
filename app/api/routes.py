@@ -6,13 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.chat import ChatStreamRequest
 from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
+from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
 from app.services.after_sale_service import extract_after_sale_ticket
 from app.services.chat_service import ChatService
+from app.tools.business_tools import create_ticket
 from app.db.session import get_db
+from app.api.rag_eval_routes import router as rag_eval_router
 
 router = APIRouter(prefix="/api")
+router.include_router(rag_eval_router)
 
-chat_service = ChatService()
+chat_service = ChatService(use_workflow=True)
 default_chat_service = chat_service
 
 
@@ -61,6 +65,26 @@ async def extract_ticket(request: AfterSaleExtractRequest):
         return ticket
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"提取失败: {str(e)}")
+
+
+@router.post("/tickets", response_model=TicketCreateResponse)
+async def api_create_ticket(request: TicketCreateRequest):
+    """前端自选独立触发的创建工单 API（不消耗 LLM）"""
+    res_str = await create_ticket.ainvoke({
+        "conversation_id": request.conversation_id,
+        "description": request.description,
+        "ticket_type": request.ticket_type,
+    })
+    data = json.loads(res_str)
+    if "error" in data:
+        raise HTTPException(status_code=400, detail=data["error"])
+    return TicketCreateResponse(
+        ticket_no=data["ticket_no"],
+        conversation_id=int(data["conversation_id"]),
+        ticket_type=data["ticket_type"],
+        status=data["status"],
+    )
+
 
 
 # ==============================================================================

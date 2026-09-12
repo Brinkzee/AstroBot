@@ -42,6 +42,9 @@ class KnowledgeRetriever:
         top_k: int = 3,
         min_score: Optional[float] = None,
         filter: Optional[str] = None,
+        category: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         """执行自然语言问题的 Dense 向量余弦相似度近邻检索。
         
@@ -50,6 +53,9 @@ class KnowledgeRetriever:
             top_k: 期望返回的最大候选知识条数，默认 3
             min_score: 最低余弦相似度阈值（若未指定则使用类默认值 min_score）
             filter: 标量过滤表达式 (可选)
+            category: 分类过滤 (可选，与 category_filter 含义相同)
+            category_filter: 分类过滤表达式 (可选)
+            **kwargs: 额外参数透传
             
         Returns:
             满足相似度阈值的知识命中列表（按相似度降序排序）
@@ -59,6 +65,7 @@ class KnowledgeRetriever:
 
         query_text = str(query).strip()
         effective_min_score = self.min_score if min_score is None else min_score
+        effective_category = category_filter or category or kwargs.get("category_filter") or kwargs.get("category")
 
         # 异步向量化 query 文本
         query_vector = await self.embedding_client.aembed_query(query_text)
@@ -70,6 +77,7 @@ class KnowledgeRetriever:
             top_k=top_k,
             min_score=effective_min_score,
             filter=filter,
+            category_filter=effective_category,
             collection_name=self.collection_name,
         )
 
@@ -125,3 +133,12 @@ class KnowledgeRetriever:
 
         hits = await self.retrieve(kw, top_k=top_k)
         return self.format_faq_hits(hits, keyword=keyword)
+
+    def close(self) -> None:
+        """关闭检索器并释放底层 Milvus 与模型资源。"""
+        if hasattr(self, "store") and self.store is not None:
+            if hasattr(self.store, "close"):
+                try:
+                    self.store.close()
+                except Exception:
+                    pass
