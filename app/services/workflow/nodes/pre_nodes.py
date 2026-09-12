@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.llm import get_chat_model
 from app.services.context.logger import log_history_context
+from app.services.context.manager import ContextManager
 from app.services.workflow.state import AgentWorkflowState
 
 logger = logging.getLogger(__name__)
@@ -131,27 +132,43 @@ def coreference_resolution_node(
     messages = state.get("messages") or []
 
     # 提取历史滑窗用于可观测日志记录与语义改写
-    valid_history_msgs = list(messages)
-    if valid_history_msgs:
-        last_m = valid_history_msgs[-1]
-        last_content = getattr(last_m, "content", None)
-        if last_content is None and isinstance(last_m, dict):
-            last_content = last_m.get("content", "")
-        if str(last_content or "").strip() == query:
-            valid_history_msgs = valid_history_msgs[:-1]
-    valid_history_msgs = valid_history_msgs[-8:]
+    if state.get("layer2_messages") is not None or state.get("layer1_messages") is not None:
+        l2 = list(state.get("layer2_messages") or [])
+        l1 = list(state.get("layer1_messages") or [])
+        if l1:
+            last_m = l1[-1]
+            last_content = getattr(last_m, "content", "")
+            if str(last_content or "").strip() == query:
+                l1 = l1[:-1]
+        summary_line, sliding_window_text = ContextManager.build_history_context_text(
+            layer2_messages=l2,
+            layer1_messages=l1,
+            summary=summary,
+        )
+        valid_history_msgs = l2 + l1
+        history_text = sliding_window_text
+    else:
+        valid_history_msgs = list(messages)
+        if valid_history_msgs:
+            last_m = valid_history_msgs[-1]
+            last_content = getattr(last_m, "content", None)
+            if last_content is None and isinstance(last_m, dict):
+                last_content = last_m.get("content", "")
+            if str(last_content or "").strip() == query:
+                valid_history_msgs = valid_history_msgs[:-1]
+        valid_history_msgs = valid_history_msgs[-8:]
+        summary_line = summary.strip().splitlines()[0].strip() if (summary and summary.strip()) else ""
+        history_text = _format_conversation_history(state.get("messages") or [], query)
 
     # 每轮必打：在任何分流和透传分支之前输出 [history_ctx] 到 log/app.log
     log_history_context(
         conv_id=conv_id,
-        summary_line=summary,
+        summary_line=summary_line,
         window_messages=valid_history_msgs,
     )
 
     if not query:
         return _AwaitableDict({"resolved_query": ""})
-
-    history_text = _format_conversation_history(state.get("messages") or [], query)
 
     # 1. 寒暄打招呼且无历史，直接原样透传，无需调用大模型 (Hard Gate)
     if not history_text and _is_pure_greeting(query):

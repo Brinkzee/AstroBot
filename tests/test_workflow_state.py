@@ -52,5 +52,8 @@ def test_agent_workflow_state_keys():
         "token_usage",
         "steps_taken",
         "status",
+        "summary",
+        "layer2_messages",
+        "layer1_messages",
     }
     assert set(AgentWorkflowState.__annotations__.keys()) == expected_keys

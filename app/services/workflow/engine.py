@@ -2,9 +2,10 @@ import inspect
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import BaseMessage
 
 from app.services.workflow.state import AgentWorkflowState, create_initial_state
 from app.services.workflow.nodes import pre_nodes
@@ -233,12 +234,18 @@ class WorkflowEngine:
         query: str,
         user_id: str = "default_user",
         db: Optional[Any] = None,
+        summary: Optional[str] = None,
+        layer2_messages: Optional[List[BaseMessage]] = None,
+        layer1_messages: Optional[List[BaseMessage]] = None,
     ) -> AgentWorkflowState:
         """执行单轮工作流"""
         initial_state = create_initial_state(
             conversation_id=conversation_id,
             query=query,
             user_id=user_id,
+            summary=summary,
+            layer2_messages=layer2_messages,
+            layer1_messages=layer1_messages,
         )
         token = None
         if _is_legacy_caller():

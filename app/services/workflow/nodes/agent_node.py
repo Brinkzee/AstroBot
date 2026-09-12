@@ -13,6 +13,7 @@ from langchain_core.messages import (
 from app.llm import get_chat_model
 from app.services.context.budget import estimate_tokens
 from app.services.context.logger import log_model_context
+from app.services.context.manager import ContextManager
 from app.services.workflow.state import AgentWorkflowState
 from app.tools.registry import default_tool_registry
 
@@ -227,28 +228,49 @@ async def main_agent_node(
         sys_content += "\n" + REFUND_SPECIALIZED_INSTRUCTIONS
 
     docs = state.get("retrieved_docs") or []
-    if docs:
-        if order_data and isinstance(order_data, dict):
-            # 退款专项场景：取 Top 3~5 篇政策证据，标注【参考政策条款 i】
-            policy_texts = []
-            for i, doc in enumerate(docs[:5], 1):
-                text = doc.get("text") or doc.get("content") or str(doc)
-                policy_texts.append(f"【参考政策条款 {i}】{text}")
-            sys_content += "\n以下为检索到的官方退换货与售后政策条款，请严格遵照执行：\n" + "\n".join(policy_texts)
-        else:
-            # 普通业务场景：取 Top 3 篇，标注【参考知识 i】
-            knowledge_texts = []
-            for i, doc in enumerate(docs[:3], 1):
-                text = doc.get("text") or doc.get("content") or str(doc)
-                knowledge_texts.append(f"【参考知识 {i}】{text}")
-            sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
 
-    # 2. 准备消息列表（以状态中原有历史为基础）
-    messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
-    existing_messages = state.get("messages") or []
-    for m in existing_messages:
-        if not isinstance(m, SystemMessage):
-            messages.append(m)
+    # 2. 准备消息列表（优先使用 layer2_messages 与 layer1_messages 并结合 ContextManager.build_model_messages）
+    if state.get("layer2_messages") is not None or state.get("layer1_messages") is not None:
+        l2 = list(state.get("layer2_messages") or [])
+        l1 = list(state.get("layer1_messages") or [])
+        query = str(state.get("resolved_query") or state.get("input_query") or "").strip()
+        # 排除当前提问（若包含在 l1 末尾），避免与 build_model_messages 中的 current_query 重复
+        if l1:
+            last_m = l1[-1]
+            last_content = getattr(last_m, "content", "")
+            if str(last_content or "").strip() in (query, str(state.get("input_query") or "").strip()):
+                l1 = l1[:-1]
+
+        messages = ContextManager.build_model_messages(
+            system_prompt=sys_content,
+            layer2_messages=l2,
+            layer1_messages=l1,
+            current_query=query,
+            summary=state.get("summary"),
+            retrieved_docs=docs,
+        )
+    else:
+        if docs:
+            if order_data and isinstance(order_data, dict):
+                # 退款专项场景：取 Top 3~5 篇政策证据，标注【参考政策条款 i】
+                policy_texts = []
+                for i, doc in enumerate(docs[:5], 1):
+                    text = doc.get("text") or doc.get("content") or str(doc)
+                    policy_texts.append(f"【参考政策条款 {i}】{text}")
+                sys_content += "\n以下为检索到的官方退换货与售后政策条款，请严格遵照执行：\n" + "\n".join(policy_texts)
+            else:
+                # 普通业务场景：取 Top 3 篇，标注【参考知识 i】
+                knowledge_texts = []
+                for i, doc in enumerate(docs[:3], 1):
+                    text = doc.get("text") or doc.get("content") or str(doc)
+                    knowledge_texts.append(f"【参考知识 {i}】{text}")
+                sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
+
+        messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
+        existing_messages = state.get("messages") or []
+        for m in existing_messages:
+            if not isinstance(m, SystemMessage):
+                messages.append(m)
 
     bound_llm = llm.bind_tools(available_tools) if (available_tools and hasattr(llm, "bind_tools")) else llm
 

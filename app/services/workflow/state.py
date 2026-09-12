@@ -22,11 +22,17 @@ class AgentWorkflowState(TypedDict):
     token_usage: Dict[str, int]
     steps_taken: int
     status: str
+    summary: Optional[str]
+    layer2_messages: Optional[List[BaseMessage]]
+    layer1_messages: Optional[List[BaseMessage]]
 
 def create_initial_state(
     conversation_id: int,
     query: str,
     user_id: str = "default_user",
+    summary: Optional[str] = None,
+    layer2_messages: Optional[List[BaseMessage]] = None,
+    layer1_messages: Optional[List[BaseMessage]] = None,
 ) -> AgentWorkflowState:
     """构建单轮工作流启动初始 State"""
     clean_query = str(query or "").strip()
@@ -49,4 +55,7 @@ def create_initial_state(
         "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         "steps_taken": 0,
         "status": "initialized",
+        "summary": summary,
+        "layer2_messages": layer2_messages,
+        "layer1_messages": layer1_messages,
     }

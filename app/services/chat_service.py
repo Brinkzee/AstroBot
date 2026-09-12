@@ -20,6 +20,9 @@ except ImportError:
     default_tool_executor = ToolExecutor(registry=default_tool_registry)
 from app.llm import get_chat_model
 from app.prompts.customer_service import customer_service_prompt
+from app.services.context.budget import calculate_context_budget, estimate_tokens
+from app.services.context.manager import ContextManager
+from app.services.context.summary_service import SummaryService
 from app.services.workflow.engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,7 @@ class ChatService:
         rag_generator: Optional[Any] = None,
         workflow_engine: Optional[Any] = None,
         use_workflow: Optional[bool] = None,
+        summary_service: Optional[SummaryService] = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
@@ -63,6 +67,7 @@ class ChatService:
             self.use_workflow = True
         else:
             self.use_workflow = False
+        self.summary_service = summary_service or SummaryService()
 
 
     async def get_or_create_conversation(
@@ -178,13 +183,48 @@ class ChatService:
                 # 2. 用户消息持久化
                 await self.save_message(db, conversation_id=conv_id, role="user", content=message)
 
-                # 3. 执行工作流
+                # 3. 读取该会话历史消息流水，调用 calculate_context_budget() 动态计算当前预算
+                stmt = (
+                    select(Message)
+                    .where(Message.conversation_id == conv_id)
+                    .order_by(Message.created_at.asc(), Message.id.asc())
+                )
+                result = await db.execute(stmt)
+                db_messages = list(result.scalars().all())
+
+                budget = calculate_context_budget()
+
+                # 4. 执行层 1 降级检查
+                old_l1 = conv.layer1_from_msg_id or 0
+                new_l1 = ContextManager.apply_layer1_degradation(conv, db_messages, budget.layer1_budget)
+                if new_l1 is not None and new_l1 != old_l1:
+                    logger.info(f"层1 降级 {old_l1}→{new_l1}")
+                    await db.commit()
+                    await db.refresh(conv)
+
+                # 5. 通过 ContextManager.partition_messages 切分三层，并生成 layer2_messages 与 layer1_messages
+                l3, l2, l1 = ContextManager.partition_messages(
+                    db_messages,
+                    summary_upto_msg_id=conv.summary_upto_msg_id,
+                    layer1_from_msg_id=conv.layer1_from_msg_id,
+                )
+                layer2_messages = ContextManager.format_layer2_messages(l2)
+                layer1_messages = ContextManager.format_layer1_messages(l1)
+
+                # 6. 将 summary=conv.summary, layer2_messages, layer1_messages 注入工作流初始 State 执行
                 if self.workflow_engine is None:
                     self.workflow_engine = WorkflowEngine()
                 engine = self.workflow_engine
-                final_state = await engine.run(conversation_id=conv_id, query=message, db=db)
+                final_state = await engine.run(
+                    conversation_id=conv_id,
+                    query=message,
+                    db=db,
+                    summary=conv.summary,
+                    layer2_messages=layer2_messages,
+                    layer1_messages=layer1_messages,
+                )
 
-                # 4. 如果有工具调用历史（在 final_state["messages"] 中提取）
+                # 7. 如果有工具调用历史（在 final_state["messages"] 中提取）
                 # 遍历消息，回显 tool_start 与 tool_end 并入库
                 msgs = final_state.get("messages") or []
                 tool_call_map: Dict[str, str] = {}
@@ -229,7 +269,7 @@ class ChatService:
                             tool_call_id=t_call_id,
                         )
 
-                # 5. 若状态为 need_order_selection 或存在 suggested_orders，发射 order_selector 卡片选择事件
+                # 8. 若状态为 need_order_selection 或存在 suggested_orders，发射 order_selector 卡片选择事件
                 if final_state.get("status") == "need_order_selection" or final_state.get("suggested_orders"):
                     yield {
                         "event_type": "order_selector",
@@ -237,7 +277,7 @@ class ChatService:
                         "orders": final_state.get("suggested_orders") or [],
                     }
 
-                # 6. 输出 text 文本事件
+                # 9. 输出 text 文本事件
                 resp_text = str(final_state.get("response_text") or "")
                 if resp_text:
                     yield {
@@ -252,7 +292,7 @@ class ChatService:
                         content=resp_text,
                     )
 
-                # 7. 如果有建议操作 suggested_actions，发射 actions 事件
+                # 10. 如果有建议操作 suggested_actions，发射 actions 事件
                 actions = final_state.get("suggested_actions") or []
                 if actions:
                     yield {
@@ -260,6 +300,17 @@ class ChatService:
                         "conversation_id": conv_id,
                         "actions": actions,
                     }
+
+                # 11. 流式回复输出并落库完成后：检查层 2 Token 用量，若超标触发后台摘要
+                l2_tokens = estimate_tokens(layer2_messages)
+                if self.summary_service.should_trigger_summary(l2_tokens, budget.layer2_budget):
+                    self.summary_service.trigger_async_summary(
+                        conv.id,
+                        from_msg_id=conv.summary_upto_msg_id or 0,
+                        upto_msg_id=conv.layer1_from_msg_id,
+                        layer2_tokens=l2_tokens,
+                        layer2_budget=budget.layer2_budget,
+                    )
                 return
 
             # 1. 会话初始化与历史回溯
