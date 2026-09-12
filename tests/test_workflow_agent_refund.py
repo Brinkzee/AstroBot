@@ -176,7 +176,7 @@ async def test_agent_unrelated_query_retains_normal_flow():
     mock_tool.ainvoke.assert_awaited_once()
 
     # 验证 SystemMessage 中无退款专职指令
-    sys_msgs = [m for m in updated["messages"] if isinstance(m, SystemMessage)]
+    sys_msgs = [m for m in bound_model.ainvoke.call_args_list[0][0][0] if isinstance(m, SystemMessage)]
     assert len(sys_msgs) > 0
     assert "【当前订单真实状态】" not in sys_msgs[0].content
     assert "【退款退货/售后专注裁决专项指令】" not in sys_msgs[0].content
