@@ -42,6 +42,18 @@ class Settings(BaseSettings):
         ge=0.0,
         description="BGE-Reranker 连续异常熔断保护窗口（秒），避免频繁阻塞并支持快速自愈"
     )
+    model_context_window: int = Field(default=128000, description="模型物理上下文窗口")
+    max_output_tokens: int = Field(default=2000, description="模型回复预留最大输出 Token")
+    max_user_input_tokens: int = Field(default=2000, description="单轮用户输入预估峰值")
+    max_agent_steps: int = Field(default=3, description="ReAct Agent 最大迭代步数")
+    tool_result_max_tokens: int = Field(default=1200, description="单步工具结果最大预留 Token")
+    rerank_top_k: int = Field(default=5, description="检索召回文档篇数")
+    system_prompt_tokens: int = Field(default=1500, description="系统人设与工具定义固定开销")
+    doc_tokens_per_chunk: int = Field(default=500, description="单篇检索文档估算 Token")
+    summary_max_tokens: int = Field(default=250, description="注入梗概上限预留")
+    safety_margin_tokens: int = Field(default=500, description="安全缓冲余量")
+    target_history_turns: int = Field(default=20, description="期望留存历史轮数")
+    steady_turn_tokens: int = Field(default=500, description="单轮稳态 Token 占用")
 
     @property
     def MILVUS_URI(self) -> str:
@@ -67,6 +79,54 @@ class Settings(BaseSettings):
     def RERANKER_CIRCUIT_BREAKER_SECONDS(self) -> float:
         """保持与 SDD 规范中大写属性名称的完全兼容"""
         return self.reranker_circuit_breaker_seconds
+
+    @property
+    def MODEL_CONTEXT_WINDOW(self) -> int:
+        return self.model_context_window
+
+    @property
+    def MAX_OUTPUT_TOKENS(self) -> int:
+        return self.max_output_tokens
+
+    @property
+    def MAX_USER_INPUT_TOKENS(self) -> int:
+        return self.max_user_input_tokens
+
+    @property
+    def MAX_AGENT_STEPS(self) -> int:
+        return self.max_agent_steps
+
+    @property
+    def TOOL_RESULT_MAX_TOKENS(self) -> int:
+        return self.tool_result_max_tokens
+
+    @property
+    def RERANK_TOP_K(self) -> int:
+        return self.rerank_top_k
+
+    @property
+    def SYSTEM_PROMPT_TOKENS(self) -> int:
+        return self.system_prompt_tokens
+
+    @property
+    def DOC_TOKENS_PER_CHUNK(self) -> int:
+        return self.doc_tokens_per_chunk
+
+    @property
+    def SUMMARY_MAX_TOKENS(self) -> int:
+        return self.summary_max_tokens
+
+    @property
+    def SAFETY_MARGIN_TOKENS(self) -> int:
+        return self.safety_margin_tokens
+
+    @property
+    def TARGET_HISTORY_TURNS(self) -> int:
+        return self.target_history_turns
+
+    @property
+    def STEADY_TURN_TOKENS(self) -> int:
+        return self.steady_turn_tokens
 
     @property
     def effective_base_url(self) -> Optional[str]:
