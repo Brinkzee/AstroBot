@@ -19,6 +19,17 @@ from app.services.context.manager import (
     partition_messages,
 )
 
+from app.services.context.summary_service import (
+    SummaryService,
+    default_summary_service,
+    format_dialogue_for_summary,
+    persist_summary_segment,
+    should_trigger_summary,
+    summarize_dialogue,
+    summarize_dialogue_sync,
+    trigger_async_summary,
+)
+
 __all__ = [
     "ContextBudgetResult",
     "calculate_context_budget",
@@ -31,5 +42,13 @@ __all__ = [
     "format_layer1_messages",
     "format_layer2_messages",
     "partition_messages",
+    "SummaryService",
+    "default_summary_service",
+    "format_dialogue_for_summary",
+    "persist_summary_segment",
+    "should_trigger_summary",
+    "summarize_dialogue",
+    "summarize_dialogue_sync",
+    "trigger_async_summary",
 ]
 
