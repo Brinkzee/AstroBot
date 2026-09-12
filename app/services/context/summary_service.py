@@ -238,12 +238,17 @@ class SummaryService:
                     f"msg_range=({from_msg_id}..{upto_msg_id})"
                 )
 
-                # 2. 查询待压缩历史消息闭区间
+                # 2. 查询待压缩历史消息闭区间（若存在前序摘要且 from_msg_id 落入已摘要区间，自动推移避免边界重复）
+                prev_upto = max([s.upto_msg_id for s in existing_summaries], default=0)
+                actual_from_id = from_msg_id
+                if prev_upto > 0 and actual_from_id <= prev_upto:
+                    actual_from_id = prev_upto + 1
+
                 stmt_msgs = (
                     select(Message)
                     .where(
                         Message.conversation_id == conv_id,
-                        Message.id >= from_msg_id,
+                        Message.id >= actual_from_id,
                         Message.id <= upto_msg_id,
                     )
                     .order_by(Message.id.asc())
@@ -275,7 +280,7 @@ class SummaryService:
                 new_summary_obj = await self.persist_summary_segment(
                     session=session,
                     conv_id=conv_id,
-                    from_id=from_msg_id,
+                    from_id=actual_from_id,
                     to_id=upto_msg_id,
                     content=new_summary_content,
                 )

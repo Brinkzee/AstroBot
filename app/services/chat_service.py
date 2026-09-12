@@ -305,10 +305,15 @@ class ChatService:
 
                 # 11. 流式回复输出并落库完成后：检查层 2 Token 用量，若超标触发后台摘要
                 l2_tokens = estimate_tokens(layer2_messages)
+                start_from_id = (
+                    (conv.summary_upto_msg_id + 1)
+                    if (conv.summary_upto_msg_id and conv.summary_upto_msg_id > 0)
+                    else 0
+                )
                 if self.summary_service.should_trigger_summary(l2_tokens, budget.layer2_budget):
                     self.summary_service.trigger_async_summary(
                         conv.id,
-                        from_msg_id=conv.summary_upto_msg_id or 0,
+                        from_msg_id=start_from_id,
                         upto_msg_id=conv.layer1_from_msg_id or 0,
                         layer2_tokens=l2_tokens,
                         layer2_budget=budget.layer2_budget,
