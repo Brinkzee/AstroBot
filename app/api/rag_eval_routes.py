@@ -95,47 +95,67 @@ async def get_faith_cases(
     db: AsyncSession = Depends(get_db),
 ):
     """分页获取编造个案台账列表，并返回双口径幻觉率与台账总体统计指标。"""
-    # 1. 过滤总数
-    count_stmt = select(func.count(FaithCase.id))
-    if status:
-        count_stmt = count_stmt.where(FaithCase.status == status)
-    if bucket:
-        count_stmt = count_stmt.where(FaithCase.bucket == bucket)
-    count_res = await db.execute(count_stmt)
-    total_filtered = count_res.scalar() or 0
+    try:
+        # 1. 过滤总数
+        count_stmt = select(func.count(FaithCase.id))
+        if status:
+            count_stmt = count_stmt.where(FaithCase.status == status)
+        if bucket:
+            count_stmt = count_stmt.where(FaithCase.bucket == bucket)
+        count_res = await db.execute(count_stmt)
+        total_filtered = count_res.scalar() or 0
 
-    # 2. 过滤分页数据
-    list_stmt = select(FaithCase)
-    if status:
-        list_stmt = list_stmt.where(FaithCase.status == status)
-    if bucket:
-        list_stmt = list_stmt.where(FaithCase.bucket == bucket)
-    list_stmt = (
-        list_stmt.order_by(FaithCase.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    list_res = await db.execute(list_stmt)
-    records = list_res.scalars().all()
+        # 2. 过滤分页数据
+        list_stmt = select(FaithCase)
+        if status:
+            list_stmt = list_stmt.where(FaithCase.status == status)
+        if bucket:
+            list_stmt = list_stmt.where(FaithCase.bucket == bucket)
+        list_stmt = (
+            list_stmt.order_by(FaithCase.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        list_res = await db.execute(list_stmt)
+        records = list_res.scalars().all()
 
-    # 3. 台账全表统计 (严格按测试预设的 side_effect 顺序)
-    total_cnt_res = await db.execute(select(func.count(FaithCase.id)))
-    total_cnt = total_cnt_res.scalar() or 0
+        # 3. 台账全表统计 (严格按测试预设的 side_effect 顺序)
+        total_cnt_res = await db.execute(select(func.count(FaithCase.id)))
+        total_cnt = total_cnt_res.scalar() or 0
 
-    unres_res = await db.execute(
-        select(func.count(FaithCase.id)).where(FaithCase.status == "未解决")
-    )
-    unres_cnt = unres_res.scalar() or 0
+        unres_res = await db.execute(
+            select(func.count(FaithCase.id)).where(FaithCase.status == "未解决")
+        )
+        unres_cnt = unres_res.scalar() or 0
 
-    res_res = await db.execute(
-        select(func.count(FaithCase.id)).where(FaithCase.status == "已解决")
-    )
-    res_cnt = res_res.scalar() or 0
+        res_res = await db.execute(
+            select(func.count(FaithCase.id)).where(FaithCase.status == "已解决")
+        )
+        res_cnt = res_res.scalar() or 0
 
-    wont_res = await db.execute(
-        select(func.count(FaithCase.id)).where(FaithCase.status == "无需解决")
-    )
-    wont_cnt = wont_res.scalar() or 0
+        wont_res = await db.execute(
+            select(func.count(FaithCase.id)).where(FaithCase.status == "无需解决")
+        )
+        wont_cnt = wont_res.scalar() or 0
+    except Exception as e:
+        logger.warning(f"Database query failed for faith cases: {e}")
+        return {
+            "metrics": {
+                "current_round_judge_rate": 0.0,
+                "current_round_human_confirmed_rate": 0.0,
+                "ledger_summary": {
+                    "total": 0,
+                    "unresolved": 0,
+                    "resolved": 0,
+                    "wont_resolve": 0,
+                },
+            },
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "items": [],
+            "warning": f"数据库连接不可用或离线，编造个案台账暂无法加载: {str(e)}",
+        }
 
     # 4. 获取评估集基数计算双口径幻觉率
     eval_set_size = 300
@@ -233,27 +253,36 @@ async def resolve_faith_case(
     if request.status not in ["已解决", "无需解决", "未解决"]:
         raise HTTPException(status_code=400, detail="非法处置状态")
 
-    stmt = select(FaithCase).where(FaithCase.id == case_id)
-    result = await db.execute(stmt)
-    case = result.scalar_one_or_none()
-    if not case:
-        raise HTTPException(status_code=404, detail="未找到该编造个案记录")
+    try:
+        stmt = select(FaithCase).where(FaithCase.id == case_id)
+        result = await db.execute(stmt)
+        case = result.scalar_one_or_none()
+        if not case:
+            raise HTTPException(status_code=404, detail="未找到该编造个案记录")
 
-    case.status = request.status
-    case.resolution = clean_resolution
-    if request.status in ["已解决", "无需解决"]:
-        case.resolved_at = datetime.now()
+        case.status = request.status
+        case.resolution = clean_resolution
+        if request.status in ["已解决", "无需解决"]:
+            case.resolved_at = datetime.now()
 
-    await db.commit()
-    await db.refresh(case)
+        await db.commit()
+        await db.refresh(case)
 
-    return {
-        "success": True,
-        "id": case.id,
-        "eval_id": case.eval_id,
-        "status": case.status,
-        "resolution": case.resolution,
-    }
+        return {
+            "success": True,
+            "id": case.id,
+            "eval_id": case.eval_id,
+            "status": case.status,
+            "resolution": case.resolution,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to resolve faith case: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"数据库暂不可用，无法保存处置记录: {str(e)}",
+        )
 
 
 # ==============================================================================

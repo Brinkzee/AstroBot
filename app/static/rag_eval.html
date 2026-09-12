@@ -1128,29 +1128,48 @@
         if (activeStatusFilter) url += `&status=${encodeURIComponent(activeStatusFilter)}`;
 
         const res = await fetch(url);
+        if (!res.ok) {
+          console.warn("Failed to fetch faith cases:", res.status);
+          document.getElementById("pagination-info").textContent = "数据库离线或未连接";
+          renderCasesList([], "⚠️ 数据库未连接或离线，编造个案台账暂无法加载（如需查看台账请确保 MySQL 运行中）");
+          return;
+        }
+
         const data = await res.json();
 
         // 渲染顶部台账指标
         if (data.metrics) {
-          document.getElementById("ledger-judge-rate").textContent = `${data.metrics.current_round_judge_rate}%`;
-          document.getElementById("ledger-human-rate").textContent = `${data.metrics.current_round_human_confirmed_rate}%`;
+          document.getElementById("ledger-judge-rate").textContent = `${data.metrics.current_round_judge_rate || 0}%`;
+          document.getElementById("ledger-human-rate").textContent = `${data.metrics.current_round_human_confirmed_rate || 0}%`;
           const s = data.metrics.ledger_summary || {};
           document.getElementById("ledger-cnt-unres").textContent = `${s.unresolved || 0} 例`;
           document.getElementById("ledger-cnt-res").textContent = `${s.resolved || 0} 例`;
           document.getElementById("ledger-cnt-wont").textContent = `${s.wont_resolve || 0} 例`;
         }
 
-        document.getElementById("pagination-info").textContent = `第 ${data.page} 页，共 ${data.total} 条`;
+        if (data.warning) {
+          console.warn(data.warning);
+          document.getElementById("pagination-info").textContent = "数据库离线或未连接";
+          renderCasesList([], "⚠️ " + data.warning);
+          return;
+        }
+
+        const curPage = data.page || 1;
+        const totalCount = data.total || 0;
+        document.getElementById("pagination-info").textContent = `第 ${curPage} 页，共 ${totalCount} 条`;
         renderCasesList(data.items);
       } catch (err) {
         console.error("Failed to fetch faith cases:", err);
+        document.getElementById("pagination-info").textContent = "网络或服务异常";
+        renderCasesList([], "⚠️ 网络或服务异常，编造个案台账加载失败: " + err.message);
       }
     }
 
-    function renderCasesList(items) {
+    function renderCasesList(items, customEmptyMsg) {
       const container = document.getElementById("cases-container");
       if (!items || items.length === 0) {
-        container.innerHTML = '<div style="text-align:center; padding:30px; color:#94a3b8;">当前筛选条件下没有编造个案记录</div>';
+        const msg = customEmptyMsg || '当前筛选条件下没有编造个案记录';
+        container.innerHTML = `<div style="text-align:center; padding:30px; color:#94a3b8;">${msg}</div>`;
         return;
       }
 

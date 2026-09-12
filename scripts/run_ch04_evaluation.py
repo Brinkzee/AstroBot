@@ -22,6 +22,14 @@ import os
 from pathlib import Path
 import sys
 
+# 必须在初始化 logging 及任何标准流输出前强制配置 Windows UTF-8 编码
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # 确保项目根目录在 sys.path 中
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -74,13 +82,6 @@ def parse_args():
 
 
 async def run_evaluation(args):
-    if sys.platform == "win32":
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-            sys.stderr.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
-
     dataset_path = ROOT_DIR / args.dataset
     if not dataset_path.exists():
         logger.error(f"评测集文件不存在: {dataset_path}")

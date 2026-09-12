@@ -10,6 +10,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -94,10 +95,16 @@ class JobRunner:
             job.logs.append(f"[{job.started_at}] 作业启动: {' '.join(cmd_args)}")
 
         try:
+            # 传递 UTF-8 环境变量，避免 Windows 默认代码页 (CP936/GBK) 导致子进程控制台输出乱码
+            child_env = os.environ.copy()
+            child_env["PYTHONIOENCODING"] = "utf-8"
+            child_env["PYTHONUTF8"] = "1"
+
             # 使用行缓冲方式捕获日志
             proc = subprocess.Popen(
                 cmd_args,
                 cwd=str(ROOT_DIR),
+                env=child_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

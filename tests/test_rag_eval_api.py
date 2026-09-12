@@ -247,6 +247,29 @@ def test_api_rag_eval_faith_cases_query_and_metrics():
         app.dependency_overrides.pop(get_db, None)
 
 
+def test_api_rag_eval_faith_cases_database_error_graceful_fallback():
+    """测试数据库离线或查询异常时，接口优雅降级返回空列表与友好提示，杜绝 500。"""
+    from sqlalchemy.exc import OperationalError
+
+    mock_session = AsyncMock()
+    mock_session.execute.side_effect = OperationalError("Can't connect to MySQL server", params=None, orig=Exception("Connection refused"))
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        resp = client.get("/api/rag-eval/faith-cases?page=1&page_size=20")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+        assert "warning" in data
+        assert "数据库" in data["warning"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
 def test_api_rag_eval_faith_cases_resolve_requires_resolution():
     """测试处置编造个案时，resolution 说明为空则拒绝提交 (400)。"""
     resp = client.post(
