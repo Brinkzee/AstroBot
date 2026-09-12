@@ -224,9 +224,11 @@ class ChatService:
                     layer1_messages=layer1_messages,
                 )
 
-                # 7. 如果有工具调用历史（在 final_state["messages"] 中提取）
-                # 遍历消息，回显 tool_start 与 tool_end 并入库
-                msgs = final_state.get("messages") or []
+                # 7. 如果有工具调用历史（优先提取本轮新产生的工具消息，杜绝扫描历史消息导致重复回显与入库）
+                msgs = final_state.get("current_turn_tool_messages")
+                if msgs is None:
+                    # 兼容性兜底：若未提供 current_turn_tool_messages 则回落至 final_state["messages"]
+                    msgs = final_state.get("messages") or []
                 tool_call_map: Dict[str, str] = {}
                 for i, m in enumerate(msgs):
                     if hasattr(m, "tool_calls") and m.tool_calls:
@@ -307,7 +309,7 @@ class ChatService:
                     self.summary_service.trigger_async_summary(
                         conv.id,
                         from_msg_id=conv.summary_upto_msg_id or 0,
-                        upto_msg_id=conv.layer1_from_msg_id,
+                        upto_msg_id=conv.layer1_from_msg_id or 0,
                         layer2_tokens=l2_tokens,
                         layer2_budget=budget.layer2_budget,
                     )

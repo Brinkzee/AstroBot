@@ -369,3 +369,93 @@ async def test_pre_nodes_utilizes_context_state():
     prompt_human = prompt_msgs[-1].content
     # 对话历史应包含滑窗内容
     assert "我买了件羽绒服" in prompt_human
+
+
+# =========================================================================
+# 6. 测试多轮工具调用下 SSE 事件流与 DB 消息不重复
+# =========================================================================
+
+@pytest.mark.asyncio
+async def test_multiturn_tool_call_no_duplicate_sse_and_db():
+    """测试第一轮产生工具调用，第二轮为普通对话时，第二轮不产生历史工具事件且 DB 无重复工具消息"""
+    db = FakeAsyncSession()
+    mock_engine = MagicMock(spec=WorkflowEngine)
+
+    round1_tool_msg = AIMessage(
+        content="",
+        tool_calls=[{"id": "call_track_1", "name": "track_logistics", "args": {"order_id": "1001"}}],
+    )
+    round1_tool_res = ToolMessage(
+        content="顺丰速运派送中，快递员：张师傅",
+        tool_call_id="call_track_1",
+        name="track_logistics",
+    )
+
+    mock_engine.run = AsyncMock(side_effect=[
+        # Round 1: 触发工具调用
+        {
+            "conversation_id": 1,
+            "response_text": "您的订单1001正在顺丰速运派送中。",
+            "messages": [
+                HumanMessage(content="帮我查下订单1001"),
+                round1_tool_msg,
+                round1_tool_res,
+                AIMessage(content="您的订单1001正在顺丰速运派送中。"),
+            ],
+            "current_turn_tool_messages": [round1_tool_msg, round1_tool_res],
+            "status": "success",
+        },
+        # Round 2: 普通对话，不调用工具
+        {
+            "conversation_id": 1,
+            "response_text": "不客气，很高兴为您服务！",
+            "messages": [
+                HumanMessage(content="好的，谢谢"),
+                AIMessage(content="不客气，很高兴为您服务！"),
+            ],
+            "current_turn_tool_messages": [],
+            "status": "chitchat",
+        },
+    ])
+
+    service = ChatService(workflow_engine=mock_engine, use_workflow=True)
+
+    # 第一轮执行
+    events_round1 = []
+    async for ev in service.stream_chat(db, conversation_id=None, message="帮我查下订单1001"):
+        events_round1.append(ev)
+
+    # 断言第一轮产生了工具事件
+    r1_tool_start = [e for e in events_round1 if e.get("event_type") == "tool_start"]
+    r1_tool_end = [e for e in events_round1 if e.get("event_type") == "tool_end"]
+    assert len(r1_tool_start) == 1
+    assert len(r1_tool_end) == 1
+    assert r1_tool_start[0]["tool_name"] == "track_logistics"
+
+    # 断言第一轮入库了 4 条消息：user, assistant(tool_call), tool, assistant(final)
+    assert len(db.messages) == 4
+    assert [m.role for m in db.messages] == ["user", "assistant", "tool", "assistant"]
+
+    # 第二轮执行
+    events_round2 = []
+    async for ev in service.stream_chat(db, conversation_id=1, message="好的，谢谢"):
+        events_round2.append(ev)
+
+    # 断言第二轮未产生任何工具事件
+    r2_tool_start = [e for e in events_round2 if e.get("event_type") == "tool_start"]
+    r2_tool_end = [e for e in events_round2 if e.get("event_type") == "tool_end"]
+    assert len(r2_tool_start) == 0
+    assert len(r2_tool_end) == 0
+
+    # 断言第二轮正常输出了文本和完成事件
+    r2_text = [e for e in events_round2 if e.get("event_type") == "text"]
+    assert len(r2_text) == 1
+    assert "不客气" in r2_text[0]["content"]
+
+    # 断言 DB 中消息总数严格为 6 条，无重复工具消息
+    assert len(db.messages) == 6
+    roles = [m.role for m in db.messages]
+    assert roles == ["user", "assistant", "tool", "assistant", "user", "assistant"]
+    tool_messages_in_db = [m for m in db.messages if m.role == "tool"]
+    assert len(tool_messages_in_db) == 1
+

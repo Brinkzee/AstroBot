@@ -25,6 +25,7 @@ class AgentWorkflowState(TypedDict):
     summary: Optional[str]
     layer2_messages: Optional[List[BaseMessage]]
     layer1_messages: Optional[List[BaseMessage]]
+    current_turn_tool_messages: Optional[List[BaseMessage]]
 
 def create_initial_state(
     conversation_id: int,
@@ -58,4 +59,5 @@ def create_initial_state(
         "summary": summary,
         "layer2_messages": layer2_messages,
         "layer1_messages": layer1_messages,
+        "current_turn_tool_messages": [],
     }

@@ -293,11 +293,14 @@ async def main_agent_node(
         "total_tokens": int(init_tokens.get("total_tokens", 0)),
     }
     final_text = ""
+    new_messages: List[BaseMessage] = []
+    current_turn_tool_messages: List[BaseMessage] = []
 
     while steps < MAX_STEPS:
         steps += 1
         resp = await bound_llm.ainvoke(messages)
         messages.append(resp)
+        new_messages.append(resp)
 
         # 统计 token 消耗
         meta = getattr(resp, "response_metadata", {}) or {}
@@ -315,6 +318,8 @@ async def main_agent_node(
             # 自然收敛，完成推演
             final_text = str(resp.content or "")
             break
+
+        current_turn_tool_messages.append(resp)
 
         # 执行工具并将结果回填
         for tool_call in tool_calls:
@@ -338,7 +343,10 @@ async def main_agent_node(
                 except Exception as e:
                     output = f"执行异常: {str(e)}"
 
-            messages.append(ToolMessage(content=str(output), tool_call_id=call_id))
+            tool_msg = ToolMessage(content=str(output), tool_call_id=call_id)
+            messages.append(tool_msg)
+            new_messages.append(tool_msg)
+            current_turn_tool_messages.append(tool_msg)
 
     if not final_text:
         # 步数超限，执行总结
@@ -346,6 +354,7 @@ async def main_agent_node(
             messages + [HumanMessage(content="请根据已有工具查询的信息，立即给出最终结论。")]
         )
         final_text = str(final_summary.content or "")
+        new_messages.append(final_summary)
         meta = getattr(final_summary, "response_metadata", {}) or {}
         usage = meta.get("token_usage") or meta.get("usage") or getattr(final_summary, "usage_metadata", None) or {}
         if usage:
@@ -370,7 +379,8 @@ async def main_agent_node(
 
     return {
         "response_text": final_text,
-        "messages": messages,
+        "messages": new_messages,
+        "current_turn_tool_messages": current_turn_tool_messages,
         "steps_taken": steps,
         "token_usage": total_tokens,
         "suggested_actions": suggested_actions,
