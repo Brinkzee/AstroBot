@@ -133,3 +133,12 @@ class KnowledgeRetriever:
 
         hits = await self.retrieve(kw, top_k=top_k)
         return self.format_faq_hits(hits, keyword=keyword)
+
+    def close(self) -> None:
+        """关闭检索器并释放底层 Milvus 与模型资源。"""
+        if hasattr(self, "store") and self.store is not None:
+            if hasattr(self.store, "close"):
+                try:
+                    self.store.close()
+                except Exception:
+                    pass

@@ -44,10 +44,13 @@ def temp_milvus_path(tmp_path):
 def test_knowledge_retriever_init_defaults():
     """测试 KnowledgeRetriever 的默认依赖与参数初始化"""
     retriever = KnowledgeRetriever()
-    assert retriever.min_score == 0.35
-    assert retriever.collection_name == "knowledge"
-    assert retriever.store is not None
-    assert retriever.embedding_client is not None
+    try:
+        assert retriever.min_score == 0.35
+        assert retriever.collection_name == "knowledge"
+        assert retriever.store is not None
+        assert retriever.embedding_client is not None
+    finally:
+        retriever.close()
 
 
 @pytest.mark.asyncio
