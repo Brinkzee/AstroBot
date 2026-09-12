@@ -9,10 +9,27 @@ from app.services.context.budget import (
     check_budget_on_startup,
     estimate_tokens,
 )
+from app.services.context.manager import (
+    ContextManager,
+    apply_layer1_degradation,
+    build_history_context_text,
+    build_model_messages,
+    format_layer1_messages,
+    format_layer2_messages,
+    partition_messages,
+)
 
 __all__ = [
     "ContextBudgetResult",
     "calculate_context_budget",
     "check_budget_on_startup",
     "estimate_tokens",
+    "ContextManager",
+    "apply_layer1_degradation",
+    "build_history_context_text",
+    "build_model_messages",
+    "format_layer1_messages",
+    "format_layer2_messages",
+    "partition_messages",
 ]
+
