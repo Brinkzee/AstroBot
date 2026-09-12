@@ -11,6 +11,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from app.llm import get_chat_model
+from app.services.context.budget import estimate_tokens
+from app.services.context.logger import log_model_context
 from app.services.workflow.state import AgentWorkflowState
 from app.tools.registry import default_tool_registry
 
@@ -249,6 +251,17 @@ async def main_agent_node(
             messages.append(m)
 
     bound_llm = llm.bind_tools(available_tools) if (available_tools and hasattr(llm, "bind_tools")) else llm
+
+    # 3. 记录主力 Agent 模型调用入参可观测日志 [model_ctx]
+    conv_id = state.get("conversation_id", 0)
+    summary = state.get("summary")
+    window_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
+    log_model_context(
+        conv_id=conv_id,
+        summary=summary,
+        window_messages=window_msgs,
+        estimated_tokens=estimate_tokens(messages),
+    )
 
     steps = 0
     init_tokens = state.get("token_usage") or {}

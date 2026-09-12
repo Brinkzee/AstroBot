@@ -30,6 +30,14 @@ from app.services.context.summary_service import (
     trigger_async_summary,
 )
 
+from app.services.context.logger import (
+    DEFAULT_LOG_FILE,
+    get_context_logger,
+    log_history_context,
+    log_model_context,
+    log_summary_lifecycle,
+)
+
 __all__ = [
     "ContextBudgetResult",
     "calculate_context_budget",
@@ -50,5 +58,10 @@ __all__ = [
     "summarize_dialogue",
     "summarize_dialogue_sync",
     "trigger_async_summary",
+    "DEFAULT_LOG_FILE",
+    "get_context_logger",
+    "log_history_context",
+    "log_model_context",
+    "log_summary_lifecycle",
 ]
 

@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.llm import get_chat_model
+from app.services.context.logger import log_history_context
 from app.services.workflow.state import AgentWorkflowState
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,28 @@ def coreference_resolution_node(
 ) -> Dict[str, Any]:
     """指代消解与口语归一化节点：结合多轮历史进行代词消除与口语标准化，提供透传保护与异常兜底"""
     query = str(state.get("input_query") or "").strip()
+    conv_id = state.get("conversation_id", 0)
+    summary = state.get("summary")
+    messages = state.get("messages") or []
+
+    # 提取历史滑窗用于可观测日志记录与语义改写
+    valid_history_msgs = list(messages)
+    if valid_history_msgs:
+        last_m = valid_history_msgs[-1]
+        last_content = getattr(last_m, "content", None)
+        if last_content is None and isinstance(last_m, dict):
+            last_content = last_m.get("content", "")
+        if str(last_content or "").strip() == query:
+            valid_history_msgs = valid_history_msgs[:-1]
+    valid_history_msgs = valid_history_msgs[-8:]
+
+    # 每轮必打：在任何分流和透传分支之前输出 [history_ctx] 到 log/app.log
+    log_history_context(
+        conv_id=conv_id,
+        summary_line=summary,
+        window_messages=valid_history_msgs,
+    )
+
     if not query:
         return _AwaitableDict({"resolved_query": ""})
 
