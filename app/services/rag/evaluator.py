@@ -264,8 +264,17 @@ class RAGEvaluator:
         self.eval_dataset_path = eval_dataset_path
         self.judge_model = judge_model
         self.is_mock = is_mock
-        self.retriever = retriever or AdvancedKnowledgeRetriever()
-        self.generator = generator or RAGControlledGenerator()
+        if retriever is not None:
+            self.retriever = retriever
+        elif is_mock:
+            self.retriever = None
+        else:
+            self.retriever = AdvancedKnowledgeRetriever()
+
+        if generator is not None:
+            self.generator = generator
+        else:
+            self.generator = RAGControlledGenerator()
 
     def load_dataset(self, path: Optional[str] = None) -> List[Dict[str, Any]]:
         """加载评测数据集（jsonl 格式）。"""
@@ -308,7 +317,7 @@ class RAGEvaluator:
         docs: List[Dict[str, Any]] = []
         citations: List[Dict[str, Any]] = []
 
-        if self.is_mock and not hasattr(self.retriever, "retrieve_with_strategy_mocked"):
+        if (self.is_mock or self.retriever is None) and not hasattr(self.retriever, "retrieve_with_strategy_mocked"):
             # 确定性 Mock 检索数据
             docs, citations = self._mock_retrieval(sample, strategy)
         else:
