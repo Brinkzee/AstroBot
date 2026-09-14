@@ -103,7 +103,9 @@ async def test_tool_executor_schema_validation_failure():
     assert result["error"] is not None
     assert "参数校验失败" in result["error"]
     assert "工具 [query_order] 调用失败" in result["output"]
-    assert "请结合此情况向用户做解释并提供帮助" in result["output"]
+    assert "请结合此情况向用户做解释" in result["output"]
+    assert result["status"] == "校验拦下"
+    assert result["error_type"] == "INVALID_ARGS"
 
 
 @pytest.mark.asyncio
@@ -197,7 +199,7 @@ async def test_tool_executor_retry_exhausted_failure():
         """持续失败的工具"""
         nonlocal call_count
         call_count += 1
-        raise RuntimeError(f"底层服务崩溃: {reason}")
+        raise ConnectionResetError(f"底层服务连接中断: {reason}")
 
     registry.register(always_failing_tool)
 
