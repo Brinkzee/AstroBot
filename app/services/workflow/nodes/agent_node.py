@@ -382,6 +382,8 @@ async def main_agent_node(
                     "conversation_id": conv_id,
                     "tool_call_id": call_id,
                 })
+                # 无论恢复何种动作，立即清理挂起缓存，防止状态泄漏到后续对话轮次
+                _pending_agent_states.pop(conv_id, None)
 
                 # 恢复执行时分支裁决
                 if user_action == "confirm":
@@ -441,6 +443,12 @@ async def main_agent_node(
                         },
                         conversation_id=conv_id,
                     )
+                    # 取消工单：将未执行成功的包含 tool_calls 的 resp 从消息历史中剔除，避免遗留悬挂 tool_call
+                    if resp in new_messages:
+                        new_messages.remove(resp)
+                    if resp in messages:
+                        messages.remove(resp)
+
                     final_text = "已为您取消工单创建。如果您有其他问题，欢迎随时咨询。"
                     cancel_msg = AIMessage(content=final_text)
                     messages.append(cancel_msg)

@@ -392,3 +392,214 @@ def test_api_chat_resume_cancel_sse():
         assert event_types == ["text"]
         assert "tool_start" not in event_types
         assert "取消" in events[0]["content"]
+
+
+# ==============================================================================
+# Test 7: Multi-turn test: User creates ticket -> cancel -> NEXT turn normal question
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_multiturn_ticket_then_normal_question(clean_db):
+    """Test 7: Multi-turn test: User creates ticket -> cancel -> In the NEXT turn,
+    user asks a normal question ("运费险怎么退"). Verify that _pending_agent_states
+    has NO leftover state for conv_id, LLM is called normally, and normal response is returned
+    (no replaying previous ticket).
+    """
+    conv_id = 907
+    await clean_db(conv_id)
+
+    from app.services.workflow.nodes.agent_node import _pending_agent_states
+
+    engine = WorkflowEngine()
+    fake_intent_ticket = {"intent": "人工", "confidence": 0.98, "intent_reason": "用户申请建工单转人工专员处理"}
+    fake_intent_qa = {"intent": "订单", "confidence": 0.95, "intent_reason": "运费险咨询"}
+
+    mock_model = MagicMock()
+    mock_model.bind_tools.return_value = mock_model
+    mock_model.ainvoke = AsyncMock(
+        side_effect=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "create_ticket",
+                        "args": {
+                            "ticket_type": "售后",
+                            "description": "羽绒服袖口开线破损严重，请专员处理",
+                        },
+                        "id": "call_ticket_907",
+                    }
+                ],
+            ),
+            AIMessage(content="运费险可以在订单详情页申请退货退款，卖家同意后由系统自动发起运费险理赔。"),
+        ]
+    )
+
+    with patch("app.services.workflow.nodes.agent_node.get_chat_model", return_value=mock_model):
+        with patch("app.services.workflow.nodes.pre_nodes.intent_recognition_node", side_effect=[fake_intent_ticket, fake_intent_qa]):
+            # Turn 1: 用户发起建单，触发挂起
+            state1 = await engine.run(
+                conversation_id=conv_id,
+                query="帮我建工单，我买的羽绒服袖口开线破损严重，请专员处理",
+            )
+            assert "__interrupt__" in state1
+            # 挂起期间，缓存中存在待恢复状态
+            assert conv_id in _pending_agent_states
+
+            # 用户选择取消建单
+            resumed_state = await engine.resume(conversation_id=conv_id, action="cancel")
+            assert "取消" in resumed_state.get("response_text", "")
+
+            # 关键断言 1: 挂起恢复后，_pending_agent_states 中必须彻底清理，禁止状态遗留泄漏
+            assert conv_id not in _pending_agent_states
+
+            # Turn 2: 下一轮对话，用户咨询常规业务问题
+            state2 = await engine.run(
+                conversation_id=conv_id,
+                query="运费险怎么退",
+            )
+
+            # 关键断言 2: 第二轮正常执行，无遗留挂起状态，LLM 正常调用且正常返回
+            assert conv_id not in _pending_agent_states
+            assert "__interrupt__" not in state2
+            assert "运费险" in state2.get("response_text", "")
+            assert "工单" not in state2.get("response_text", "")
+
+
+# ==============================================================================
+# Test 8: Direct test of chat_service.resume_chat (confirm and cancel)
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_chat_service_resume_chat_direct(clean_db):
+    """Test 8: Direct test of chat_service.resume_chat (without mocking resume_chat at router level)
+    to verify that resume_chat yields tool_start/tool_end (or text for cancel), saves message to db, and completes.
+    """
+    from app.services.chat_service import ChatService
+
+    # 1. 测试 action="confirm": 产出 tool_start, tool_end, text，保存消息至 db 并完成
+    conv_id_confirm = 908
+    await clean_db(conv_id_confirm)
+
+    engine_confirm = WorkflowEngine()
+    fake_intent = {"intent": "人工", "confidence": 0.98, "intent_reason": "用户申请建工单转人工专员处理"}
+
+    mock_model = MagicMock()
+    mock_model.bind_tools.return_value = mock_model
+    mock_model.ainvoke = AsyncMock(
+        side_effect=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "create_ticket",
+                        "args": {
+                            "ticket_type": "售后",
+                            "description": "羽绒服袖口开线破损严重，请专员处理",
+                        },
+                        "id": "call_ticket_908",
+                    }
+                ],
+            ),
+            AIMessage(content="已为您成功创建工单，工单编号为：T20260914193000908，人工客服专员将尽快为您跟进处理。"),
+        ]
+    )
+
+    with patch("app.services.workflow.nodes.pre_nodes.intent_recognition_node", new=AsyncMock(return_value=fake_intent)):
+        with patch("app.services.workflow.nodes.agent_node.get_chat_model", return_value=mock_model):
+            # 触发中断挂起
+            state_suspended = await engine_confirm.run(
+                conversation_id=conv_id_confirm,
+                query="帮我建工单，我买的羽绒服袖口开线破损严重，请专员处理",
+            )
+            assert "__interrupt__" in state_suspended
+
+            # 使用 FakeAsyncSession 作为 db 调用 chat_service.resume_chat
+            fake_db = FakeAsyncSession()
+            chat_service = ChatService(workflow_engine=engine_confirm)
+
+            events = [
+                event
+                async for event in chat_service.resume_chat(
+                    db=fake_db,
+                    conversation_id=conv_id_confirm,
+                    action="confirm",
+                )
+            ]
+
+            # 验证事件序列：tool_start -> tool_end -> text
+            event_types = [e["event_type"] for e in events]
+            assert "tool_start" in event_types
+            assert "tool_end" in event_types
+            assert "text" in event_types
+
+            # 验证工具详情
+            tool_start_evt = next(e for e in events if e["event_type"] == "tool_start")
+            assert tool_start_evt["tool_name"] == "create_ticket"
+            assert tool_start_evt["conversation_id"] == conv_id_confirm
+
+            tool_end_evt = next(e for e in events if e["event_type"] == "tool_end")
+            assert tool_end_evt["tool_name"] == "create_ticket"
+            assert tool_end_evt["success"] is True
+
+            text_evt = next(e for e in events if e["event_type"] == "text")
+            assert "T20260914" in text_evt["content"]
+
+            # 验证消息已正确持久化到 db
+            assert len(fake_db.messages) >= 3
+            saved_roles = [m.role for m in fake_db.messages]
+            assert "assistant" in saved_roles
+            assert "tool" in saved_roles
+
+    # 2. 测试 action="cancel": 产出 text，保存消息至 db 并完成
+    conv_id_cancel = 909
+    await clean_db(conv_id_cancel)
+
+    engine_cancel = WorkflowEngine()
+    mock_model_cancel = MagicMock()
+    mock_model_cancel.bind_tools.return_value = mock_model_cancel
+    mock_model_cancel.ainvoke = AsyncMock(
+        return_value=AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "create_ticket",
+                    "args": {
+                        "ticket_type": "售后",
+                        "description": "羽绒服袖口开线破损严重，请专员处理",
+                    },
+                    "id": "call_ticket_909",
+                }
+            ],
+        )
+    )
+
+    with patch("app.services.workflow.nodes.pre_nodes.intent_recognition_node", new=AsyncMock(return_value=fake_intent)):
+        with patch("app.services.workflow.nodes.agent_node.get_chat_model", return_value=mock_model_cancel):
+            # 触发挂起
+            state_suspended2 = await engine_cancel.run(
+                conversation_id=conv_id_cancel,
+                query="帮我建工单，我买的羽绒服袖口开线破损严重，请专员处理",
+            )
+            assert "__interrupt__" in state_suspended2
+
+            fake_db_cancel = FakeAsyncSession()
+            chat_service_cancel = ChatService(workflow_engine=engine_cancel)
+
+            cancel_events = [
+                event
+                async for event in chat_service_cancel.resume_chat(
+                    db=fake_db_cancel,
+                    conversation_id=conv_id_cancel,
+                    action="cancel",
+                )
+            ]
+
+            cancel_types = [e["event_type"] for e in cancel_events]
+            assert "text" in cancel_types
+            assert "tool_start" not in cancel_types
+            assert "取消" in cancel_events[0]["content"]
+
+            # 验证取消消息持久化至 db
+            assert len(fake_db_cancel.messages) == 1
+            assert fake_db_cancel.messages[0].role == "assistant"
+            assert "取消" in fake_db_cancel.messages[0].content
+
