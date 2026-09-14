@@ -7,16 +7,17 @@ from app.tools.registry import ToolRegistry, default_tool_registry
 from app.tools.executor import ToolExecutor
 
 
-def test_default_tool_registry_contains_five_tools():
-    """验证默认工具注册中心已注册全部 5 个业务工具"""
-    tools = default_tool_registry.get_all_tools()
+@pytest.mark.asyncio
+async def test_default_tool_registry_contains_four_builtin_tools():
+    """验证默认工具注册中心已注册全部 4 个内置业务工具（物流已迁移至 MCP）"""
+    tools = await default_tool_registry.get_all_tools()
     tool_names = [t.name for t in tools]
-    assert len(tools) == 5
+    assert len(default_tool_registry.get_all_builtin_tools()) == 4
     assert "query_order" in tool_names
     assert "query_product" in tool_names
-    assert "query_logistics" in tool_names
     assert "query_faq" in tool_names
     assert "create_ticket" in tool_names
+    assert "query_logistics" not in default_tool_registry.get_all_builtin_tools()
 
     # 单个工具获取测试
     order_tool = default_tool_registry.get_tool("query_order")
@@ -26,10 +27,12 @@ def test_default_tool_registry_contains_five_tools():
     assert default_tool_registry.get_tool("non_existent_tool") is None
 
 
-def test_custom_tool_registry():
+@pytest.mark.asyncio
+async def test_custom_tool_registry():
     """验证自定义注册中心的注册与检索能力"""
-    registry = ToolRegistry()
-    assert len(registry.get_all_tools()) == 0
+    registry = ToolRegistry(tools=[], mcp_client=None)
+    tools = await registry.get_all_tools()
+    assert len(tools) == 0
 
     @tool
     def echo_tool(text: str) -> str:
@@ -37,7 +40,8 @@ def test_custom_tool_registry():
         return text
 
     registry.register(echo_tool)
-    assert len(registry.get_all_tools()) == 1
+    tools = await registry.get_all_tools()
+    assert len(tools) == 1
     assert registry.get_tool("echo_tool") is not None
     assert registry.get_tool("echo_tool").name == "echo_tool"
 

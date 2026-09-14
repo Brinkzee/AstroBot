@@ -54,6 +54,31 @@ class Settings(BaseSettings):
     safety_margin_tokens: int = Field(default=500, description="安全缓冲余量")
     target_history_turns: int = Field(default=20, description="期望留存历史轮数")
     steady_turn_tokens: int = Field(default=500, description="单轮稳态 Token 占用")
+    mcp_logistics_server_url: str = Field(
+        default="http://127.0.0.1:8001/mcp",
+        description="物流 MCP Server URL"
+    )
+    mcp_aftersale_server_url: str = Field(
+        default="http://127.0.0.1:8002/mcp",
+        description="售后 MCP Server URL"
+    )
+    mcp_client_timeout: float = Field(
+        default=5.0,
+        gt=0.0,
+        description="MCP Client 连接与调用超时时间（秒）"
+    )
+
+    @property
+    def MCP_LOGISTICS_SERVER_URL(self) -> str:
+        return self.mcp_logistics_server_url
+
+    @property
+    def MCP_AFTERSALE_SERVER_URL(self) -> str:
+        return self.mcp_aftersale_server_url
+
+    @property
+    def MCP_CLIENT_TIMEOUT(self) -> float:
+        return self.mcp_client_timeout
 
     @property
     def MILVUS_URI(self) -> str:
