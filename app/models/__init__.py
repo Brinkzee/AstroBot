@@ -15,6 +15,11 @@ from app.models.faith_case import (
     FaithCaseStatus,
     upsert_faith_case,
 )
+from app.models.tool_audit_log import (
+    ToolAuditLog,
+    ToolSource,
+    ToolStatus,
+)
 
 __all__ = [
     "Conversation",
@@ -30,4 +35,7 @@ __all__ = [
     "FaithCase",
     "FaithCaseStatus",
     "upsert_faith_case",
+    "ToolAuditLog",
+    "ToolSource",
+    "ToolStatus",
 ]
