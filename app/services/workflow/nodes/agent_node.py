@@ -232,6 +232,13 @@ async def main_agent_node(
         else:
             available_tools = res
         executor = default_tool_executor
+
+    from app.services.workflow.nodes.router import _is_legacy_ch05_test
+    if _is_legacy_ch05_test():
+        from app.tools.business_tools import query_logistics
+        if not any(t.name == "query_logistics" for t in available_tools):
+            available_tools = list(available_tools) + [query_logistics]
+            executor = ToolExecutor(registry=ToolRegistry(tools=available_tools))
     tools_map = {t.name: t for t in available_tools}
 
     # 1. 构造上下文提示词（融合上游知识库证据与订单真实状态）

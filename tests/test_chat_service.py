@@ -399,15 +399,16 @@ async def test_stream_chat_create_ticket_forces_active_conversation_id():
         yield MockChunk("工单已为您创建成功。")
     mock_stream_llm.astream = fake_astream
 
-    service = ChatService(model=mock_llm, stream_model=mock_stream_llm)
-
-    service.executor.execute = AsyncMock(return_value={
+    mock_executor = MagicMock()
+    mock_executor.execute = AsyncMock(return_value={
         "success": True,
         "tool_name": "create_ticket",
         "tool_call_id": "call_ticket_1",
         "output": '{"ticket_no": "T123", "status": "工单已创建"}',
         "error": None,
     })
+
+    service = ChatService(model=mock_llm, stream_model=mock_stream_llm, executor=mock_executor)
 
     events = [e async for e in service.stream_chat(db, conversation_id=1, message="商品有划痕转人工")]
 

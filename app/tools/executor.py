@@ -221,6 +221,7 @@ def _build_failure_response(
     output_override: Optional[str] = None,
     retry_count: int = 0,
     duration_ms: int = 0,
+    raw_error: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """构造标准化的工具执行失败响应结构，适配异常优雅回灌给模型"""
     if output_override is not None:
@@ -230,7 +231,8 @@ def _build_failure_response(
     elif status == "权限拒绝":
         output_str = f"工具 [{tool_name}] 调用失败: 权限校验拒绝: {error_detail}，请结合此情况向用户做解释并提供帮助"
     else:
-        output_str = f"工具 [{tool_name}] 调用失败: {error_detail}，请结合此情况向用户做解释并提供帮助"
+        err_msg = str(raw_error) if raw_error is not None else error_detail
+        output_str = f"执行异常: {err_msg}。工具 [{tool_name}] 调用失败: {error_detail}，请结合此情况向用户做解释并提供帮助"
 
     return {
         "success": False,
@@ -662,6 +664,7 @@ class ToolExecutor:
             error_type="SYSTEM_FAULT",
             retry_count=0 if is_write else actual_retries,
             duration_ms=duration_ms,
+            raw_error=last_error,
         )
 
 

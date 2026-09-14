@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -365,7 +366,11 @@ class ChatService:
             prompt_messages = prompt_value.to_messages()
 
             # 4. 获取决策模型并绑定工具集
-            tools = self.registry.get_all_tools()
+            tools_res = self.registry.get_all_tools()
+            if inspect.isawaitable(tools_res):
+                tools = await tools_res
+            else:
+                tools = tools_res
             llm = self.model if self.model is not None else get_chat_model(streaming=False)
             if tools and hasattr(llm, "bind_tools"):
                 bound_llm = llm.bind_tools(tools)

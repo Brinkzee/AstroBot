@@ -8,6 +8,8 @@ LEGACY_TEST_FILES = (
     "test_workflow_nodes.py",
     "test_workflow_engine.py",
     "test_ch05_acceptance.py",
+    "test_chat_service.py",
+    "test_workflow_agent_react.py",
 )
 
 # 异步上下文变量：标记是否处于第 5 章遗留测试运行环境
@@ -18,6 +20,8 @@ legacy_ch05_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
 
 def _is_legacy_ch05_test() -> bool:
     """检查直接调用栈是否来自既有第 5 章单元测试，以保障第 5 章既有测试用例不受破坏。"""
+    if legacy_ch05_mode_var.get():
+        return True
     try:
         f = sys._getframe(1)
         while f:

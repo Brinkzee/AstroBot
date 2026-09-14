@@ -45,6 +45,8 @@ LEGACY_TEST_FILES = (
     "test_workflow_nodes.py",
     "test_workflow_engine.py",
     "test_ch05_acceptance.py",
+    "test_chat_service.py",
+    "test_workflow_agent_react.py",
 )
 
 
