@@ -31,7 +31,7 @@ def _is_legacy_ch05_test() -> bool:
 
 
 def route_by_intent(state: AgentWorkflowState, *, legacy: Optional[bool] = None) -> str:
-    """分流路由条件边：将 8 分类意图映射到工作流出口或确定性退款子流程入口。
+    """分流路由条件边：将 9 分类意图映射到工作流出口或确定性退款子流程入口。
 
     Ch06 正式路由规则：
     - "闲聊" -> "chitchat"
@@ -39,7 +39,7 @@ def route_by_intent(state: AgentWorkflowState, *, legacy: Optional[bool] = None)
     - "其他" -> "other_fallback"
     - "商品咨询" -> "knowledge"
     - "退款退货"、"售后" -> "refund_subflow"
-    - "物流"、"订单" -> "business_data"
+    - "物流"、"订单"、"人工" -> "business_data"
     - 缺省或未知分类一律走兜底 -> "other_fallback"
     """
     is_legacy = legacy
@@ -58,7 +58,7 @@ def route_by_intent(state: AgentWorkflowState, *, legacy: Optional[bool] = None)
             return "complaint"
         elif intent in ("商品咨询", "退款退货"):
             return "knowledge"
-        elif intent in ("物流", "订单", "售后"):
+        elif intent in ("物流", "订单", "售后", "人工"):
             return "business_data"
         else:
             return "business_data"
@@ -73,7 +73,7 @@ def route_by_intent(state: AgentWorkflowState, *, legacy: Optional[bool] = None)
         return "knowledge"
     elif intent in ("退款退货", "售后"):
         return "refund_subflow"
-    elif intent in ("物流", "订单"):
+    elif intent in ("物流", "订单", "人工"):
         return "business_data"
     else:
         return "other_fallback"
