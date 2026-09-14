@@ -707,7 +707,7 @@ def serialize_report_to_dict(
         "kb_chunks_count": kb_chunks_count or 128,
         "embedding_model": report.meta.get("embedding_model", "BAAI/bge-m3"),
         "reranker_model": report.meta.get("reranker_model", "BAAI/bge-reranker-v2-m3"),
-        "judge_model": report.meta.get("judge_model", "glm-5.2"),
+        "judge_model": report.meta.get("judge_model", "deepseek-flash"),
         "evaluated_at": report.timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "persisted_faith_cases": report.faith_cases_persisted,
     }
@@ -1036,7 +1036,7 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
     chunks_raw = _extract_meta(r"\*\*知识库切片数\*\*:\s*(\d+)", "128")
     emb_model = _extract_meta(r"\*\*嵌入模型\*\*:\s*([^\n\r]+)", "BAAI/bge-m3")
     rerank_model = _extract_meta(r"\*\*重排模型\*\*:\s*([^\n\r]+)", "BAAI/bge-reranker-v2-m3")
-    judge_model = _extract_meta(r"\*\*裁判模型\*\*:\s*([^\n\r]+)", "glm-5.2")
+    judge_model = _extract_meta(r"\*\*裁判模型\*\*:\s*([^\n\r]+)", "deepseek-flash")
     faith_cases_raw = _extract_meta(r"\*\*持久化编造个案数\*\*:\s*(\d+)", "0")
 
     meta = {

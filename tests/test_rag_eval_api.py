@@ -26,7 +26,7 @@ def test_parse_evaluation_report_md_valid_legacy_and_structured():
 - **知识库切片数**: 128 块
 - **嵌入模型**: BAAI/bge-m3
 - **重排模型**: BAAI/bge-reranker-v2-m3
-- **裁判模型**: glm-5.2
+- **裁判模型**: deepseek-flash
 - **参评策略**: vector_only, bm25_only, hybrid, hybrid_rerank
 - **持久化编造个案数**: 0 例
 
@@ -190,7 +190,7 @@ def test_api_rag_eval_faith_cases_query_and_metrics():
         {"n": 2, "chunk_id": 11, "section_path": "售后政策", "question": "退款路径", "answer": "原路返还"},
         {"n": 3, "chunk_id": 12, "section_path": "其他说明", "question": "其他规则", "answer": "无"},
     ]
-    mock_case_1.judge_model = "glm-5.2"
+    mock_case_1.judge_model = "deepseek-flash"
     mock_case_1.status = "未解决"
     mock_case_1.seen_count = 2
     mock_case_1.first_seen_at = None
