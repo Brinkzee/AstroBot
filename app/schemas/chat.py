@@ -18,3 +18,9 @@ class ChatStreamRequest(BaseModel):
             if s.isdigit():
                 return int(s)
         return None
+
+
+class ChatResumeRequest(BaseModel):
+    """恢复挂起工作流的请求参数"""
+    conversation_id: int = Field(..., description="会话ID")
+    action: str = Field(..., description="用户裁决动作: 'confirm' 或 'cancel'")

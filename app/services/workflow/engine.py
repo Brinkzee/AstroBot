@@ -5,6 +5,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 from langchain_core.messages import BaseMessage
 
 from app.services.workflow.state import AgentWorkflowState, create_initial_state
@@ -258,3 +259,8 @@ class WorkflowEngine:
         finally:
             if token is not None:
                 router.legacy_ch05_mode_var.reset(token)
+
+    async def resume(self, conversation_id: int, action: str) -> AgentWorkflowState:
+        """恢复挂起工作流执行"""
+        config = {"configurable": {"thread_id": str(conversation_id)}}
+        return await self.graph.ainvoke(Command(resume=action), config=config)

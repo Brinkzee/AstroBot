@@ -10,21 +10,27 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.types import interrupt
 from app.llm import get_chat_model
 from app.services.context.budget import estimate_tokens
 from app.services.context.logger import log_model_context
 from app.services.context.manager import ContextManager
 from app.services.workflow.state import AgentWorkflowState
-from app.tools.registry import default_tool_registry
+from app.tools.executor import ToolExecutor, default_tool_executor
+from app.tools.registry import ToolRegistry, default_tool_registry
 
 logger = logging.getLogger(__name__)
+
+# 挂起中断状态缓存（避免中断恢复执行时重复调用 LLM 重复生成相同 tool call）
+_pending_agent_states: Dict[int, Any] = {}
 
 AGENT_SYSTEM_BASE = """你是电商平台的生产级主力客服 Agent。
 你拥有自主多步决策与调用工具的能力。
 规则：
 1. 遇到需要查询的数据，主动调用对应工具；
 2. 如果用户提供的信息不足以调用工具（例如查物流却未给订单号），请友好向用户追问缺失信息，不要凭空猜测；
-3. 工具返回结果后，结合已有知识与上下文进行有条理、亲切专业的回答。
+3. 工具返回结果后，结合已有知识与上下文进行有条理、亲切专业的回答；
+4. 当用户要求建工单或转人工但未说明具体问题时，主动追问“请问您具体遇到了什么问题？请提供详细情况以便我们为您建立工单联系专员跟进处理”，严禁自行编造问题描述；只有在用户提供了具体问题描述后，才调用 create_ticket。
 """
 
 REFUND_SPECIALIZED_INSTRUCTIONS = """【退款退货/售后专注裁决专项指令】
@@ -216,7 +222,16 @@ async def main_agent_node(
 ) -> Dict[str, Any]:
     """主力 ReAct Agent 节点：支持工具自适应循环、多步推理、知识上下文注入与 5 步硬截断"""
     llm = model or get_chat_model(streaming=False)
-    available_tools = tools if tools is not None else default_tool_registry.get_all_tools()
+    if tools is not None:
+        available_tools = tools
+        executor = ToolExecutor(registry=ToolRegistry(tools=tools))
+    else:
+        res = default_tool_registry.get_all_tools()
+        if inspect.isawaitable(res):
+            available_tools = await res
+        else:
+            available_tools = res
+        executor = default_tool_executor
     tools_map = {t.name: t for t in available_tools}
 
     # 1. 构造上下文提示词（融合上游知识库证据与订单真实状态）
@@ -276,6 +291,8 @@ async def main_agent_node(
 
     # 3. 记录主力 Agent 模型调用入参可观测日志 [model_ctx]
     conv_id = state.get("conversation_id", 0)
+    user_query = str(state.get("resolved_query") or state.get("input_query") or "").strip()
+    intent = state.get("intent")
     summary = state.get("summary")
     window_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
     log_model_context(
@@ -296,22 +313,31 @@ async def main_agent_node(
     new_messages: List[BaseMessage] = []
     current_turn_tool_messages: List[BaseMessage] = []
 
+    cached_pending = _pending_agent_states.pop(conv_id, None)
+
     while steps < MAX_STEPS:
         steps += 1
-        resp = await bound_llm.ainvoke(messages)
-        messages.append(resp)
-        new_messages.append(resp)
+        if cached_pending is not None:
+            resp = cached_pending["resp"]
+            steps = cached_pending.get("steps", steps)
+            messages.append(resp)
+            new_messages.append(resp)
+            cached_pending = None
+        else:
+            resp = await bound_llm.ainvoke(messages)
+            messages.append(resp)
+            new_messages.append(resp)
 
-        # 统计 token 消耗
-        meta = getattr(resp, "response_metadata", {}) or {}
-        usage = meta.get("token_usage") or meta.get("usage") or getattr(resp, "usage_metadata", None) or {}
-        if usage:
-            prompt_t = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
-            comp_t = int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
-            tot_t = int(usage.get("total_tokens", 0)) or (prompt_t + comp_t)
-            total_tokens["prompt_tokens"] += prompt_t
-            total_tokens["completion_tokens"] += comp_t
-            total_tokens["total_tokens"] += tot_t
+            # 统计 token 消耗
+            meta = getattr(resp, "response_metadata", {}) or {}
+            usage = meta.get("token_usage") or meta.get("usage") or getattr(resp, "usage_metadata", None) or {}
+            if usage:
+                prompt_t = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
+                comp_t = int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
+                tot_t = int(usage.get("total_tokens", 0)) or (prompt_t + comp_t)
+                total_tokens["prompt_tokens"] += prompt_t
+                total_tokens["completion_tokens"] += comp_t
+                total_tokens["total_tokens"] += tot_t
 
         tool_calls = getattr(resp, "tool_calls", None) or []
         if not tool_calls:
@@ -319,34 +345,129 @@ async def main_agent_node(
             final_text = str(resp.content or "")
             break
 
-        current_turn_tool_messages.append(resp)
-
         # 执行工具并将结果回填
+        interrupted_break = False
         for tool_call in tool_calls:
             name = tool_call.get("name", "")
             raw_args = tool_call.get("args") or {}
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    raw_args = {}
             call_id = str(tool_call.get("id") or "")
 
-            target_tool = tools_map.get(name)
-            if target_tool is None:
-                output = f"工具 {name} 未注册"
-            else:
-                try:
-                    if hasattr(target_tool, "ainvoke"):
-                        output = await target_tool.ainvoke(raw_args)
-                    elif inspect.iscoroutinefunction(target_tool):
-                        output = await target_tool(**raw_args)
-                    elif callable(target_tool):
-                        output = target_tool(**raw_args)
-                    else:
-                        output = str(target_tool)
-                except Exception as e:
-                    output = f"执行异常: {str(e)}"
+            if name == "create_ticket":
+                desc = str(raw_args.get("description", "")).strip() if isinstance(raw_args, dict) else ""
+                # 安全兜底：若无问题描述，坚决追问，不发工单
+                if not desc:
+                    final_text = "请问您具体遇到了什么问题？请提供详细情况以便我们为您建立工单联系专员跟进处理。"
+                    ask_msg = AIMessage(content=final_text)
+                    messages.append(ask_msg)
+                    new_messages.append(ask_msg)
+                    interrupted_break = True
+                    break
 
-            tool_msg = ToolMessage(content=str(output), tool_call_id=call_id)
-            messages.append(tool_msg)
-            new_messages.append(tool_msg)
-            current_turn_tool_messages.append(tool_msg)
+                # 挂起前先缓存状态，防止中断恢复执行时重复调用 LLM
+                _pending_agent_states[conv_id] = {
+                    "resp": resp,
+                    "steps": steps,
+                }
+                ticket_type = raw_args.get("ticket_type", "售后") if isinstance(raw_args, dict) else "售后"
+                # 调用 LangGraph 原生 interrupt 挂起工作流
+                user_action = interrupt({
+                    "event_type": "ticket_preview",
+                    "ticket_type": ticket_type,
+                    "description": desc,
+                    "conversation_id": conv_id,
+                    "tool_call_id": call_id,
+                })
+
+                # 恢复执行时分支裁决
+                if user_action == "confirm":
+                    current_turn_tool_messages.append(resp)
+                    if isinstance(raw_args, dict):
+                        raw_args["conversation_id"] = conv_id
+                        tool_call["args"] = raw_args
+                    tool_result = await executor.execute(
+                        tool_call=tool_call,
+                        context={
+                            "user_query": user_query,
+                            "intent": intent or "工单",
+                            "confirmed": True,
+                        },
+                        conversation_id=conv_id,
+                    )
+                    tool_output = str(tool_result.get("output") or "")
+                    tool_msg = ToolMessage(content=tool_output, tool_call_id=call_id)
+                    messages.append(tool_msg)
+                    new_messages.append(tool_msg)
+                    current_turn_tool_messages.append(tool_msg)
+
+                    ticket_no = None
+                    try:
+                        parsed_t = json.loads(tool_output)
+                        if isinstance(parsed_t, dict):
+                            ticket_no = parsed_t.get("ticket_no")
+                    except Exception:
+                        pass
+
+                    try:
+                        resp2 = await bound_llm.ainvoke(messages)
+                        final_text = str(resp2.content or "")
+                        new_messages.append(resp2)
+                    except Exception as e:
+                        logger.warning(f"LLM summary after ticket creation: {e}")
+                        final_text = ""
+
+                    if ticket_no and (not final_text or ticket_no not in final_text):
+                        if not final_text:
+                            final_text = f"已为您成功创建工单，工单编号为：{ticket_no}，人工客服专员将尽快为您跟进处理。"
+                        else:
+                            final_text = f"已为您成功创建工单，工单编号为：{ticket_no}。{final_text}"
+                    interrupted_break = True
+                    break
+
+                elif user_action == "cancel":
+                    if isinstance(raw_args, dict):
+                        raw_args["conversation_id"] = conv_id
+                        tool_call["args"] = raw_args
+                    await executor.execute(
+                        tool_call=tool_call,
+                        context={
+                            "user_query": user_query,
+                            "intent": intent or "工单",
+                            "confirmed": False,
+                        },
+                        conversation_id=conv_id,
+                    )
+                    final_text = "已为您取消工单创建。如果您有其他问题，欢迎随时咨询。"
+                    cancel_msg = AIMessage(content=final_text)
+                    messages.append(cancel_msg)
+                    new_messages.append(cancel_msg)
+                    current_turn_tool_messages = []
+                    interrupted_break = True
+                    break
+
+            else:
+                # 常规业务工具执行
+                current_turn_tool_messages.append(resp)
+                tool_result = await executor.execute(
+                    tool_call=tool_call,
+                    context={
+                        "user_query": user_query,
+                        "intent": intent,
+                    },
+                    conversation_id=conv_id,
+                )
+                output = str(tool_result.get("output") or "")
+                tool_msg = ToolMessage(content=output, tool_call_id=call_id)
+                messages.append(tool_msg)
+                new_messages.append(tool_msg)
+                current_turn_tool_messages.append(tool_msg)
+
+        if interrupted_break:
+            break
 
     if not final_text:
         # 步数超限，执行总结

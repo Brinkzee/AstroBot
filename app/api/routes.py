@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.chat import ChatStreamRequest
+from app.schemas.chat import ChatStreamRequest, ChatResumeRequest
 from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
 from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
 from app.schemas.conversation import ConversationItem, ConversationMessageItem
@@ -61,6 +61,45 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/chat/resume")
+async def chat_resume(
+    request: ChatResumeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    async def event_generator():
+        try:
+            async for event in chat_service.resume_chat(
+                db=db,
+                conversation_id=request.conversation_id,
+                action=request.action,
+            ):
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            err_payload = json.dumps(
+                {
+                    "event_type": "error",
+                    "conversation_id": request.conversation_id,
+                    "error": str(e),
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {err_payload}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 
 @router.post("/after-sale/extract", response_model=AfterSaleTicket)
