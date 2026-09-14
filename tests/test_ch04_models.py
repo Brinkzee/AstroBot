@@ -260,7 +260,7 @@ async def test_upsert_faith_case_new():
         reason="编造严重偏离退货流程",
         strategy="hybrid_rerank",
         citations=citations,
-        judge_model="gpt-4o-mini",
+        judge_model="deepseek-flash",
     )
 
     assert isinstance(res, FaithCase)
@@ -292,7 +292,7 @@ async def test_upsert_faith_case_existing_unresolved():
         answer="旧编造答案",
         reason="旧编造原因",
         citations=[{"n": 1, "chunk_id": 1}],
-        judge_model="gpt-4o-mini",
+        judge_model="deepseek-flash",
         status="未解决",
         seen_count=1,
     )

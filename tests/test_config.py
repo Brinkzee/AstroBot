@@ -7,7 +7,8 @@ def test_settings_load_defaults():
     with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "mock-key"}, clear=True):
         s = Settings(_env_file=None)
         assert s.openai_api_key == "mock-key"
-        assert s.openai_model_name == "gpt-4o-mini"
+        assert s.openai_model_name == "deepseek-flash"
+        assert s.effective_base_url == "https://api.deepseek.com"
         assert s.openai_temperature == 0.7
         assert s.max_context_tokens == 2000
 
