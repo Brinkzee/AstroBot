@@ -4,6 +4,7 @@ from app.models.faq import FAQ
 from app.models.ticket import Ticket
 from app.models.knowledge import KnowledgeChunk
 from app.models.staging import QAExtractionStaging
+from app.models.summary import ConversationSummary
 from app.models.low_confidence import (
     LowConfidenceQuestion,
     LowConfidenceSource,
@@ -22,6 +23,7 @@ __all__ = [
     "Ticket",
     "KnowledgeChunk",
     "QAExtractionStaging",
+    "ConversationSummary",
     "LowConfidenceQuestion",
     "LowConfidenceSource",
     "record_low_confidence",

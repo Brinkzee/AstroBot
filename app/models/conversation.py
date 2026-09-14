@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import List, TYPE_CHECKING
-from sqlalchemy import BigInteger, Integer, String, Enum, DateTime, func
+from typing import List, Optional, TYPE_CHECKING
+from sqlalchemy import BigInteger, Integer, String, Enum, DateTime, Text, func
 from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
@@ -8,6 +8,7 @@ from app.db.session import Base
 if TYPE_CHECKING:
     from app.models.message import Message
     from app.models.ticket import Ticket
+    from app.models.summary import ConversationSummary
 
 
 class Conversation(Base):
@@ -31,6 +32,21 @@ class Conversation(Base):
         nullable=False,
         comment="处理状态",
     )
+    summary: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="最近几段梗概拼成的投影",
+    )
+    summary_upto_msg_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
+        nullable=True,
+        comment="摘要已覆盖截止ID",
+    )
+    layer1_from_msg_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
+        nullable=True,
+        comment="层1原文起始ID",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -52,6 +68,11 @@ class Conversation(Base):
     )
     tickets: Mapped[List["Ticket"]] = relationship(
         "Ticket",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
+    summaries: Mapped[List["ConversationSummary"]] = relationship(
+        "ConversationSummary",
         back_populates="conversation",
         cascade="all, delete-orphan",
     )

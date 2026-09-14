@@ -11,6 +11,9 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from app.llm import get_chat_model
+from app.services.context.budget import estimate_tokens
+from app.services.context.logger import log_model_context
+from app.services.context.manager import ContextManager
 from app.services.workflow.state import AgentWorkflowState
 from app.tools.registry import default_tool_registry
 
@@ -225,30 +228,62 @@ async def main_agent_node(
         sys_content += "\n" + REFUND_SPECIALIZED_INSTRUCTIONS
 
     docs = state.get("retrieved_docs") or []
-    if docs:
-        if order_data and isinstance(order_data, dict):
-            # 退款专项场景：取 Top 3~5 篇政策证据，标注【参考政策条款 i】
-            policy_texts = []
-            for i, doc in enumerate(docs[:5], 1):
-                text = doc.get("text") or doc.get("content") or str(doc)
-                policy_texts.append(f"【参考政策条款 {i}】{text}")
-            sys_content += "\n以下为检索到的官方退换货与售后政策条款，请严格遵照执行：\n" + "\n".join(policy_texts)
-        else:
-            # 普通业务场景：取 Top 3 篇，标注【参考知识 i】
-            knowledge_texts = []
-            for i, doc in enumerate(docs[:3], 1):
-                text = doc.get("text") or doc.get("content") or str(doc)
-                knowledge_texts.append(f"【参考知识 {i}】{text}")
-            sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
 
-    # 2. 准备消息列表（以状态中原有历史为基础）
-    messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
-    existing_messages = state.get("messages") or []
-    for m in existing_messages:
-        if not isinstance(m, SystemMessage):
-            messages.append(m)
+    # 2. 准备消息列表（优先使用 layer2_messages 与 layer1_messages 并结合 ContextManager.build_model_messages）
+    if state.get("layer2_messages") is not None or state.get("layer1_messages") is not None:
+        l2 = list(state.get("layer2_messages") or [])
+        l1 = list(state.get("layer1_messages") or [])
+        query = str(state.get("resolved_query") or state.get("input_query") or "").strip()
+        # 排除当前提问（若包含在 l1 末尾），避免与 build_model_messages 中的 current_query 重复
+        if l1:
+            last_m = l1[-1]
+            last_content = getattr(last_m, "content", "")
+            if str(last_content or "").strip() in (query, str(state.get("input_query") or "").strip()):
+                l1 = l1[:-1]
+
+        messages = ContextManager.build_model_messages(
+            system_prompt=sys_content,
+            layer2_messages=l2,
+            layer1_messages=l1,
+            current_query=query,
+            summary=state.get("summary"),
+            retrieved_docs=docs,
+        )
+    else:
+        if docs:
+            if order_data and isinstance(order_data, dict):
+                # 退款专项场景：取 Top 3~5 篇政策证据，标注【参考政策条款 i】
+                policy_texts = []
+                for i, doc in enumerate(docs[:5], 1):
+                    text = doc.get("text") or doc.get("content") or str(doc)
+                    policy_texts.append(f"【参考政策条款 {i}】{text}")
+                sys_content += "\n以下为检索到的官方退换货与售后政策条款，请严格遵照执行：\n" + "\n".join(policy_texts)
+            else:
+                # 普通业务场景：取 Top 3 篇，标注【参考知识 i】
+                knowledge_texts = []
+                for i, doc in enumerate(docs[:3], 1):
+                    text = doc.get("text") or doc.get("content") or str(doc)
+                    knowledge_texts.append(f"【参考知识 {i}】{text}")
+                sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
+
+        messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
+        existing_messages = state.get("messages") or []
+        for m in existing_messages:
+            if not isinstance(m, SystemMessage):
+                messages.append(m)
 
     bound_llm = llm.bind_tools(available_tools) if (available_tools and hasattr(llm, "bind_tools")) else llm
+
+    # 3. 记录主力 Agent 模型调用入参可观测日志 [model_ctx]
+    conv_id = state.get("conversation_id", 0)
+    summary = state.get("summary")
+    window_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
+    log_model_context(
+        conv_id=conv_id,
+        summary=summary,
+        window_messages=window_msgs,
+        estimated_tokens=estimate_tokens(messages),
+    )
 
     steps = 0
     init_tokens = state.get("token_usage") or {}
@@ -258,11 +293,14 @@ async def main_agent_node(
         "total_tokens": int(init_tokens.get("total_tokens", 0)),
     }
     final_text = ""
+    new_messages: List[BaseMessage] = []
+    current_turn_tool_messages: List[BaseMessage] = []
 
     while steps < MAX_STEPS:
         steps += 1
         resp = await bound_llm.ainvoke(messages)
         messages.append(resp)
+        new_messages.append(resp)
 
         # 统计 token 消耗
         meta = getattr(resp, "response_metadata", {}) or {}
@@ -280,6 +318,8 @@ async def main_agent_node(
             # 自然收敛，完成推演
             final_text = str(resp.content or "")
             break
+
+        current_turn_tool_messages.append(resp)
 
         # 执行工具并将结果回填
         for tool_call in tool_calls:
@@ -303,7 +343,10 @@ async def main_agent_node(
                 except Exception as e:
                     output = f"执行异常: {str(e)}"
 
-            messages.append(ToolMessage(content=str(output), tool_call_id=call_id))
+            tool_msg = ToolMessage(content=str(output), tool_call_id=call_id)
+            messages.append(tool_msg)
+            new_messages.append(tool_msg)
+            current_turn_tool_messages.append(tool_msg)
 
     if not final_text:
         # 步数超限，执行总结
@@ -311,6 +354,7 @@ async def main_agent_node(
             messages + [HumanMessage(content="请根据已有工具查询的信息，立即给出最终结论。")]
         )
         final_text = str(final_summary.content or "")
+        new_messages.append(final_summary)
         meta = getattr(final_summary, "response_metadata", {}) or {}
         usage = meta.get("token_usage") or meta.get("usage") or getattr(final_summary, "usage_metadata", None) or {}
         if usage:
@@ -335,7 +379,8 @@ async def main_agent_node(
 
     return {
         "response_text": final_text,
-        "messages": messages,
+        "messages": new_messages,
+        "current_turn_tool_messages": current_turn_tool_messages,
         "steps_taken": steps,
         "token_usage": total_tokens,
         "suggested_actions": suggested_actions,

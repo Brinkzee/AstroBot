@@ -80,6 +80,25 @@ def check_environment() -> bool:
         print(f"\n[错误] 缺少必要依赖: {', '.join(missing)}，请先执行 pip install -r requirements.txt")
         return False
 
+    # 4. 检查会话上下文管理与 Token 预算
+    try:
+        from app.services.context.budget import check_budget_on_startup, calculate_context_budget
+        from app.config import Settings, settings
+
+        active_settings = Settings() if "MODEL_CONTEXT_WINDOW" in os.environ else settings
+        if not check_budget_on_startup(active_settings):
+            print("  ❌ 上下文预算自检未通过：模型窗口无法容纳单轮稳态交互")
+            return False
+
+        budget = calculate_context_budget(active_settings)
+        print(
+            f"  • 上下文管理窗口: {active_settings.model_context_window} Tokens "
+            f"(总滑窗预算: {budget.window_budget} Tokens, 层1: {budget.layer1_budget}, 层2: {budget.layer2_budget})  ✅ [OK]"
+        )
+    except Exception as e:
+        print(f"  ❌ 上下文预算自检异常: {e}")
+        return False
+
     return True
 
 
@@ -107,6 +126,15 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
         print("    ↳ 数据库全部 6 张核心业务表已验证就绪 ✅")
     except Exception as e:
         print(f"    ❌ 数据库连接或建表失败: {e}")
+        return False
+
+    # 2.1 第七章三层会话上下文数据表与字段迁移
+    from scripts.init_ch07_db import init_ch07_db
+    try:
+        await init_ch07_db()
+        print("    ↳ 第七章三层会话上下文数据表与字段迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第七章数据表与字段迁移失败: {e}")
         return False
 
     # 3. 基础 FAQ 种子数据填充
@@ -195,6 +223,14 @@ def print_banner(host: str, port: int):
     print("  " + "-" * 61)
     print(f"  🐬 数据库服务 (MySQL): 127.0.0.1:3306 (Docker / 自动保活)")
     print(f"  🧠 向量存储 (Milvus):  ./data/milvus/astro_bot.db (BGE-M3 Dense)")
+    try:
+        from app.services.context.budget import calculate_context_budget
+        from app.config import Settings, settings
+        active_settings = Settings() if "MODEL_CONTEXT_WINDOW" in os.environ else settings
+        budget = calculate_context_budget(active_settings)
+        print(f"  🪟 上下文管理 (Tokens): 窗口 {active_settings.model_context_window} | 滑窗 {budget.window_budget} (L1:{budget.layer1_budget}/L2:{budget.layer2_budget})")
+    except Exception:
+        pass
     print("=" * 65)
     print("  [提示] 按 Ctrl+C 即可安全停止服务。\n")
 

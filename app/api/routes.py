@@ -1,12 +1,17 @@
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.chat import ChatStreamRequest
 from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
 from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
+from app.schemas.conversation import ConversationItem, ConversationMessageItem
+from app.models.conversation import Conversation
+from app.models.message import Message
 from app.services.after_sale_service import extract_after_sale_ticket
 from app.services.chat_service import ChatService
 from app.tools.business_tools import create_ticket
@@ -86,8 +91,119 @@ async def api_create_ticket(request: TicketCreateRequest):
     )
 
 
-
 # ==============================================================================
+# 多会话管理与历史回溯 API 接口 (/api/conversations/...)
+# ==============================================================================
+
+def _format_datetime(dt) -> str:
+    if dt is None:
+        return ""
+    if hasattr(dt, "strftime"):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return str(dt)
+
+
+@router.get("/conversations", response_model=List[ConversationItem])
+async def list_conversations(
+    user_id: str = "default_user",
+    db: AsyncSession = Depends(get_db),
+):
+    """查询指定用户的会话列表，按更新时间倒序排列，并附带首问预览与摘要标记"""
+    stmt = (
+        select(Conversation)
+        .where(Conversation.user_id == user_id)
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+    )
+    res = await db.execute(stmt)
+    conversations = res.scalars().all()
+
+    items: List[ConversationItem] = []
+    for conv in conversations:
+        # 统计该会话消息总条数
+        count_stmt = select(func.count(Message.id)).where(Message.conversation_id == conv.id)
+        count_res = await db.execute(count_stmt)
+        msg_count = count_res.scalar() or 0
+
+        # 提取首条 user 提问作为 title 预览
+        first_msg_stmt = (
+            select(Message.content)
+            .where(Message.conversation_id == conv.id, Message.role == "user")
+            .order_by(Message.created_at.asc(), Message.id.asc())
+            .limit(1)
+        )
+        first_msg_res = await db.execute(first_msg_stmt)
+        first_content = first_msg_res.scalar()
+
+        if first_content and first_content.strip():
+            title = first_content.strip()[:25]
+        else:
+            title = "新会话"
+
+        # has_summary: 当 conv.summary 存在且非空或 conv.summary_upto_msg_id > 0 时为 True，否则为 False
+        has_summary = bool(
+            (conv.summary and conv.summary.strip())
+            or (conv.summary_upto_msg_id is not None and conv.summary_upto_msg_id > 0)
+        )
+
+        status_str = conv.status.value if hasattr(conv.status, "value") else str(conv.status or "进行中")
+
+        items.append(
+            ConversationItem(
+                id=conv.id,
+                title=title,
+                has_summary=has_summary,
+                status=status_str,
+                message_count=msg_count,
+                created_at=_format_datetime(conv.created_at),
+                updated_at=_format_datetime(conv.updated_at),
+            )
+        )
+
+    return items
+
+
+@router.get("/conversations/{id}/messages", response_model=List[ConversationMessageItem])
+async def get_conversation_messages(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取指定会话 ID 的全部历史消息，按时间升序排列"""
+    conv_stmt = select(Conversation.id).where(Conversation.id == id)
+    conv_res = await db.execute(conv_stmt)
+    if not conv_res.scalar():
+        raise HTTPException(status_code=404, detail=f"会话 {id} 不存在")
+
+    msg_stmt = (
+        select(Message)
+        .where(Message.conversation_id == id)
+        .order_by(Message.created_at.asc(), Message.id.asc())
+    )
+    res = await db.execute(msg_stmt)
+    messages = res.scalars().all()
+
+    items: List[ConversationMessageItem] = []
+    for m in messages:
+        tool_calls = m.tool_calls
+        if isinstance(tool_calls, str):
+            try:
+                tool_calls = json.loads(tool_calls)
+            except Exception:
+                pass
+
+        role_str = m.role.value if hasattr(m.role, "value") else str(m.role)
+
+        items.append(
+            ConversationMessageItem(
+                id=m.id,
+                role=role_str,
+                content=m.content,
+                tool_calls=tool_calls,
+                tool_call_id=m.tool_call_id,
+                created_at=_format_datetime(m.created_at),
+            )
+        )
+
+    return items
 # 知识库可视化管理与自测工作台 API 接口 (/api/kb/...)
 # ==============================================================================
 import time
