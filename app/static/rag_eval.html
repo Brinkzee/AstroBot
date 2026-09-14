@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -52,7 +53,7 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
 
     .brand {
@@ -223,9 +224,17 @@
       background: var(--primary);
     }
 
-    .kpi-card.success::before { background: var(--success); }
-    .kpi-card.warning::before { background: var(--warning); }
-    .kpi-card.purple::before { background: var(--purple); }
+    .kpi-card.success::before {
+      background: var(--success);
+    }
+
+    .kpi-card.warning::before {
+      background: var(--warning);
+    }
+
+    .kpi-card.purple::before {
+      background: var(--purple);
+    }
 
     .kpi-title {
       font-size: 13px;
@@ -260,11 +269,30 @@
       align-items: center;
     }
 
-    .badge-blue { background: #dbeafe; color: #1d4ed8; }
-    .badge-green { background: #dcfce7; color: #15803d; }
-    .badge-orange { background: #ffedd5; color: #c2410c; }
-    .badge-red { background: #fee2e2; color: #b91c1c; }
-    .badge-purple { background: #ede9fe; color: #6d28d9; }
+    .badge-blue {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .badge-green {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .badge-orange {
+      background: #ffedd5;
+      color: #c2410c;
+    }
+
+    .badge-red {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+
+    .badge-purple {
+      background: #ede9fe;
+      color: #6d28d9;
+    }
 
     /* 图表网格 */
     .charts-grid {
@@ -326,7 +354,7 @@
     .chart-tab.active {
       background: #ffffff;
       color: var(--primary);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
 
     .chart-content {
@@ -658,6 +686,7 @@
     }
   </style>
 </head>
+
 <body>
 
   <!-- 顶栏 -->
@@ -694,12 +723,18 @@
       <!-- 报告元信息条 -->
       <div class="meta-banner" id="report-meta-banner">
         <div class="meta-items">
-          <div class="meta-item"><span class="meta-label">评估集题数:</span> <span class="meta-value" id="meta-eval-size">-</span></div>
-          <div class="meta-item"><span class="meta-label">知识库切片:</span> <span class="meta-value" id="meta-kb-chunks">-</span></div>
-          <div class="meta-item"><span class="meta-label">嵌入模型:</span> <span class="meta-value" id="meta-embed-model">-</span></div>
-          <div class="meta-item"><span class="meta-label">重排模型:</span> <span class="meta-value" id="meta-rerank-model">-</span></div>
-          <div class="meta-item"><span class="meta-label">裁判模型:</span> <span class="meta-value" id="meta-judge-model">-</span></div>
-          <div class="meta-item"><span class="meta-label">评测时间:</span> <span class="meta-value" id="meta-eval-time">-</span></div>
+          <div class="meta-item"><span class="meta-label">评估集题数:</span> <span class="meta-value"
+              id="meta-eval-size">-</span></div>
+          <div class="meta-item"><span class="meta-label">知识库切片:</span> <span class="meta-value"
+              id="meta-kb-chunks">-</span></div>
+          <div class="meta-item"><span class="meta-label">嵌入模型:</span> <span class="meta-value"
+              id="meta-embed-model">-</span></div>
+          <div class="meta-item"><span class="meta-label">重排模型:</span> <span class="meta-value"
+              id="meta-rerank-model">-</span></div>
+          <div class="meta-item"><span class="meta-label">裁判模型:</span> <span class="meta-value"
+              id="meta-judge-model">-</span></div>
+          <div class="meta-item"><span class="meta-label">评测时间:</span> <span class="meta-value"
+              id="meta-eval-time">-</span></div>
         </div>
       </div>
 
@@ -812,11 +847,16 @@
         </div>
         <div class="meta-banner" style="margin-bottom: 16px; background: #fafafa;">
           <div class="meta-items">
-            <div class="meta-item"><span class="meta-label">本轮裁判判出率:</span> <span class="meta-value" id="ledger-judge-rate" style="color: var(--danger);">-</span></div>
-            <div class="meta-item"><span class="meta-label">人工确认幻觉率:</span> <span class="meta-value" id="ledger-human-rate" style="color: var(--warning);">-</span></div>
-            <div class="meta-item"><span class="meta-label">未解决台账:</span> <span class="meta-value" id="ledger-cnt-unres">-</span></div>
-            <div class="meta-item"><span class="meta-label">已解决台账:</span> <span class="meta-value" id="ledger-cnt-res" style="color: var(--success);">-</span></div>
-            <div class="meta-item"><span class="meta-label">无需解决:</span> <span class="meta-value" id="ledger-cnt-wont">-</span></div>
+            <div class="meta-item"><span class="meta-label">本轮裁判判出率:</span> <span class="meta-value"
+                id="ledger-judge-rate" style="color: var(--danger);">-</span></div>
+            <div class="meta-item"><span class="meta-label">人工确认幻觉率:</span> <span class="meta-value"
+                id="ledger-human-rate" style="color: var(--warning);">-</span></div>
+            <div class="meta-item"><span class="meta-label">未解决台账:</span> <span class="meta-value"
+                id="ledger-cnt-unres">-</span></div>
+            <div class="meta-item"><span class="meta-label">已解决台账:</span> <span class="meta-value" id="ledger-cnt-res"
+                style="color: var(--success);">-</span></div>
+            <div class="meta-item"><span class="meta-label">无需解决:</span> <span class="meta-value"
+                id="ledger-cnt-wont">-</span></div>
           </div>
         </div>
 
@@ -845,12 +885,14 @@
     <div class="modal-box">
       <div class="modal-header">
         <span>⚡ 确认触发 RAG 自动化评测作业</span>
-        <button onclick="closeModal('run-confirm-modal')" style="border:none;background:none;font-size:18px;cursor:pointer;">✕</button>
+        <button onclick="closeModal('run-confirm-modal')"
+          style="border:none;background:none;font-size:18px;cursor:pointer;">✕</button>
       </div>
       <div class="modal-body">
         <p>系统将触发安全白名单作业：<strong style="color:var(--primary);">eval-rag</strong></p>
         <p style="margin-top:8px; color:var(--text-muted); font-size:13px;">
-          评测流水线将加载 300 题测试集，评测 4 种检索策略（Dense / BM25 / Hybrid / Hybrid+Rerank），并由裁判模型执行忠实度打分，更新 reports/ch04_evaluation_report.md。
+          评测流水线将加载 300 题测试集，评测 4 种检索策略（Dense / BM25 / Hybrid / Hybrid+Rerank），并由裁判模型执行忠实度打分，更新
+          reports/ch04_evaluation_report.md。
         </p>
       </div>
       <div class="modal-footer">
@@ -865,12 +907,14 @@
     <div class="modal-box console-modal">
       <div class="modal-header" style="background:#0f172a; color:#fff; border-bottom:1px solid #334155;">
         <span id="console-title">🖥️ 作业执行中 (eval-rag)...</span>
-        <button onclick="closeModal('console-modal')" style="border:none;background:none;font-size:18px;color:#94a3b8;cursor:pointer;">✕</button>
+        <button onclick="closeModal('console-modal')"
+          style="border:none;background:none;font-size:18px;color:#94a3b8;cursor:pointer;">✕</button>
       </div>
       <div class="console-body" id="console-output">正在连接作业日志管道...</div>
       <div class="modal-footer" style="background:#1e293b; border-top:1px solid #334155;">
         <span id="job-status-badge" class="badge-pill badge-blue">Running</span>
-        <button class="btn-primary" id="btn-close-console" onclick="closeModal('console-modal'); fetchReportData(); fetchCasesData();">完成并刷新看板</button>
+        <button class="btn-primary" id="btn-close-console"
+          onclick="closeModal('console-modal'); fetchReportData(); fetchCasesData();">完成并刷新看板</button>
       </div>
     </div>
   </div>
@@ -880,20 +924,23 @@
     <div class="modal-box">
       <div class="modal-header">
         <span>⚖️ 编造个案人工处置</span>
-        <button onclick="closeModal('resolve-modal')" style="border:none;background:none;font-size:18px;cursor:pointer;">✕</button>
+        <button onclick="closeModal('resolve-modal')"
+          style="border:none;background:none;font-size:18px;cursor:pointer;">✕</button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="resolve-case-id">
         <div style="margin-bottom: 12px;">
           <label style="font-weight:600; font-size:13px; display:block; margin-bottom:6px;">设置处置状态</label>
-          <select id="resolve-status-select" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid var(--border-color); font-size:14px;">
+          <select id="resolve-status-select"
+            style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid var(--border-color); font-size:14px;">
             <option value="已解决">已解决 (已修正知识库政策/切块)</option>
             <option value="无需解决">无需解决 (非事实性错误/标准差异)</option>
           </select>
         </div>
         <div>
           <label style="font-weight:600; font-size:13px; display:block; margin-bottom:6px;">处置说明 (必填)</label>
-          <textarea id="resolve-note-input" rows="4" placeholder="请详细记录修改了哪个知识切块，或判定无需解决的业务原因..." style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid var(--border-color); font-size:13.5px;"></textarea>
+          <textarea id="resolve-note-input" rows="4" placeholder="请详细记录修改了哪个知识切块，或判定无需解决的业务原因..."
+            style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid var(--border-color); font-size:13.5px;"></textarea>
         </div>
       </div>
       <div class="modal-footer">
@@ -994,7 +1041,7 @@
       const chartH = height - margin.top - margin.bottom;
 
       let svg = `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:100%;">`;
-      
+
       // Y 轴网格线
       for (let i = 0; i <= 4; i++) {
         const y = margin.top + (chartH / 4) * i;
@@ -1176,7 +1223,7 @@
       container.innerHTML = items.map(c => {
         const citedSet = new Set(c.cited_indices || []);
         const recurrentBadge = c.is_recurrent ? '<span class="badge-pill badge-red">🚨 复发</span>' : '';
-        const statusBadge = c.status === "已解决" 
+        const statusBadge = c.status === "已解决"
           ? '<span class="badge-pill badge-green">已解决</span>'
           : (c.status === "无需解决" ? '<span class="badge-pill badge-blue">无需解决</span>' : '<span class="badge-pill badge-orange">未解决</span>');
 
@@ -1214,7 +1261,7 @@
                 <span style="font-size:12px; color:#64748b;">(累计判出 ${c.seen_count} 次)</span>
               </div>
               <div class="case-badges">
-                <span style="font-size:12px; color:#64748b;">裁判: ${c.judge_model || 'kimi'}</span>
+                <span style="font-size:12px; color:#64748b;">裁判: ${c.judge_model || 'glm-5.2'}</span>
               </div>
             </div>
 
@@ -1369,4 +1416,5 @@
     });
   </script>
 </body>
+
 </html>

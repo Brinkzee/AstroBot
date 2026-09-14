@@ -5,7 +5,7 @@
 - **知识库切片数**: 128 块
 - **嵌入模型**: BAAI/bge-m3
 - **重排模型**: BAAI/bge-reranker-v2-m3
-- **裁判模型**: kimi-k2.7-code
+- **裁判模型**: glm-5.2
 - **参评策略**: vector_only, bm25_only, hybrid, hybrid_rerank
 - **持久化编造个案数**: 0 例
 
@@ -91,7 +91,7 @@
     "kb_chunks_count": 128,
     "embedding_model": "BAAI/bge-m3",
     "reranker_model": "BAAI/bge-reranker-v2-m3",
-    "judge_model": "kimi-k2.7-code",
+    "judge_model": "glm-5.2",
     "evaluated_at": "2026-09-12 13:28:51",
     "persisted_faith_cases": 0
   },
