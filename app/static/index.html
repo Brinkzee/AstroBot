@@ -969,6 +969,122 @@
       border-color: #22c55e;
     }
 
+    /* ==========================================================================
+       Ch08: 工单预览卡片与人机确认交互
+       ========================================================================== */
+    .ticket-preview-container {
+      margin: 8px 0 10px 0;
+      width: 100%;
+    }
+
+    .ticket-preview-card {
+      background: #ffffff;
+      border: 1.5px solid #e0e7ff;
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+      transition: all 0.2s ease;
+    }
+
+    .ticket-preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px dashed #e2e8f0;
+      padding-bottom: 8px;
+    }
+
+    .ticket-preview-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: #3730a3;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ticket-type-badge {
+      font-size: 11.5px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      background: #e0e7ff;
+      color: #4338ca;
+      font-weight: 600;
+    }
+
+    .ticket-preview-body {
+      font-size: 13px;
+      color: #334155;
+      line-height: 1.5;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 8px 10px;
+      border-left: 3px solid #6366f1;
+    }
+
+    .ticket-preview-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: center;
+      margin-top: 2px;
+    }
+
+    .btn-ticket-confirm {
+      background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+      color: #ffffff;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-ticket-confirm:hover:not(:disabled) {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    .btn-ticket-cancel {
+      background: #f1f5f9;
+      color: #64748b;
+      border: 1px solid #cbd5e1;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-ticket-cancel:hover:not(:disabled) {
+      background: #e2e8f0;
+      color: #475569;
+    }
+
+    .ticket-preview-actions button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      transform: none !important;
+    }
+
+    .ticket-preview-status {
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: auto;
+    }
+    .ticket-status-confirmed { color: #16a34a; }
+    .ticket-status-cancelled { color: #dc2626; }
+
     /* 退款弹窗 Modal */
     .refund-modal-overlay {
       position: fixed;
@@ -1644,6 +1760,8 @@
               // 事件分流处理
               if (data.event_type === 'order_selector') {
                 renderOrderSelectorCards(botContentEl, data.orders || []);
+              } else if (data.event_type === 'ticket_preview') {
+                renderTicketPreviewCard(botContentEl, data);
               } else if (data.event_type === 'citations') {
                 botContentEl._citations = data.citations || [];
                 console.log('Received citations snapshot:', botContentEl._citations);
@@ -2043,6 +2161,183 @@
         conversation_id: currentConversationId,
         timestamp: new Date().toISOString()
       });
+    }
+
+    /* ==========================================================================
+       Ch08: 工单预览卡片与人机确认恢复交互
+       ========================================================================== */
+    function renderTicketPreviewCard(botContentEl, data) {
+      let container = botContentEl.querySelector('.ticket-preview-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'ticket-preview-container';
+        const textBody = botContentEl.querySelector('.text-body');
+        if (textBody) {
+          botContentEl.insertBefore(container, textBody);
+        } else {
+          botContentEl.appendChild(container);
+        }
+      }
+
+      const ticketType = data.ticket_type || '售后';
+      const description = data.description || '无具体描述';
+      const convId = data.conversation_id || currentConversationId;
+
+      container.innerHTML = `
+        <div class="ticket-preview-card" data-conv-id="${escapeHtml(convId)}">
+          <div class="ticket-preview-header">
+            <div class="ticket-preview-title">
+              <span>📝</span>
+              <span>人工客服工单确认</span>
+            </div>
+            <span class="ticket-type-badge">${escapeHtml(ticketType)}工单</span>
+          </div>
+          <div class="ticket-preview-body">
+            <strong>问题详情：</strong>${escapeHtml(description)}
+          </div>
+          <div class="ticket-preview-actions">
+            <span class="ticket-preview-status" style="display:none;"></span>
+            <button type="button" class="btn-ticket-cancel" onclick="handleTicketDecision(this, ${convId}, 'cancel')">取消</button>
+            <button type="button" class="btn-ticket-confirm" onclick="handleTicketDecision(this, ${convId}, 'confirm')">确认提交</button>
+          </div>
+        </div>
+      `;
+      scrollToBottom();
+    }
+
+    async function handleTicketDecision(btnEl, convId, action) {
+      if (isStreaming) return;
+      const cardEl = btnEl.closest('.ticket-preview-card');
+      if (!cardEl) return;
+
+      const actionsEl = cardEl.querySelector('.ticket-preview-actions');
+      const statusEl = cardEl.querySelector('.ticket-preview-status');
+      const allBtns = actionsEl.querySelectorAll('button');
+      allBtns.forEach(b => b.disabled = true);
+
+      if (action === 'confirm') {
+        statusEl.innerText = '✓ 已确认提交';
+        statusEl.className = 'ticket-preview-status ticket-status-confirmed';
+        statusEl.style.display = 'inline-block';
+      } else {
+        statusEl.innerText = '✕ 已取消';
+        statusEl.className = 'ticket-preview-status ticket-status-cancelled';
+        statusEl.style.display = 'inline-block';
+      }
+
+      await resumeChatWorkflow(convId, action);
+    }
+
+    async function resumeChatWorkflow(convId, action) {
+      isStreaming = true;
+      btnSend.disabled = true;
+
+      // 创建新的 Bot 气泡
+      const botMsgEl = document.createElement('div');
+      botMsgEl.className = 'message-row bot';
+      botMsgEl.innerHTML = `
+        <div class="avatar bot-avatar">小星</div>
+        <div class="message-content bot-content">
+          <div class="tool-container" style="display:none;"></div>
+          <div class="text-body"><div class="typing-indicator"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>
+        </div>
+      `;
+      chatMessages.appendChild(botMsgEl);
+      scrollToBottom();
+
+      const botContentEl = botMsgEl.querySelector('.bot-content');
+      const toolContainer = botMsgEl.querySelector('.tool-container');
+      const textBody = botMsgEl.querySelector('.text-body');
+
+      let fullText = '';
+      let hasReceivedFirstToken = false;
+
+      try {
+        const response = await fetch('/api/chat/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: convId, action: action })
+        });
+
+        if (!response.ok) {
+          throw new Error('恢复工作流失败: ' + response.statusText);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+            const dataStr = trimmed.replace(/^data:\s*/, '');
+            if (dataStr === '[DONE]') break;
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.event_type === 'tool_start') {
+                toolContainer.style.display = 'block';
+                const label = data.tool_label || data.tool_name;
+                toolContainer.innerHTML = `
+                  <div class="tool-badge loading">
+                    <div class="tool-spinner"></div>
+                    <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
+                  </div>
+                `;
+                scrollToBottom();
+              } else if (data.event_type === 'tool_end') {
+                toolContainer.style.display = 'block';
+                const statusIcon = data.success ? '📦' : '⚠️';
+                const statusText = data.success ? '调用成功' : '调用异常';
+                const badgeClass = data.success ? 'completed' : 'failed';
+                toolContainer.innerHTML = `
+                  <div class="tool-badge ${badgeClass}">
+                    <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
+                    <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
+                  </div>
+                `;
+                scrollToBottom();
+              } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
+                const chunk = data.content || '';
+                if (chunk) {
+                  if (!hasReceivedFirstToken) {
+                    hasReceivedFirstToken = true;
+                    textBody.innerHTML = '';
+                  }
+                  fullText += chunk;
+                  textBody.innerHTML = renderContentWithCitations(fullText) + '<span class="typing-cursor"></span>';
+                  scrollToBottom();
+                }
+              } else if (data.event_type === 'actions') {
+                renderActionButtons(botContentEl, data.actions || []);
+              }
+            } catch (err) {
+              console.warn('解析 resume SSE 帧失败:', err, dataStr);
+            }
+          }
+        }
+
+        if (textBody) {
+          textBody.innerHTML = renderContentWithCitations(fullText || (hasReceivedFirstToken ? '' : '已处理完成。'));
+        }
+        scrollToBottom();
+      } catch (err) {
+        textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
+      } finally {
+        isStreaming = false;
+        btnSend.disabled = false;
+        userInput.focus();
+        loadSessions(currentConversationId);
+      }
     }
 
     function escapeHtml(str) {
