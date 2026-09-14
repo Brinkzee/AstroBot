@@ -8,6 +8,8 @@ import jsonschema
 from pydantic import ValidationError
 
 from app.tools.registry import ToolRegistry, default_tool_registry
+from app.tools.permission import ToolPermissionGuard, default_permission_guard
+from app.tools.audit import AuditLogger, default_audit_logger
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +227,8 @@ def _build_failure_response(
         output_str = output_override
     elif status == "校验拦下":
         output_str = f"工具 [{tool_name}] 调用失败: 参数校验未通过: {error_detail}，请结合此情况向用户做解释或追问补充必要信息"
+    elif status == "权限拒绝":
+        output_str = f"工具 [{tool_name}] 调用失败: 权限校验拒绝: {error_detail}，请结合此情况向用户做解释并提供帮助"
     else:
         output_str = f"工具 [{tool_name}] 调用失败: {error_detail}，请结合此情况向用户做解释并提供帮助"
 
@@ -242,22 +246,34 @@ def _build_failure_response(
 
 
 class ToolExecutor:
-    """具备参数 Schema 校验、超时控制、网络白名单退避重试、错误分诊与脱敏格式化的工具执行中枢"""
+    """具备参数 Schema 校验、超时控制、网络白名单退避重试、错误分诊、权限门禁与独立审计的工具执行中枢"""
 
     def __init__(
         self,
         registry: Optional[ToolRegistry] = None,
         timeout: float = 5.0,
         max_retries: int = 1,
+        permission_guard: Optional[ToolPermissionGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
     ) -> None:
         self.registry = registry if registry is not None else default_tool_registry
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
+        self.permission_guard = (
+            permission_guard
+            if permission_guard is not None
+            else default_permission_guard
+        )
+        self.audit_logger = (
+            audit_logger if audit_logger is not None else default_audit_logger
+        )
 
     async def execute(
         self,
         tool_call: Dict[str, Any],
         db: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """执行单次工具调用并返回结构化结果
@@ -265,6 +281,8 @@ class ToolExecutor:
         Args:
             tool_call: 工具调用字典，包含 'name', 'args', 'id'
             db: 可选的数据库会话（保留扩展性）
+            context: 会话上下文字典（包含 user_query, confirmed 等凭据）
+            conversation_id: 可选会话 ID
             **kwargs: 扩展参数，支持 is_write 等覆盖
 
         Returns:
@@ -275,7 +293,7 @@ class ToolExecutor:
                 "tool_call_id": str,
                 "status": str,  # '成功', '失败', '超时', '校验拦下', '权限拒绝'
                 "error": Optional[str],
-                "error_type": Optional[str],  # 'INVALID_ARGS', 'QUERY_MISSED', 'SYSTEM_FAULT', None
+                "error_type": Optional[str],  # 'INVALID_ARGS', 'QUERY_MISSED', 'SYSTEM_FAULT', 'PERMISSION_DENIED', None
                 "retry_count": int,
                 "duration_ms": int,
             }
@@ -285,7 +303,65 @@ class ToolExecutor:
         tool_call_id = str(tool_call.get("id") or "")
         raw_args = tool_call.get("args")
 
-        # 1. 参数格式解析与预处理（反序列化失败直接拦下，不发起底层调用）
+        # 0. 会话与上下文提取
+        effective_context = context if context is not None else kwargs.get("context")
+        effective_conversation_id = conversation_id
+        if effective_conversation_id is None and "conversation_id" in kwargs:
+            effective_conversation_id = kwargs["conversation_id"]
+        if effective_conversation_id is None and effective_context and "conversation_id" in effective_context:
+            effective_conversation_id = effective_context.get("conversation_id")
+
+        # 1. 查找工具实例并判定工具来源及是否写操作
+        tool = self.registry.get_tool(tool_name)
+        if tool is not None:
+            effective_tool_source = (
+                kwargs.get("tool_source")
+                or getattr(tool, "tool_source", None)
+                or (getattr(tool, "metadata", {}) or {}).get("tool_source")
+                or "builtin"
+            )
+            effective_mcp_server = (
+                kwargs.get("mcp_server")
+                or getattr(tool, "mcp_server", None)
+                or (getattr(tool, "metadata", {}) or {}).get("mcp_server")
+            )
+        else:
+            effective_tool_source = kwargs.get("tool_source", "builtin")
+            effective_mcp_server = kwargs.get("mcp_server", None)
+
+        is_write = _is_write_tool(tool, tool_name, **kwargs)
+
+        # 独立事务审计留痕辅助函数（高可用保证：绝不阻断工具调用主流程）
+        async def _record_audit(
+            audit_status: str,
+            audit_result: Optional[str] = None,
+            audit_error: Optional[str] = None,
+            audit_retry: int = 0,
+            audit_duration: int = 0,
+            audit_arguments: Optional[Any] = None,
+        ) -> None:
+            if self.audit_logger is not None:
+                try:
+                    await self.audit_logger.log_call(
+                        tool_name=tool_name,
+                        tool_source=effective_tool_source,
+                        status=audit_status,
+                        conversation_id=effective_conversation_id,
+                        tool_call_id=tool_call_id,
+                        mcp_server=effective_mcp_server,
+                        arguments=audit_arguments,
+                        result_summary=audit_result,
+                        error_message=audit_error,
+                        retry_count=audit_retry,
+                        duration_ms=audit_duration,
+                    )
+                except Exception as log_err:
+                    logger.error(
+                        f"Audit log failed inside executor for [{tool_name}]: {log_err}",
+                        exc_info=True,
+                    )
+
+        # 2. 参数格式解析与预处理（反序列化失败直接拦下，不发起底层调用）
         if raw_args is None:
             args: Dict[str, Any] = {}
         elif isinstance(raw_args, str):
@@ -295,6 +371,12 @@ class ToolExecutor:
                 error_detail = f"参数 JSON 反序列化失败: {e}"
                 logger.warning(f"Tool [{tool_name}] args JSON parse error: {e}")
                 duration_ms = int((time.perf_counter() - start_time) * 1000)
+                await _record_audit(
+                    audit_status="校验拦下",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments={"raw": raw_args},
+                )
                 return _build_failure_response(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
@@ -309,6 +391,12 @@ class ToolExecutor:
         else:
             error_detail = f"参数类型错误: 期望字典或 JSON 字符串，实际为 {type(raw_args).__name__}"
             duration_ms = int((time.perf_counter() - start_time) * 1000)
+            await _record_audit(
+                audit_status="校验拦下",
+                audit_error=error_detail,
+                audit_duration=duration_ms,
+                audit_arguments={"raw": str(raw_args)},
+            )
             return _build_failure_response(
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
@@ -319,12 +407,50 @@ class ToolExecutor:
                 duration_ms=duration_ms,
             )
 
-        # 2. 工具查找与存在性校验
-        tool = self.registry.get_tool(tool_name)
+        if effective_conversation_id is None and isinstance(args, dict) and "conversation_id" in args:
+            try:
+                effective_conversation_id = int(args["conversation_id"])
+            except (ValueError, TypeError):
+                pass
+
+        # 3. 权限门禁核验 (ToolPermissionGuard)
+        if self.permission_guard is not None:
+            allowed, deny_reason = self.permission_guard.check_permission(
+                tool_name=tool_name,
+                tool_source=effective_tool_source,
+                is_write=is_write,
+                context=effective_context,
+            )
+            if not allowed:
+                duration_ms = int((time.perf_counter() - start_time) * 1000)
+                error_detail = deny_reason or "权限拒绝"
+                await _record_audit(
+                    audit_status="权限拒绝",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments=args,
+                )
+                return _build_failure_response(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    error_detail=error_detail,
+                    status="权限拒绝",
+                    error_type="PERMISSION_DENIED",
+                    retry_count=0,
+                    duration_ms=duration_ms,
+                )
+
+        # 4. 工具查找与存在性校验
         if tool is None:
             error_detail = f"未找到工具: '{tool_name}'"
             logger.warning(f"Tool not found: {tool_name}")
             duration_ms = int((time.perf_counter() - start_time) * 1000)
+            await _record_audit(
+                audit_status="失败",
+                audit_error=error_detail,
+                audit_duration=duration_ms,
+                audit_arguments=args,
+            )
             return _build_failure_response(
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
@@ -335,7 +461,7 @@ class ToolExecutor:
                 duration_ms=duration_ms,
             )
 
-        # 3. 参数 Schema 校验 (校验必填项缺失、类型错误、值域越界)
+        # 5. 参数 Schema 校验 (校验必填项缺失、类型错误、值域越界)
         args_schema = getattr(tool, "args_schema", None)
         if args_schema is None and hasattr(tool, "get_input_schema"):
             try:
@@ -374,6 +500,12 @@ class ToolExecutor:
                 error_detail = f"参数校验失败: {_format_pydantic_error(e)}"
                 logger.warning(f"Tool [{tool_name}] schema validation failed: {error_detail}")
                 duration_ms = int((time.perf_counter() - start_time) * 1000)
+                await _record_audit(
+                    audit_status="校验拦下",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments=args,
+                )
                 return _build_failure_response(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
@@ -387,6 +519,12 @@ class ToolExecutor:
                 error_detail = _format_jsonschema_error(e)
                 logger.warning(f"Tool [{tool_name}] jsonschema validation failed: {error_detail}")
                 duration_ms = int((time.perf_counter() - start_time) * 1000)
+                await _record_audit(
+                    audit_status="校验拦下",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments=args,
+                )
                 return _build_failure_response(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
@@ -400,6 +538,12 @@ class ToolExecutor:
                 error_detail = f"参数校验异常: {e}"
                 logger.warning(f"Tool [{tool_name}] schema validation error: {error_detail}")
                 duration_ms = int((time.perf_counter() - start_time) * 1000)
+                await _record_audit(
+                    audit_status="校验拦下",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments=args,
+                )
                 return _build_failure_response(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
@@ -412,8 +556,7 @@ class ToolExecutor:
         else:
             validated_args = args
 
-        # 4. 判断读写操作与重试白名单控制
-        is_write = _is_write_tool(tool, tool_name, **kwargs)
+        # 6. 重试白名单控制与执行调用
         # 写操作绝对不自动重试 (Hard Gate: retry_count 恒为 0)
         total_retries_allowed = 0 if is_write else max(0, self.max_retries)
         total_attempts = 1 + total_retries_allowed
@@ -447,6 +590,14 @@ class ToolExecutor:
                 # 查询落空（业务空结果）标记为成功且 error_type="QUERY_MISSED"，严禁重试
                 error_type = "QUERY_MISSED" if is_missed else None
                 retry_cnt = 0 if is_missed else actual_retries
+
+                await _record_audit(
+                    audit_status="成功",
+                    audit_result=output_str,
+                    audit_retry=retry_cnt,
+                    audit_duration=duration_ms,
+                    audit_arguments=validated_args,
+                )
 
                 return {
                     "success": True,
@@ -483,7 +634,7 @@ class ToolExecutor:
                 else:
                     break
 
-        # 5. 重试耗尽或不可重试真故障 (SYSTEM_FAULT)
+        # 7. 重试耗尽或不可重试真故障 (SYSTEM_FAULT)
         duration_ms = int((time.perf_counter() - start_time) * 1000)
         if isinstance(last_error, (asyncio.TimeoutError, TimeoutError)):
             error_detail = f"执行超时 (超过 {self.timeout} 秒)"
@@ -494,6 +645,14 @@ class ToolExecutor:
         else:
             error_detail = "未知执行错误"
             status = "失败"
+
+        await _record_audit(
+            audit_status=status,
+            audit_error=error_detail,
+            audit_retry=0 if is_write else actual_retries,
+            audit_duration=duration_ms,
+            audit_arguments=validated_args,
+        )
 
         return _build_failure_response(
             tool_name=tool_name,
@@ -507,4 +666,9 @@ class ToolExecutor:
 
 
 # 默认工具执行器单例 (适配复杂混合检索/重排链，超时设为 15.0s)
-default_tool_executor = ToolExecutor(registry=default_tool_registry, timeout=15.0)
+default_tool_executor = ToolExecutor(
+    registry=default_tool_registry,
+    timeout=15.0,
+    permission_guard=default_permission_guard,
+    audit_logger=default_audit_logger,
+)

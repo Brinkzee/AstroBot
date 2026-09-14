@@ -1,6 +1,7 @@
 import asyncio
 import json
 import pytest
+from unittest.mock import MagicMock
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 
@@ -155,11 +156,14 @@ async def test_write_operation_no_retry_on_timeout():
     # 超时设为 0.05s，max_retries 设为 1
     executor = ToolExecutor(registry=registry, timeout=0.05, max_retries=1)
 
-    res = await executor.execute({
-        "name": "create_ticket",
-        "args": {"description": "拉链损坏退货"},
-        "id": "call_write_001",
-    })
+    res = await executor.execute(
+        {
+            "name": "create_ticket",
+            "args": {"description": "拉链损坏退货"},
+            "id": "call_write_001",
+        },
+        context={"user_query": "我要投诉建工单", "confirmed": True},
+    )
 
     assert res["success"] is False
     assert res["status"] == "超时"
@@ -184,7 +188,9 @@ async def test_write_operation_marked_is_write_no_retry():
     cancel_order.metadata = {"is_write": True}
     registry.register(cancel_order)
 
-    executor = ToolExecutor(registry=registry, timeout=1.0, max_retries=1)
+    mock_guard = MagicMock()
+    mock_guard.check_permission.return_value = (True, None)
+    executor = ToolExecutor(registry=registry, timeout=1.0, max_retries=1, permission_guard=mock_guard)
     res = await executor.execute({
         "name": "cancel_order",
         "args": {"order_id": "1001"},
