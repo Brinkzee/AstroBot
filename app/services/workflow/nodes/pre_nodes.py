@@ -314,18 +314,24 @@ async def intent_recognition_node(
     # 策略 1: 若未传入小模型，直接使用主力大模型判定
     if small_model is None:
         primary_model = model or get_chat_model(streaming=False)
-        return await _invoke_intent_model(primary_model, query)
+        result = await _invoke_intent_model(primary_model, query)
+    else:
+        # 策略 2: 传入小模型时，先由小模型轻量判定
+        result = await _invoke_intent_model(small_model, query)
 
-    # 策略 2: 传入小模型时，先由小模型轻量判定
-    small_result = await _invoke_intent_model(small_model, query)
+        # 若置信度 < 0.85 或分类落入「其他」，触发级联重评：调用主力大模型重新判定
+        if result["confidence"] < 0.85 or result["intent"] not in VALID_INTENTS:
+            primary_model = model or get_chat_model(streaming=False)
+            result = await _invoke_intent_model(primary_model, query)
 
-    # 若置信度 >= 0.85 且意图属于 8 类常规业务之一（非「其他」），直接采纳
-    if small_result["confidence"] >= 0.85 and small_result["intent"] in VALID_INTENTS:
-        return small_result
-
-    # 若置信度 < 0.85 或分类落入「其他」，触发级联重评：调用主力大模型重新判定
-    primary_model = model or get_chat_model(streaming=False)
-    return await _invoke_intent_model(primary_model, query)
+    intent = result.get("intent", "其他")
+    try:
+        from app.services.observability.langfuse_service import LangfuseManager
+        LangfuseManager.update_current_trace(metadata={"intent": intent}, tags=[intent])
+    except Exception as e:
+        logger.warning(f"Failed to inject intent into Langfuse trace: {e}")
+        
+    return result
 
 
 def chitchat_node(state: AgentWorkflowState) -> Dict[str, Any]:
