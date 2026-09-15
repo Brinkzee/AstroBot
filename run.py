@@ -288,6 +288,36 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     return True
 
 
+def check_port_availability(host: str, port: int) -> bool:
+    """检查主服务端口是否空闲可用。若已被占用则返回 False 并输出友好诊断提示。"""
+    from scripts.wsl_helper import is_port_open
+
+    if is_port_open(host, port, timeout=0.5):
+        print("\n" + "!" * 65)
+        print(f"❌ [端口冲突] 检测到端口 {host}:{port} 已被其它程序占用！")
+        print("   💡 建议解决方案:")
+        print("      1. 关闭正在占用该端口的旧进程/服务；")
+        print("      2. 或启动时指定其它可用端口: python run.py --port 8080")
+        print("!" * 65 + "\n")
+        return False
+    return True
+
+
+def open_browser_async(url: str, delay: float = 0.8):
+    """异步延迟在系统默认浏览器中打开指定 URL，避免阻塞主服务就绪循环。"""
+    import threading
+    import webbrowser
+
+    def _worker():
+        time.sleep(delay)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def print_banner(host: str, port: int):
     """打印漂亮的启动仪表盘面板。"""
     display_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
@@ -327,6 +357,8 @@ def main():
     parser.add_argument("--no-reload", action="store_true", help="禁用代码热重载 (默认开启便于调试)")
     parser.add_argument("--check-only", action="store_true", help="仅执行环境与存储状态自检，不启动 Web 服务")
     parser.add_argument("--clean-kb", action="store_true", help="启动前强制重建知识库向量数据")
+    parser.add_argument("--no-mcp", action="store_true", help="禁用自动拉起外部 MCP 独立服务子进程")
+    parser.add_argument("--no-browser", action="store_true", help="禁用主服务就绪后自动在浏览器打开聊天界面")
     args = parser.parse_args()
 
     # 1. 环境基础检查
@@ -334,20 +366,49 @@ def main():
         print("\n❌ 环境检查未通过，启动终止。")
         sys.exit(1)
 
-    # 2. 存储与容器就绪检查
+    # 2. 联动拉起 MCP 独立子进程（若未显式禁用）
+    mcp_manager = None
+    if not args.no_mcp:
+        print("\n" + "=" * 65)
+        print("🚀 [联动服务] 检查并拉起外部 MCP 独立进程服务")
+        print("=" * 65)
+        try:
+            from scripts.mcp_process_manager import MCPServerManager
+            mcp_manager = MCPServerManager()
+            mcp_manager.start_servers(verbose=True)
+        except Exception as e:
+            print(f"  ⚠️ MCP 子进程管理器启动异常: {e}，将降级运行")
+
+    # 3. 存储与容器就绪检查
     storage_ready = asyncio.run(check_storage_readiness(clean_kb=args.clean_kb))
     if not storage_ready:
         print("\n❌ 存储就绪检查未通过，启动终止。")
+        if mcp_manager:
+            mcp_manager.stop_all()
         sys.exit(1)
 
     if args.check_only:
         print("\n🎉 [检查完成] 所有环境、容器与存储状态均已就绪！(--check-only 模式，退出启动)")
+        if mcp_manager:
+            mcp_manager.stop_all()
         sys.exit(0)
 
-    # 3. 打印仪表盘
+    # 4. 主服务端口冲突检查
+    if not check_port_availability(args.host, args.port):
+        if mcp_manager:
+            mcp_manager.stop_all()
+        sys.exit(1)
+
+    # 5. 打印仪表盘
     print_banner(args.host, args.port)
 
-    # 4. 启动 Uvicorn 主服务
+    # 6. 自动异步打开系统浏览器
+    if not args.no_browser:
+        display_host = "127.0.0.1" if args.host in ("0.0.0.0", "127.0.0.1") else args.host
+        chat_url = f"http://{display_host}:{args.port}/chat"
+        open_browser_async(chat_url, delay=0.8)
+
+    # 7. 启动 Uvicorn 主服务
     import uvicorn
     reload_enabled = not args.no_reload
     try:
@@ -360,6 +421,9 @@ def main():
         )
     except KeyboardInterrupt:
         print("\n👋 AstroBot 服务已安全停止。")
+    finally:
+        if mcp_manager:
+            mcp_manager.stop_all()
 
 
 if __name__ == "__main__":
