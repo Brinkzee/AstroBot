@@ -169,6 +169,33 @@
       white-space: nowrap;
     }
 
+    .session-delete-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      color: var(--text-muted, #94a3b8);
+      cursor: pointer;
+      padding: 3px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+      flex-shrink: 0;
+    }
+
+    .session-item:hover .session-delete-btn,
+    .session-item.active .session-delete-btn {
+      opacity: 0.6;
+    }
+
+    .session-delete-btn:hover {
+      opacity: 1 !important;
+      color: #ef4444 !important;
+      background: rgba(239, 68, 68, 0.12);
+      transform: scale(1.1);
+    }
+
     .session-item-time {
       font-size: 11px;
       color: var(--text-muted);
@@ -1498,6 +1525,14 @@
               <div class="session-item-header">
                 <span class="session-item-title" title="${title}">${title}</span>
                 ${summaryBadgeHtml}
+                <button class="session-delete-btn" title="删除此会话" onclick="deleteSession(event, ${s.id})">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                  </svg>
+                </button>
               </div>
               <div class="session-item-time">
                 <span>#${s.id}</span>
@@ -1604,6 +1639,38 @@
         }
       }
       scrollToBottom();
+    }
+
+    async function deleteSession(event, conversationId) {
+      if (event) event.stopPropagation();
+      if (isStreaming) {
+        alert('当前正在生成回复中，请稍候再操作。');
+        return;
+      }
+      const ok = confirm(`确定要删除会话 #${conversationId} 吗？此操作将永久删除该会话及其全部聊天记录，无法撤销。`);
+      if (!ok) return;
+
+      try {
+        const res = await fetch('/api/conversations/' + conversationId, {
+          method: 'DELETE'
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert('删除会话失败: ' + (data.detail || res.statusText));
+          return;
+        }
+        if (String(currentConversationId) === String(conversationId)) {
+          currentConversationId = null;
+          currentRefundOrderId = null;
+          activeRefundBtn = null;
+          sessionDisplay.innerText = '会话: 未开始';
+          messagesContainer.innerHTML = defaultWelcomeHtml;
+        }
+        await loadSessions();
+      } catch (err) {
+        console.error('删除会话异常:', err);
+        alert('删除会话异常，请稍后重试');
+      }
     }
 
     function sendQuickText(text) {
