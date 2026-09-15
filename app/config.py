@@ -67,6 +67,10 @@ class Settings(BaseSettings):
         gt=0.0,
         description="MCP Client 连接与调用超时时间（秒）"
     )
+    langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse Public Key")
+    langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse Secret Key")
+    langfuse_host: str = Field(default="http://localhost:3000", description="Langfuse Host URL")
+    langfuse_enabled: bool = Field(default=True, description="Whether Langfuse tracing is enabled")
 
     @property
     def MCP_LOGISTICS_SERVER_URL(self) -> str:

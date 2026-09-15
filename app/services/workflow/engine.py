@@ -221,7 +221,15 @@ def build_workflow_graph(checkpointer: Optional[Any] = None):
     builder.add_edge("logging", END)
 
     memory = checkpointer or MemorySaver()
-    return builder.compile(checkpointer=memory)
+    compiled = builder.compile(checkpointer=memory)
+    try:
+        from app.services.observability.langfuse_service import LangfuseManager
+        handler = LangfuseManager.get_callback_handler()
+        if handler is not None:
+            return compiled.with_config({"callbacks": [handler]})
+    except Exception as e:
+        logger.warning(f"Failed to hook Langfuse callback on compilation: {e}")
+    return compiled
 
 
 class WorkflowEngine:
