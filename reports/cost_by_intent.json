@@ -1,0 +1,44 @@
+{
+    "generated_at": "2026-09-15T15:03:17.371974",
+    "total_requests": 5,
+    "total_tokens": 47750,
+    "total_cost_usd": 0.18875,
+    "items": [
+        {
+            "intent": "refund",
+            "total_calls": 2,
+            "prompt_tokens": 22000,
+            "completion_tokens": 7000,
+            "total_tokens": 29000,
+            "estimated_cost_usd": 0.125,
+            "cost_percentage": 60.73298429319372
+        },
+        {
+            "intent": "knowledge",
+            "total_calls": 1,
+            "prompt_tokens": 15000,
+            "completion_tokens": 2000,
+            "total_tokens": 17000,
+            "estimated_cost_usd": 0.057499999999999996,
+            "cost_percentage": 35.602094240837694
+        },
+        {
+            "intent": "chitchat",
+            "total_calls": 1,
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "total_tokens": 1200,
+            "estimated_cost_usd": 0.0045000000000000005,
+            "cost_percentage": 2.513089005235602
+        },
+        {
+            "intent": "UNKNOWN",
+            "total_calls": 1,
+            "prompt_tokens": 500,
+            "completion_tokens": 50,
+            "total_tokens": 550,
+            "estimated_cost_usd": 0.00175,
+            "cost_percentage": 1.1518324607329842
+        }
+    ]
+}
