@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.chat import ChatStreamRequest, ChatResumeRequest
@@ -12,6 +12,10 @@ from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
 from app.schemas.conversation import ConversationItem, ConversationMessageItem
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.ticket import Ticket
+from app.models.summary import ConversationSummary
+from app.models.tool_audit_log import ToolAuditLog
+from app.models.low_confidence import LowConfidenceQuestion
 from app.services.after_sale_service import extract_after_sale_ticket
 from app.services.chat_service import ChatService
 from app.tools.business_tools import create_ticket
@@ -243,6 +247,51 @@ async def get_conversation_messages(
         )
 
     return items
+
+
+@router.delete("/conversations/{id}")
+async def delete_conversation(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除指定会话并原子级联清理或解绑关联数据"""
+    conv = await db.get(Conversation, id)
+    if not conv:
+        raise HTTPException(status_code=404, detail=f"会话 {id} 不存在")
+
+    # 1. LowConfidenceQuestion: 来源会话解绑（设 conversation_id = None）
+    await db.execute(
+        update(LowConfidenceQuestion)
+        .where(LowConfidenceQuestion.conversation_id == id)
+        .values(conversation_id=None)
+    )
+
+    # 2. ToolAuditLog: 删除该会话的调用审计记录
+    await db.execute(delete(ToolAuditLog).where(ToolAuditLog.conversation_id == id))
+
+    # 3. Ticket: 删除该会话创建的人工工单
+    await db.execute(delete(Ticket).where(Ticket.conversation_id == id))
+
+    # 4. ConversationSummary: 删除该会话的分段摘要
+    await db.execute(delete(ConversationSummary).where(ConversationSummary.conversation_id == id))
+
+    # 5. Message: 删除该会话的消息流水
+    await db.execute(delete(Message).where(Message.conversation_id == id))
+
+    # 6. Conversation: 删除会话实体
+    await db.delete(conv)
+
+    # 7. 提交事务
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"会话 #{id} 已成功删除",
+        "conversation_id": id,
+    }
+
+
+# ==============================================================================
 # 知识库可视化管理与自测工作台 API 接口 (/api/kb/...)
 # ==============================================================================
 import time
