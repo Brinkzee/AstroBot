@@ -1,0 +1,15 @@
+{
+    "calibrated_at": "2026-09-15T23:07:41.997281",
+    "sample_count": 300,
+    "recommended_threshold": 0.2,
+    "best_youden_j": 1.0,
+    "best_f1": 1.0,
+    "active_threshold": 0.4,
+    "threshold_mismatch": true,
+    "metrics": {
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "precision": 1.0,
+        "recall": 1.0
+    }
+}
