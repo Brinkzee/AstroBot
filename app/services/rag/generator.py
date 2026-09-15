@@ -127,6 +127,14 @@ class RAGControlledGenerator:
 
         # 3. 若判定不足，自动入池落库
         if not useful and db is not None:
+            retrieved_chunks = [
+                {
+                    "text": str(c.get("text") or c.get("content") or "")[:300],
+                    "score": float(c.get("score") or 0.0),
+                    "section": str(c.get("section_path") or c.get("section") or "")
+                }
+                for c in citations[:5]
+            ] if citations else None
             try:
                 await record_low_confidence(
                     db=db,
@@ -134,6 +142,7 @@ class RAGControlledGenerator:
                     source=source,
                     conversation_id=conversation_id,
                     reason=reason,
+                    retrieved_chunks=retrieved_chunks,
                 )
             except Exception as e:
                 logger.error(f"记录低置信度问题入库失败: {e}")
