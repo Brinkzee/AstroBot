@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
-from sqlalchemy import BigInteger, Integer, Text, Enum, DateTime, ForeignKey, func
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from sqlalchemy import BigInteger, Integer, Text, Enum, DateTime, ForeignKey, JSON, func
 from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,6 +10,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
+    from app.models.review_queue import ReviewQueue
 
 
 class LowConfidenceSource(str, enum.Enum):
@@ -22,7 +23,7 @@ class LowConfidenceSource(str, enum.Enum):
 class LowConfidenceQuestion(Base):
     """低置信度问题池 ORM 实体。
     
-    对齐 sql/ch04_ddl.sql: low_confidence_questions 表。
+    对齐 sql/ch04_ddl.sql 及 sql/ch09-ddl.sql: low_confidence_questions 表。
     用于在检索相关度不足、生成前自检判断知识不够或用户点踩反馈未解决时收录问题原话，
     作为后续知识扩充与数据飞轮的入口。
     """
@@ -56,6 +57,18 @@ class LowConfidenceQuestion(Base):
         nullable=True,
         comment="判不能的原因,留作复盘",
     )
+    retrieved_chunks: Mapped[Optional[Any]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="落池时的召回片段快照:Top 几条的原文与得分,审核页展示用;没走检索为 NULL",
+    )
+    matched_review_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
+        ForeignKey("review_queue.id", name="fk_lcq_review", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="查重后归并到的缺口,指向 review_queue.id",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
@@ -69,6 +82,11 @@ class LowConfidenceQuestion(Base):
         "Conversation",
         lazy="select",
     )
+    review_queue: Mapped[Optional["ReviewQueue"]] = relationship(
+        "ReviewQueue",
+        back_populates="raw_questions",
+        lazy="select",
+    )
 
 
 async def record_low_confidence(
@@ -77,6 +95,8 @@ async def record_low_confidence(
     source: str | LowConfidenceSource,
     conversation_id: Optional[int] = None,
     reason: Optional[str] = None,
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None,
+    matched_review_id: Optional[int] = None,
 ) -> LowConfidenceQuestion:
     """便捷异步函数：将低置信度问题写入 low_confidence_questions 表。
 
@@ -86,6 +106,8 @@ async def record_low_confidence(
         source: 入池来源（retrieval_low_conf / self_check / user_feedback）
         conversation_id: 关联的会话 ID
         reason: 判定原因
+        retrieved_chunks: 召回片段快照
+        matched_review_id: 归并到的缺口 ID
 
     Returns:
         持久化后的 LowConfidenceQuestion 实体
@@ -96,6 +118,8 @@ async def record_low_confidence(
         source=source_val,
         conversation_id=conversation_id,
         reason=reason,
+        retrieved_chunks=retrieved_chunks,
+        matched_review_id=matched_review_id,
     )
     db.add(record)
     await db.commit()

@@ -20,6 +20,14 @@ from app.models.tool_audit_log import (
     ToolSource,
     ToolStatus,
 )
+from app.models.review_queue import (
+    ReviewQueue,
+    ReviewStatus,
+)
+from app.models.eval_run import (
+    EvalRun,
+    TriggeredBy,
+)
 
 __all__ = [
     "Conversation",
@@ -38,4 +46,8 @@ __all__ = [
     "ToolAuditLog",
     "ToolSource",
     "ToolStatus",
+    "ReviewQueue",
+    "ReviewStatus",
+    "EvalRun",
+    "TriggeredBy",
 ]
