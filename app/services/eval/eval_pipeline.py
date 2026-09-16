@@ -28,22 +28,49 @@ class EvalPipelineService:
         if sample_limit is not None:
             samples = samples[:sample_limit]
             
-        # Mock retrieval and evaluation logic if no retriever provided
+        from app.services.rag.evaluator import compute_retrieval_metrics, evaluate_faithfulness, RAGEvaluator
+        
         recall_at_3 = 0.0
         recall_at_5 = 0.0
         recall_at_10 = 0.0
         mrr = 0.0
         faithfulness = 0.0
         
+        mock_evaluator = RAGEvaluator(is_mock=True) if retriever is None else None
+        
         for sample in samples:
-            # Fake calculation for testing
-            # If retriever is None, generate some deterministic mock scores based on id or just static
-            score = 0.8 if sample["id"] == "A1" else 0.9
-            recall_at_3 += score
-            recall_at_5 += score
-            recall_at_10 += score
-            mrr += score
-            faithfulness += score
+            query = sample["query"]
+            
+            if retriever is not None:
+                if hasattr(retriever, "retrieve_with_strategy"):
+                    # Assuming it returns docs
+                    docs = await retriever.retrieve_with_strategy(query, strategy="hybrid_rerank")
+                else:
+                    docs = await retriever.retrieve(query)
+            else:
+                docs, _ = mock_evaluator._mock_retrieval(sample, strategy="hybrid_rerank")
+                
+            r_metrics = compute_retrieval_metrics(
+                docs,
+                sample.get("expect_section"),
+                sample.get("expect_sections_all")
+            )
+            
+            recall_at_3 += r_metrics.get("recall@3", 0.0)
+            recall_at_5 += r_metrics.get("recall@5", 0.0)
+            recall_at_10 += r_metrics.get("recall@10", 0.0)
+            mrr += r_metrics.get("mrr", 0.0)
+            
+            # Simulated answer for faithfulness evaluation
+            simulated_answer = "根据相关规定，这是系统生成的模拟回复。"
+            citations = docs[:3] if docs else []
+            f_res = evaluate_faithfulness(
+                query=query,
+                answer=simulated_answer,
+                citations=citations,
+                model=judge
+            )
+            faithfulness += 1.0 if f_res.get("faithful", True) else 0.0
 
         n = len(samples) if len(samples) > 0 else 1
         avg_recall_3 = recall_at_3 / n
