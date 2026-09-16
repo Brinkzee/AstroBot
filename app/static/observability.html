@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 观测与成本看板</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-light: #eff6ff;
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border-color: #e2e8f0;
+      --success: #10b981;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --danger: #ef4444;
+      --danger-light: #fef2f2;
+      --purple: #8b5cf6;
+      --purple-light: #f5f3ff;
+      --radius: 12px;
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+    }
+
+    /* Header */
+    header {
+      background: #ffffff; border-bottom: 1px solid var(--border-color);
+      padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 50; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-icon {
+      width: 38px; height: 38px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      color: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 20px; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    }
+    .brand-title { font-size: 18px; font-weight: 700; color: #1e293b; }
+    .brand-subtitle { font-size: 12px; color: var(--text-muted); }
+    .header-links { display: flex; align-items: center; gap: 12px; }
+    .btn-nav {
+      display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px;
+      font-size: 13.5px; font-weight: 500; color: var(--primary);
+      background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+      text-decoration: none; transition: all 0.2s;
+    }
+    .btn-nav:hover { background: #dbeafe; }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
+      font-size: 13.5px; font-weight: 600; color: #ffffff;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none;
+      border-radius: 8px; cursor: pointer; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+    }
+    .btn-primary:hover { opacity: 0.95; transform: translateY(-1px); }
+
+    .container { max-width: 1320px; width: 100%; margin: 0 auto; padding: 24px 20px 48px; flex: 1; }
+
+    /* Sections */
+    .section-block {
+      background: var(--card-bg); border: 1px solid var(--border-color);
+      border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow);
+      margin-bottom: 24px; position: relative;
+    }
+    .section-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;
+    }
+    .section-title { font-size: 18px; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 8px; }
+
+    /* KPI Grid */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .kpi-card {
+      background: var(--bg-color); border: 1px solid var(--border-color);
+      border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .kpi-title { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .kpi-value { font-size: 24px; font-weight: 700; color: #0f172a; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; text-align: left; margin-top: 12px; }
+    th { background: #f8fafc; color: #475569; font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
+    td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
+    tr.highlight-row { background-color: #fef9c3 !important; font-weight: 600; }
+    tr.highlight-row td:first-child { border-left: 3px solid var(--warning); }
+    .trend-up { color: var(--success); font-weight: bold; }
+    .trend-down { color: var(--danger); font-weight: bold; }
+    .trend-flat { color: var(--text-muted); }
+
+    /* Banners & Empty States */
+    .alert-banner {
+      background: var(--danger-light); border-left: 4px solid var(--danger); color: #991b1b;
+      padding: 12px 16px; border-radius: 4px; margin-bottom: 16px; font-size: 14px; display: none;
+    }
+    .empty-state {
+      padding: 40px 20px; text-align: center; color: var(--text-muted);
+      border: 1px dashed var(--border-color); border-radius: 8px; display: none;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15,23,42,0.6);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #fff; border-radius: var(--radius); width: 90%; max-width: 800px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2); display: flex; flex-direction: column;
+    }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); font-weight: 700; font-size: 16px; display: flex; justify-content: space-between; }
+    .console-body {
+      background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 12.5px;
+      padding: 16px; height: 380px; overflow-y: auto; white-space: pre-wrap;
+    }
+    .modal-footer { padding: 14px 20px; background: #f8fafc; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; }
+    .btn-secondary { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border-color); background: #fff; font-size: 13.5px; cursor: pointer; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .badge-star { background: var(--warning-light); color: var(--warning); border: 1px solid var(--warning); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">📈</div>
+      <div>
+        <div class="brand-title">观测与成本看版</div>
+        <div class="brand-subtitle">质量监控、成本测算与意图洞察</div>
+      </div>
+    </div>
+    <div class="header-links">
+      <a href="/chat" class="btn-nav">💬 在线客服</a>
+      <a href="/kb" class="btn-nav">📚 知识库</a>
+      <a href="/rag-eval" class="btn-nav">⚖️ RAG 评测</a>
+      <a href="/review-queue" class="btn-nav">🔄 飞轮待审</a>
+      <a href="/docs" target="_blank" class="btn-nav">📖 API 文档</a>
+    </div>
+  </header>
+
+  <div class="container">
+    
+    <!-- 1. Cost by Intent -->
+    <div class="section-block" id="cost-section">
+      <div class="section-header">
+        <div class="section-title">💰 意图成本账 (Cost by Intent)</div>
+        <button class="btn-primary" onclick="runJob('cost-analysis')">⚡ 重新统计成本</button>
+      </div>
+      <div class="empty-state" id="cost-empty">暂无意图成本报表，请先进行对话积累 Trace 后点击重跑</div>
+      <div id="cost-content">
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-title">Total Requests</div><div class="kpi-value" id="cost-kpi-req">0</div></div>
+          <div class="kpi-card"><div class="kpi-title">Total Tokens</div><div class="kpi-value" id="cost-kpi-tok">0</div></div>
+          <div class="kpi-card"><div class="kpi-title">Total Cost ($)</div><div class="kpi-value" id="cost-kpi-usd">$0.000</div></div>
+          <div class="kpi-card" style="border-left: 3px solid var(--warning)"><div class="kpi-title">Top 1 Expensive Intent</div><div class="kpi-value" id="cost-kpi-top" style="font-size: 18px;">-</div></div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Intent</th><th>Calls</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>Total Tokens</th><th>Estimated Cost ($)</th><th>Cost %</th></tr>
+          </thead>
+          <tbody id="cost-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 2. Evaluation Trends -->
+    <div class="section-block" id="eval-section">
+      <div class="section-header">
+        <div class="section-title">📉 评估趋势 (Evaluation Trends)</div>
+        <button class="btn-primary" onclick="runJob('eval-pipeline')">⚡ 运行评测流水线</button>
+      </div>
+      <div class="alert-banner" id="eval-alert">⚠️ 注意：最新一轮评测中发现指标下滑！请检查最近的代码或知识库变更。</div>
+      <div class="empty-state" id="eval-empty">暂无评测轮次记录，点击重跑即可生成趋势的第一个数据点</div>
+      <div id="eval-content">
+        <table>
+          <thead>
+            <tr><th>Run ID</th><th>Trigger Type</th><th>Dataset Size</th><th>Recall@3</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>Faithfulness</th><th>Run Time</th></tr>
+          </thead>
+          <tbody id="eval-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 3. Confidence Calibration -->
+    <div class="section-block" id="calib-section">
+      <div class="section-header">
+        <div class="section-title">⚖️ 置信度阈值校准 (Confidence Calibration)</div>
+        <button class="btn-primary" onclick="runJob('calibrate-confidence')">⚡ 重新校准阈值</button>
+      </div>
+      <div class="alert-banner" id="calib-alert" style="background: var(--warning-light); border-left-color: var(--warning); color: #b45309;">
+        ⚠️ 阈值不匹配：运行时配置的 active_threshold 与最新推荐阈值不一致。
+      </div>
+      <div class="empty-state" id="calib-empty">暂无置信度校准报表，点击重跑即可在评估集上扫描最佳阈值</div>
+      <div id="calib-content">
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-title">Recommended Threshold</div><div class="kpi-value" id="calib-kpi-rec">0.00</div></div>
+          <div class="kpi-card"><div class="kpi-title">Best Youden's J</div><div class="kpi-value" id="calib-kpi-j">0.00</div></div>
+          <div class="kpi-card"><div class="kpi-title">Evaluated Samples</div><div class="kpi-value" id="calib-kpi-samples">0</div></div>
+          <div class="kpi-card"><div class="kpi-title">Active Threshold</div><div class="kpi-value" id="calib-kpi-active">0.00</div></div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Threshold</th><th>TPR</th><th>FPR</th><th>Youden J</th><th>F1</th><th>Accuracy</th></tr>
+          </thead>
+          <tbody id="calib-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Job Modal -->
+  <div class="modal-overlay" id="job-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span id="job-modal-title">Job Execution</span>
+        <span id="job-modal-status" class="badge">Running</span>
+      </div>
+      <div class="console-body" id="job-modal-logs">Starting job...</div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeJobModal()" id="job-modal-close" disabled>等待完成</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadOverview() {
+      try {
+        const res = await fetch('/api/observability/overview');
+        if (!res.ok) throw new Error("Failed to load overview");
+        const data = await res.json();
+        
+        // 1. Cost
+        if (!data.cost_by_intent || data.cost_by_intent.present === false) {
+          document.getElementById('cost-empty').style.display = 'block';
+          document.getElementById('cost-content').style.display = 'none';
+        } else {
+          document.getElementById('cost-empty').style.display = 'none';
+          document.getElementById('cost-content').style.display = 'block';
+          const cost = data.cost_by_intent;
+          document.getElementById('cost-kpi-req').innerText = cost.kpis.total_requests;
+          document.getElementById('cost-kpi-tok').innerText = cost.kpis.total_tokens;
+          document.getElementById('cost-kpi-usd').innerText = `$${cost.kpis.total_cost_usd.toFixed(4)}`;
+          document.getElementById('cost-kpi-top').innerText = cost.kpis.top_1_expensive_intent || '-';
+          
+          let html = '';
+          (cost.table || []).forEach((row, i) => {
+            const isTop = i === 0 && row.intent === cost.kpis.top_1_expensive_intent;
+            html += `<tr class="${isTop ? 'highlight-row' : ''}">
+              <td>${row.intent} ${isTop ? '<span class="badge badge-star">⭐ #1</span>' : ''}</td>
+              <td>${row.calls}</td>
+              <td>${row.prompt_tokens}</td>
+              <td>${row.completion_tokens}</td>
+              <td>${row.total_tokens}</td>
+              <td>$${row.estimated_cost_usd.toFixed(4)}</td>
+              <td>${(row.cost_percentage * 100).toFixed(1)}%</td>
+            </tr>`;
+          });
+          document.getElementById('cost-tbody').innerHTML = html;
+        }
+
+        // 2. Eval Trends
+        if (!data.evaluation_trends || data.evaluation_trends.present === false) {
+          document.getElementById('eval-empty').style.display = 'block';
+          document.getElementById('eval-content').style.display = 'none';
+          document.getElementById('eval-alert').style.display = 'none';
+        } else {
+          document.getElementById('eval-empty').style.display = 'none';
+          document.getElementById('eval-content').style.display = 'block';
+          const trends = data.evaluation_trends;
+          document.getElementById('eval-alert').style.display = trends.alert_metric_dropped ? 'block' : 'none';
+          
+          let html = '';
+          (trends.recent_10_runs || []).forEach((row) => {
+            html += `<tr>
+              <td>${row.run_id}</td>
+              <td>${row.trigger_type}</td>
+              <td>${row.dataset_size}</td>
+              <td>${formatDelta(row.recall_at_3)}</td>
+              <td>${formatDelta(row.recall_at_5)}</td>
+              <td>${formatDelta(row.recall_at_10)}</td>
+              <td>${formatDelta(row.mrr)}</td>
+              <td>${formatDelta(row.faithfulness)}</td>
+              <td>${row.run_time}</td>
+            </tr>`;
+          });
+          document.getElementById('eval-tbody').innerHTML = html;
+        }
+
+        // 3. Calibration
+        if (!data.confidence_calibration || data.confidence_calibration.present === false) {
+          document.getElementById('calib-empty').style.display = 'block';
+          document.getElementById('calib-content').style.display = 'none';
+          document.getElementById('calib-alert').style.display = 'none';
+        } else {
+          document.getElementById('calib-empty').style.display = 'none';
+          document.getElementById('calib-content').style.display = 'block';
+          const cal = data.confidence_calibration;
+          document.getElementById('calib-alert').style.display = cal.kpis.is_mismatched ? 'block' : 'none';
+          
+          document.getElementById('calib-kpi-rec').innerText = cal.kpis.recommended_threshold.toFixed(2);
+          document.getElementById('calib-kpi-j').innerText = cal.kpis.best_youden_j.toFixed(4);
+          document.getElementById('calib-kpi-samples').innerText = cal.kpis.evaluated_samples;
+          document.getElementById('calib-kpi-active').innerText = cal.kpis.active_threshold.toFixed(2);
+          
+          let html = '';
+          (cal.grid_scan || []).forEach((row) => {
+            html += `<tr>
+              <td>${row.threshold.toFixed(2)}</td>
+              <td>${row.tpr.toFixed(4)}</td>
+              <td>${row.fpr.toFixed(4)}</td>
+              <td>${row.youden_j.toFixed(4)}</td>
+              <td>${row.f1.toFixed(4)}</td>
+              <td>${row.accuracy.toFixed(4)}</td>
+            </tr>`;
+          });
+          document.getElementById('calib-tbody').innerHTML = html;
+        }
+      } catch(e) {
+        console.error("Load overview failed", e);
+      }
+    }
+
+    function formatDelta(valObj) {
+      if (!valObj) return '-';
+      const val = (valObj.value !== null && valObj.value !== undefined) ? valObj.value.toFixed(4) : '-';
+      let icon = '─';
+      let cls = 'trend-flat';
+      if (valObj.delta > 0) { icon = '↗'; cls = 'trend-up'; }
+      else if (valObj.delta < 0) { icon = '↘'; cls = 'trend-down'; }
+      return `${val} <span class="${cls}">${icon}</span>`;
+    }
+
+    let pollTimer = null;
+    async function runJob(jobName) {
+      const modal = document.getElementById('job-modal');
+      const logs = document.getElementById('job-modal-logs');
+      const closeBtn = document.getElementById('job-modal-close');
+      const title = document.getElementById('job-modal-title');
+      
+      modal.classList.add('active');
+      closeBtn.disabled = true;
+      closeBtn.innerText = '等待完成';
+      logs.innerText = `[${jobName}] Starting job...\n`;
+      title.innerText = `Job: ${jobName}`;
+      
+      try {
+        const res = await fetch('/api/jobs/start', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ job_name: jobName })
+        });
+        if (!res.ok) throw new Error("Failed to start job");
+        const data = await res.json();
+        const jobId = data.job_id;
+        
+        pollTimer = setInterval(async () => {
+          try {
+            const logRes = await fetch(`/api/jobs/${jobId}/logs`);
+            if (!logRes.ok) return;
+            const logData = await logRes.json();
+            logs.innerText = (logData.logs || []).join('\n');
+            logs.scrollTop = logs.scrollHeight;
+            if (logData.status === 'completed' || logData.status === 'failed') {
+              clearInterval(pollTimer);
+              closeBtn.disabled = false;
+              closeBtn.innerText = '关闭并刷新';
+              document.getElementById('job-modal-status').innerText = logData.status === 'completed' ? 'Done' : 'Failed';
+            }
+          } catch(e) {}
+        }, 1000);
+      } catch(e) {
+        logs.innerText += `\nError: ${e.message}`;
+        closeBtn.disabled = false;
+        closeBtn.innerText = '关闭';
+      }
+    }
+
+    function closeJobModal() {
+      if (pollTimer) clearInterval(pollTimer);
+      document.getElementById('job-modal').classList.remove('active');
+      loadOverview();
+    }
+
+    window.onload = loadOverview;
+  </script>
+</body>
+</html>

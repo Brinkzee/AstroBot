@@ -2216,6 +2216,20 @@
       } else {
         btn.classList.add('active-down');
         tip.innerText = '已反馈 (待改进) 👎';
+        
+        // 发送飞轮反馈
+        fetch('/api/chat/feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            conversation_id: currentConversationId,
+            feedback_type: 'down',
+            query: lastUserMessageText,
+            reason: '用户对回答不满意(点踩)'
+          })
+        }).catch(err => console.error('Error submitting feedback:', err));
       }
 
       // 一次性锁定所有按钮

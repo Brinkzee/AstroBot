@@ -47,6 +47,16 @@ def get_rag_eval_page():
     eval_file = os.path.join(static_dir, "rag_eval.html")
     return FileResponse(eval_file)
 
+@app.get("/observability")
+def get_observability_page():
+    file_path = os.path.join(static_dir, "observability.html")
+    return FileResponse(file_path)
+
+@app.get("/review-queue")
+def get_review_queue_page():
+    file_path = os.path.join(static_dir, "review_queue.html")
+    return FileResponse(file_path)
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
