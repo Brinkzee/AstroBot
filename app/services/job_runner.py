@@ -45,7 +45,11 @@ class JobRunner:
             sys.executable,
             str(ROOT_DIR / "scripts" / "run_ch04_evaluation.py"),
             "--mock",
-        ]
+        ],
+        "cost-analysis": [sys.executable, str(ROOT_DIR / "scripts" / "check_intent_costs.py"), "--mock"],
+        "eval-pipeline": [sys.executable, str(ROOT_DIR / "scripts" / "run_eval_pipeline.py"), "--samples", "10"],
+        "calibrate-confidence": [sys.executable, str(ROOT_DIR / "scripts" / "calibrate_confidence_gate.py")],
+        "flywheel-pipeline": [sys.executable, str(ROOT_DIR / "scripts" / "run_flywheel_pipeline.py")]
     }
 
     def __init__(self, max_logs_per_job: int = 2000):
