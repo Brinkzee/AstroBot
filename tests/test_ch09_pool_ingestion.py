@@ -1,6 +1,6 @@
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
+from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -13,12 +13,6 @@ from app.models.message import Message
 from app.services.workflow.nodes.knowledge_node import knowledge_fallback_node
 from app.services.rag.generator import RAGControlledGenerator
 from app.api.routes import router
-
-@pytest.fixture
-def test_app():
-    app = FastAPI()
-    app.include_router(router)
-    return app
 
 @pytest_asyncio.fixture
 async def memory_db():
@@ -41,14 +35,18 @@ async def memory_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 @pytest.fixture
-def client(test_app, memory_db):
+def test_app(memory_db):
+    app = FastAPI()
+    app.include_router(router)
+
     async def override_get_db():
         yield memory_db
 
-    test_app.dependency_overrides[get_db] = override_get_db
-    return TestClient(test_app)
+    app.dependency_overrides[get_db] = override_get_db
+    return app
 
 @pytest.mark.asyncio
 async def test_knowledge_fallback_stores_retrieved_chunks(memory_db):
@@ -104,18 +102,19 @@ async def test_generator_self_check_stores_retrieved_chunks(memory_db):
     assert lcq.retrieved_chunks[1]["section"] == "path/b"
 
 @pytest.mark.asyncio
-async def test_user_feedback_thumbs_down_saves_to_pool(client, memory_db):
+async def test_user_feedback_thumbs_down_saves_to_pool(test_app, memory_db):
     conv = Conversation(id=300, user_id="u1")
     msg = Message(conversation_id=300, role="user", content="测试用户问题")
     memory_db.add(conv)
     memory_db.add(msg)
     await memory_db.commit()
 
-    resp = client.post("/api/chat/feedback", json={
-        "conversation_id": 300,
-        "feedback_type": "down",
-        "query": "测试用户问题2"
-    })
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        resp = await client.post("/api/chat/feedback", json={
+            "conversation_id": 300,
+            "feedback_type": "down",
+            "query": "测试用户问题2"
+        })
     
     assert resp.status_code == 200
     
@@ -127,17 +126,18 @@ async def test_user_feedback_thumbs_down_saves_to_pool(client, memory_db):
     assert lcq.raw_question == "测试用户问题2"
 
 @pytest.mark.asyncio
-async def test_user_feedback_without_retrieval_has_null_chunks(client, memory_db):
+async def test_user_feedback_without_retrieval_has_null_chunks(test_app, memory_db):
     conv = Conversation(id=400, user_id="u1")
     msg = Message(conversation_id=400, role="user", content="我没有检索知识")
     memory_db.add(conv)
     memory_db.add(msg)
     await memory_db.commit()
 
-    resp = client.post("/api/chat/feedback", json={
-        "conversation_id": 400,
-        "feedback_type": "down"
-    })
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        resp = await client.post("/api/chat/feedback", json={
+            "conversation_id": 400,
+            "feedback_type": "down"
+        })
     
     assert resp.status_code == 200
     
@@ -148,3 +148,4 @@ async def test_user_feedback_without_retrieval_has_null_chunks(client, memory_db
     assert lcq.source == "user_feedback"
     assert lcq.raw_question == "我没有检索知识"
     assert lcq.retrieved_chunks is None
+
