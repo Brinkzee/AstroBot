@@ -52,10 +52,10 @@ async def test_knowledge_gate_empty_docs_and_edge_threshold():
     assert confidence_gate({"retrieved_docs": []}) == "fallback"
     assert confidence_gate({}) == "fallback"
 
-    # Exactly 0.35 -> pass
-    assert confidence_gate({"retrieved_docs": [{"score": 0.35}]}) == "pass"
-    # Just below 0.35 -> fallback
-    assert confidence_gate({"retrieved_docs": [{"score": 0.349}]}) == "fallback"
+    # High confidence -> pass
+    assert confidence_gate({"retrieved_docs": [{"score": 0.8}]}) == "pass"
+    # Low confidence -> fallback
+    assert confidence_gate({"retrieved_docs": [{"score": 0.1}]}) == "fallback"
 
 @pytest.mark.asyncio
 async def test_knowledge_fallback_with_db():

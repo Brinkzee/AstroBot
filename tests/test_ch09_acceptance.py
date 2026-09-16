@@ -74,4 +74,6 @@ async def test_acceptance_7_eval_trend():
         response = await ac.get("/api/observability/overview")
         assert response.status_code == 200
         data = response.json()
-        assert "cost_metrics" in data
+        assert "cost_block" in data
+        assert "eval_trend_block" in data
+        assert "calibration_block" in data
