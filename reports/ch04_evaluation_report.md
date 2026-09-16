@@ -1,6 +1,6 @@
 # AstroBot RAG Chapter 4 四策略对比评测报告
 
-- **评测时间**: 2026-09-16 21:06:49
+- **评测时间**: 2026-09-16 21:25:58
 - **样本总数**: 300 题
 - **知识库切片数**: 128 块
 - **嵌入模型**: BAAI/bge-m3
@@ -92,7 +92,7 @@
     "embedding_model": "BAAI/bge-m3",
     "reranker_model": "BAAI/bge-reranker-v2-m3",
     "judge_model": "deepseek-flash",
-    "evaluated_at": "2026-09-16 21:06:49",
+    "evaluated_at": "2026-09-16 21:25:58",
     "persisted_faith_cases": 0
   },
   "kpis": {

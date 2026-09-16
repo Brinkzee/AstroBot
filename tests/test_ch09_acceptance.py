@@ -9,7 +9,14 @@ import os
 import json
 from unittest.mock import patch, MagicMock
 
+from scripts.wsl_helper import ensure_mysql_ready
+
 from main import app
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_mysql_ready():
+    ensure_mysql_ready(verbose=False)
+
 from app.services.observability.langfuse_service import LangfuseManager
 from app.services.observability.cost_analytics import CostAnalyticsService
 from app.services.workflow.nodes.gate import compute_evidence_confidence
@@ -47,12 +54,23 @@ async def test_acceptance_3_evidence_confidence():
 @pytest.mark.asyncio
 async def test_acceptance_4_low_confidence_fallback():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Create a conversation first
+        from app.db.session import AsyncSessionLocal
+        from app.models.conversation import Conversation
+        async with AsyncSessionLocal() as db:
+            conv = Conversation(id=123)
+            db.add(conv)
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+        
         response = await ac.post(
             "/api/chat/feedback",
             json={
                 "message_id": 999,
-                "session_id": "test-session",
-                "question": "test question",
+                "conversation_id": 123,
+                "query": "test question",
                 "feedback_type": "down"
             }
         )
@@ -65,7 +83,7 @@ async def test_acceptance_5_flywheel_pipeline():
 
 @pytest.mark.asyncio
 async def test_acceptance_6_review_knowledge_dual():
-    writer = KnowledgeDualWriter(db=MagicMock())
+    writer = KnowledgeDualWriter()
     assert writer is not None
 
 @pytest.mark.asyncio
