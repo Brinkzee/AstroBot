@@ -149,7 +149,7 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     # 2.3 第九章飞轮待审队列与评估记录数据表迁移
     from scripts.init_ch09_db import init_ch09_db
     try:
-        await init_ch09_db()
+        await init_ch09_db(engine_override=engine)
         print("    ↳ 第九章飞轮待审队列与评估记录数据表迁移已就绪 ✅")
     except Exception as e:
         print(f"    ❌ 第九章数据表与迁移失败: {e}")

@@ -15,6 +15,7 @@ class TestRunCh08StorageReadiness:
         """验证 check_storage_readiness 能够自动调用 init_ch08_db() 并输出成功提示"""
         mock_init_ch07 = mock.AsyncMock(return_value=["ALTER TABLE conversations ..."])
         mock_init_ch08 = mock.AsyncMock(return_value=["CREATE TABLE tool_audit_logs ..."])
+        mock_init_ch09 = mock.AsyncMock(return_value=["CREATE TABLE review_queue ..."])
         mock_session = mock.AsyncMock()
         mock_res_pending = mock.MagicMock()
         mock_res_pending.scalar.return_value = 0
@@ -39,6 +40,7 @@ class TestRunCh08StorageReadiness:
             mock.patch("scripts.seed_data.seed_all_data", new_callable=mock.AsyncMock, return_value=0),
             mock.patch("scripts.init_ch07_db.init_ch07_db", mock_init_ch07),
             mock.patch("scripts.init_ch08_db.init_ch08_db", mock_init_ch08),
+            mock.patch("scripts.init_ch09_db.init_ch09_db", mock_init_ch09),
             mock.patch("app.db.session.AsyncSessionLocal", return_value=mock_session_ctx),
             mock.patch("app.services.rag.milvus_client.MilvusKnowledgeStore", return_value=mock_store),
             mock.patch("scripts.wsl_helper.is_port_open", return_value=False),
@@ -54,6 +56,7 @@ class TestRunCh08StorageReadiness:
         """验证当 init_ch08_db 异常时，check_storage_readiness() 拦截并返回 False"""
         mock_init_ch07 = mock.AsyncMock(return_value=["ALTER TABLE conversations ..."])
         mock_init_ch08 = mock.AsyncMock(side_effect=RuntimeError("CH08 DDL table creation error"))
+        mock_init_ch09 = mock.AsyncMock(return_value=[])
         mock_engine = mock.MagicMock()
         mock_conn = mock.AsyncMock()
         mock_engine.begin.return_value.__aenter__.return_value = mock_conn
@@ -63,6 +66,7 @@ class TestRunCh08StorageReadiness:
             mock.patch("app.db.session.engine", mock_engine),
             mock.patch("scripts.init_ch07_db.init_ch07_db", mock_init_ch07),
             mock.patch("scripts.init_ch08_db.init_ch08_db", mock_init_ch08),
+            mock.patch("scripts.init_ch09_db.init_ch09_db", mock_init_ch09),
         ):
             ok = await run.check_storage_readiness(clean_kb=False)
             assert ok is False
@@ -79,6 +83,7 @@ class TestRunCh08MCPAndToolRegistry:
         """验证当 MCP 8001/8002 在线时，探测输出正常且正确打印内置工具与动态 MCP 工具"""
         mock_init_ch07 = mock.AsyncMock(return_value=[])
         mock_init_ch08 = mock.AsyncMock(return_value=[])
+        mock_init_ch09 = mock.AsyncMock(return_value=[])
         mock_session = mock.AsyncMock()
         mock_res_pending = mock.MagicMock()
         mock_res_pending.scalar.return_value = 0
@@ -118,6 +123,7 @@ class TestRunCh08MCPAndToolRegistry:
             mock.patch("scripts.seed_data.seed_all_data", new_callable=mock.AsyncMock, return_value=0),
             mock.patch("scripts.init_ch07_db.init_ch07_db", mock_init_ch07),
             mock.patch("scripts.init_ch08_db.init_ch08_db", mock_init_ch08),
+            mock.patch("scripts.init_ch09_db.init_ch09_db", mock_init_ch09),
             mock.patch("app.db.session.AsyncSessionLocal", return_value=mock_session_ctx),
             mock.patch("app.services.rag.milvus_client.MilvusKnowledgeStore", return_value=mock_store),
             mock.patch("scripts.wsl_helper.is_port_open", return_value=True),
@@ -136,6 +142,7 @@ class TestRunCh08MCPAndToolRegistry:
         """验证当 MCP 服务离线时，输出友好降级提示并正确展示纯内置工具"""
         mock_init_ch07 = mock.AsyncMock(return_value=[])
         mock_init_ch08 = mock.AsyncMock(return_value=[])
+        mock_init_ch09 = mock.AsyncMock(return_value=[])
         mock_session = mock.AsyncMock()
         mock_res_pending = mock.MagicMock()
         mock_res_pending.scalar.return_value = 0
@@ -168,6 +175,7 @@ class TestRunCh08MCPAndToolRegistry:
             mock.patch("scripts.seed_data.seed_all_data", new_callable=mock.AsyncMock, return_value=0),
             mock.patch("scripts.init_ch07_db.init_ch07_db", mock_init_ch07),
             mock.patch("scripts.init_ch08_db.init_ch08_db", mock_init_ch08),
+            mock.patch("scripts.init_ch09_db.init_ch09_db", mock_init_ch09),
             mock.patch("app.db.session.AsyncSessionLocal", return_value=mock_session_ctx),
             mock.patch("app.services.rag.milvus_client.MilvusKnowledgeStore", return_value=mock_store),
             mock.patch("scripts.wsl_helper.is_port_open", return_value=False),

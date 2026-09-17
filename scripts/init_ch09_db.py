@@ -10,7 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.db.session import engine
 from scripts.wsl_helper import ensure_mysql_ready
 
 
@@ -141,8 +140,9 @@ async def init_ch09_db(
     statements = parse_ddl_statements(ddl_path)
 
     if engine_override is None:
+        from app.db.session import engine as default_engine
         ensure_mysql_ready()
-        target_engine = engine
+        target_engine = default_engine
         should_dispose = True
     else:
         target_engine = engine_override
