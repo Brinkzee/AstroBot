@@ -31,7 +31,7 @@ CREATE TABLE eval_runs (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '评估轮次主键',
   triggered_by ENUM('定时','手动') NOT NULL DEFAULT '定时' COMMENT '这轮怎么起的:定时任务,或某次改动后手动跑',
   dataset_size INT UNSIGNED    NOT NULL                COMMENT '这轮跑的评估集条数',
-  metrics      JSON            NOT NULL                COMMENT '各指标分数,如 {"recall_at_k":0.82,"mrr":0.71,"faithfulness":0.90}',
+  metrics      JSON            NOT NULL                COMMENT '各指标分数,如 recall_at_k=0.82, mrr=0.71, faithfulness=0.90',
   created_at   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '跑完落表时间',
   PRIMARY KEY (id),
   KEY idx_created_at (created_at)

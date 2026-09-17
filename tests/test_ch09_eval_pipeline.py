@@ -84,11 +84,15 @@ def test_run_eval_pipeline_cli(tmp_path):
     
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     
     result = subprocess.run(
         [sys.executable, str(script_path), "--samples", "3"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env
     )
     

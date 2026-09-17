@@ -6,6 +6,17 @@ from pathlib import Path
 # Add project root to sys.path if needed
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
+    except Exception:
+        pass
+
 from app.db.session import AsyncSessionLocal
 from app.services.eval.eval_pipeline import EvalPipelineService
 
@@ -23,6 +34,12 @@ async def main():
 
     service = EvalPipelineService()
     
+    try:
+        from scripts.wsl_helper import ensure_mysql_ready
+        ensure_mysql_ready(verbose=False)
+    except Exception:
+        pass
+
     async with AsyncSessionLocal() as db:
         run = await service.run_eval_round(
             db=db,

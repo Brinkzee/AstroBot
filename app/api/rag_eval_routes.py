@@ -290,6 +290,7 @@ async def resolve_faith_case(
 # ==============================================================================
 
 @router.post("/jobs")
+@router.post("/jobs/start")
 async def start_job(request: JobStartRequest):
     """触发安全白名单作业"""
     if request.job_name not in job_runner.get_whitelist():

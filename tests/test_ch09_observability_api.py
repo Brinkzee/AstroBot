@@ -85,3 +85,16 @@ async def test_observability_overview_when_reports_absent(mock_exists, MockEvalS
     assert data["calibration_block"]["present"] is False
     assert data["calibration_block"]["data"] is None
     assert "暂无置信度校准报表" in data["calibration_block"]["hint"]
+
+
+async def test_start_job_endpoint_aliases():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with patch.object(job_runner, "start_job", return_value={"job_id": "job_123", "status": "pending"}):
+            res1 = await ac.post("/api/jobs", json={"job_name": "cost-analysis"})
+            assert res1.status_code == 200
+            assert res1.json()["job_id"] == "job_123"
+
+            res2 = await ac.post("/api/jobs/start", json={"job_name": "cost-analysis"})
+            assert res2.status_code == 200
+            assert res2.json()["job_id"] == "job_123"
+

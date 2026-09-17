@@ -7,20 +7,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from app.db.session import AsyncSessionLocal
 from app.services.flywheel.pipeline import FlywheelPipeline
-
 async def main():
-    # Try to import get_llm
     try:
-        from app.services.chat_service import get_llm  # guessing where it might be
-        llm = get_llm()
+        from scripts.wsl_helper import ensure_mysql_ready
+        ensure_mysql_ready(verbose=False)
     except Exception:
-        # Fallback if get_llm is not available or mock is needed
-        try:
-            from langchain_openai import ChatOpenAI
-            from app.config import settings
-            llm = ChatOpenAI(model=settings.openai_api_model, api_key=settings.openai_api_key)
-        except:
-            llm = None
+        pass
+
+    try:
+        from app.llm import get_chat_model
+        llm = get_chat_model()
+    except Exception:
+        llm = None
         
     pipeline = FlywheelPipeline()
     

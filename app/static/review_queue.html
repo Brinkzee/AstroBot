@@ -334,7 +334,10 @@
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ job_name: jobName })
         });
-        if (!res.ok) throw new Error("Failed to start job");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Failed to start job (HTTP ${res.status})`);
+        }
         const data = await res.json();
         const jobId = data.job_id;
         

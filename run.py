@@ -146,6 +146,15 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
         print(f"    ❌ 第八章数据表与迁移失败: {e}")
         return False
 
+    # 2.3 第九章飞轮待审队列与评估记录数据表迁移
+    from scripts.init_ch09_db import init_ch09_db
+    try:
+        await init_ch09_db()
+        print("    ↳ 第九章飞轮待审队列与评估记录数据表迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第九章数据表与迁移失败: {e}")
+        return False
+
     # 3. 基础 FAQ 种子数据填充
     async with AsyncSessionLocal() as session:
         try:
