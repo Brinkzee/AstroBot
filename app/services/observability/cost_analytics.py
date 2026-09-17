@@ -83,22 +83,28 @@ class CostAnalyticsService:
                     host=settings.langfuse_host
                 )
                 
-                # Fetch traces (simplified for task requirements, we might need to paginate)
-                response = lf.client.trace.list(page=1)
+                page = 1
                 records = []
-                for trace in response.data:
-                    intent = trace.metadata.get("intent") if trace.metadata else "UNKNOWN"
-                    p_tokens = getattr(trace, "promptTokens", 0) or 0
-                    c_tokens = getattr(trace, "completionTokens", 0) or 0
-                    if getattr(trace, 'usage', None):
-                        p_tokens = trace.usage.get("promptTokens", p_tokens)
-                        c_tokens = trace.usage.get("completionTokens", c_tokens)
+                while True:
+                    response = lf.client.trace.list(page=page)
+                    for trace in response.data:
+                        intent = trace.metadata.get("intent") if trace.metadata else "UNKNOWN"
+                        p_tokens = getattr(trace, "promptTokens", 0) or 0
+                        c_tokens = getattr(trace, "completionTokens", 0) or 0
+                        if getattr(trace, 'usage', None):
+                            p_tokens = trace.usage.get("promptTokens", p_tokens)
+                            c_tokens = trace.usage.get("completionTokens", c_tokens)
 
-                    records.append({
-                        "intent": intent,
-                        "prompt_tokens": p_tokens,
-                        "completion_tokens": c_tokens,
-                    })
+                        records.append({
+                            "intent": intent,
+                            "prompt_tokens": p_tokens,
+                            "completion_tokens": c_tokens,
+                        })
+                    
+                    total_pages = getattr(getattr(response, "meta", None), "totalPages", 1) or 1
+                    if page >= total_pages:
+                        break
+                    page += 1
             except Exception as e:
                 logger.warning(f"Failed to fetch from Langfuse, using mock data. Error: {e}")
                 return self.fetch_and_generate_report(output_file=output_file, mock=True)

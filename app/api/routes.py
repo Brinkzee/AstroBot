@@ -169,18 +169,44 @@ async def chat_feedback(request: FeedbackRequest, db: AsyncSession = Depends(get
             if isinstance(tc, str):
                 try:
                     tc = json.loads(tc)
-                except:
-                    pass
+                except (json.JSONDecodeError, Exception) as e:
+                    import logging
+                    logging.warning(f"Failed to parse tool_calls: {e}")
             if isinstance(tc, list) and len(tc) > 0:
-                if tc[0].get("name") == "query_faq":
-                    # For a real system we would query tool_audit_logs or conversation state, 
-                    # but since the brief asks to attempt and then fallback to None if not found
-                    # we do our best. Actually, the easiest way is to query tool_audit_logs.
-                    pass
+                tool_name = tc[0].get("name")
+                if tool_name in ("query_faq", "search_knowledge"):
+                    stmt_audit = select(ToolAuditLog).where(
+                        ToolAuditLog.conversation_id == request.conversation_id,
+                        ToolAuditLog.tool_name.in_(["query_faq", "search_knowledge"])
+                    ).order_by(ToolAuditLog.id.desc()).limit(1)
+                    res_audit = await db.execute(stmt_audit)
+                    audit_log = res_audit.scalar()
+                    
+                    if audit_log and audit_log.result_summary:
+                        try:
+                            res_data = json.loads(audit_log.result_summary) if isinstance(audit_log.result_summary, str) else audit_log.result_summary
+                            if isinstance(res_data, dict) and "hits" in res_data:
+                                hits = res_data["hits"]
+                            elif isinstance(res_data, list):
+                                hits = res_data
+                            else:
+                                hits = []
 
-        # Since we might not have the chunks directly stored in messages unless we check workflow state. 
-        # Wait, the task says "Attempt to find the retrieval context from the last assistant message or conversation state... if NOT, retrieved_chunks = None."
-        # If we just leave retrieved_chunks = None, the test `test_user_feedback_without_retrieval_has_null_chunks` will pass. What about `test_user_feedback_thumbs_down_saves_to_pool`? It only checks source="user_feedback". 
+                            parsed_chunks = []
+                            for hit in hits:
+                                text = hit.get("text") or hit.get("content") or hit.get("answer") or ""
+                                score = hit.get("score") or hit.get("distance") or 0.0
+                                section = hit.get("section") or hit.get("section_path") or ""
+                                parsed_chunks.append({
+                                    "text": text[:300],
+                                    "score": float(score),
+                                    "section": section
+                                })
+                            if parsed_chunks:
+                                retrieved_chunks = parsed_chunks
+                        except (json.JSONDecodeError, Exception) as e:
+                            import logging
+                            logging.warning(f"Failed to parse tool result for chunks: {e}")
         
         entry = await record_low_confidence(
             db=db,

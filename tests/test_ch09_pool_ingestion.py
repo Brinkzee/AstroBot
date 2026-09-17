@@ -149,3 +149,51 @@ async def test_user_feedback_without_retrieval_has_null_chunks(test_app, memory_
     assert lcq.raw_question == "我没有检索知识"
     assert lcq.retrieved_chunks is None
 
+@pytest.mark.asyncio
+async def test_user_feedback_thumbs_down_with_retrieval(test_app, memory_db):
+    from app.models.tool_audit_log import ToolAuditLog
+    import json
+    conv = Conversation(id=301, user_id="u2")
+    msg_user = Message(conversation_id=301, role="user", content="退款政策是啥")
+    msg_ast = Message(
+        conversation_id=301, 
+        role="assistant", 
+        content="", 
+        tool_calls='[{"name": "query_faq", "arguments": {"query": "退款"}}]'
+    )
+    
+    audit_log = ToolAuditLog(
+        conversation_id=301,
+        tool_name="query_faq",
+        tool_source="builtin",
+        status="成功",
+        arguments={"query": "退款"},
+        result_summary=json.dumps([
+            {"answer": "我们的退款政策是...", "distance": 0.85, "section_path": "faq/refund"}
+        ]),
+        duration_ms=100
+    )
+    
+    memory_db.add_all([conv, msg_user, msg_ast, audit_log])
+    await memory_db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        resp = await client.post("/api/chat/feedback", json={
+            "conversation_id": 301,
+            "feedback_type": "down",
+            "query": "退款政策是啥"
+        })
+    
+    assert resp.status_code == 200
+    
+    stmt = select(LowConfidenceQuestion).where(LowConfidenceQuestion.conversation_id == 301)
+    res = await memory_db.execute(stmt)
+    lcq = res.scalar_one()
+    
+    assert lcq.source == "user_feedback"
+    assert lcq.raw_question == "退款政策是啥"
+    assert len(lcq.retrieved_chunks) == 1
+    assert lcq.retrieved_chunks[0]["text"] == "我们的退款政策是..."
+    assert lcq.retrieved_chunks[0]["score"] == 0.85
+    assert lcq.retrieved_chunks[0]["section"] == "faq/refund"
+
