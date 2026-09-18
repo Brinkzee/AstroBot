@@ -98,3 +98,17 @@ async def test_start_job_endpoint_aliases():
             assert res2.status_code == 200
             assert res2.json()["job_id"] == "job_123"
 
+
+async def test_get_job_logs_returns_status():
+    """验证 GET /api/jobs/{job_id}/logs 端点返回当前作业的 status 字段供前端判定完成"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with patch.object(job_runner, "get_job", return_value={"job_id": "job_999", "status": "completed"}):
+            with patch.object(job_runner, "get_logs", return_value=["line 1", "done"]):
+                res = await ac.get("/api/jobs/job_999/logs")
+                assert res.status_code == 200
+                data = res.json()
+                assert data["job_id"] == "job_999"
+                assert data["logs"] == ["line 1", "done"]
+                assert "status" in data
+                assert data["status"] == "completed"
+

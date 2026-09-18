@@ -236,6 +236,18 @@
   </div>
 
   <script>
+    function formatMetric(val, delta) {
+      if (val === null || val === undefined) return '-';
+      const numStr = Number(val).toFixed(4);
+      let icon = '─';
+      let cls = 'trend-flat';
+      if (typeof delta === 'number') {
+        if (delta > 0) { icon = '↗'; cls = 'trend-up'; }
+        else if (delta < 0) { icon = '↘'; cls = 'trend-down'; }
+      }
+      return `${numStr} <span class="${cls}">${icon}</span>`;
+    }
+
     async function loadOverview() {
       try {
         const res = await fetch('/api/observability/overview');
@@ -243,104 +255,154 @@
         const data = await res.json();
         
         // 1. Cost
-        if (!data.cost_by_intent || data.cost_by_intent.present === false) {
+        const costBlock = data.cost_block || data.cost_by_intent;
+        if (!costBlock || costBlock.present === false || !costBlock.data) {
           document.getElementById('cost-empty').style.display = 'block';
+          if (costBlock && costBlock.hint) document.getElementById('cost-empty').innerText = costBlock.hint;
           document.getElementById('cost-content').style.display = 'none';
         } else {
           document.getElementById('cost-empty').style.display = 'none';
           document.getElementById('cost-content').style.display = 'block';
-          const cost = data.cost_by_intent;
-          document.getElementById('cost-kpi-req').innerText = cost.kpis.total_requests;
-          document.getElementById('cost-kpi-tok').innerText = cost.kpis.total_tokens;
-          document.getElementById('cost-kpi-usd').innerText = `$${cost.kpis.total_cost_usd.toFixed(4)}`;
-          document.getElementById('cost-kpi-top').innerText = cost.kpis.top_1_expensive_intent || '-';
+          const cost = costBlock.data || costBlock;
+          const items = cost.items || cost.table || [];
+          const totalReq = cost.total_requests ?? (cost.kpis ? cost.kpis.total_requests : 0);
+          const totalTok = cost.total_tokens ?? (cost.kpis ? cost.kpis.total_tokens : 0);
+          const totalCost = cost.total_cost_usd ?? (cost.kpis ? cost.kpis.total_cost_usd : 0);
+          const topIntent = (items.length > 0 && items[0].intent) ? items[0].intent : ((cost.kpis && cost.kpis.top_1_expensive_intent) || '-');
+          
+          document.getElementById('cost-kpi-req').innerText = totalReq;
+          document.getElementById('cost-kpi-tok').innerText = Number(totalTok).toLocaleString();
+          document.getElementById('cost-kpi-usd').innerText = `$${Number(totalCost).toFixed(4)}`;
+          document.getElementById('cost-kpi-top').innerText = topIntent;
           
           let html = '';
-          (cost.table || []).forEach((row, i) => {
-            const isTop = i === 0 && row.intent === cost.kpis.top_1_expensive_intent;
+          items.forEach((row, i) => {
+            const isTop = i === 0 && row.intent === topIntent;
+            const calls = row.total_calls ?? row.calls ?? 0;
+            const pTok = Number(row.prompt_tokens ?? 0).toLocaleString();
+            const cTok = Number(row.completion_tokens ?? 0).toLocaleString();
+            const tTok = Number(row.total_tokens ?? 0).toLocaleString();
+            const costUsd = Number(row.estimated_cost_usd ?? 0).toFixed(4);
+            const pctVal = Number(row.cost_percentage ?? 0);
+            const pctStr = (pctVal > 1 ? pctVal : pctVal * 100).toFixed(1);
             html += `<tr class="${isTop ? 'highlight-row' : ''}">
               <td>${row.intent} ${isTop ? '<span class="badge badge-star">⭐ #1</span>' : ''}</td>
-              <td>${row.calls}</td>
-              <td>${row.prompt_tokens}</td>
-              <td>${row.completion_tokens}</td>
-              <td>${row.total_tokens}</td>
-              <td>$${row.estimated_cost_usd.toFixed(4)}</td>
-              <td>${(row.cost_percentage * 100).toFixed(1)}%</td>
+              <td>${calls}</td>
+              <td>${pTok}</td>
+              <td>${cTok}</td>
+              <td>${tTok}</td>
+              <td>$${costUsd}</td>
+              <td>${pctStr}%</td>
             </tr>`;
           });
           document.getElementById('cost-tbody').innerHTML = html;
         }
 
         // 2. Eval Trends
-        if (!data.evaluation_trends || data.evaluation_trends.present === false) {
+        const evalBlock = data.eval_trend_block || data.evaluation_trends;
+        const runs = (evalBlock && evalBlock.runs) ? evalBlock.runs : (evalBlock && evalBlock.recent_10_runs ? evalBlock.recent_10_runs : []);
+        if (!evalBlock || evalBlock.present === false || runs.length === 0) {
           document.getElementById('eval-empty').style.display = 'block';
+          if (evalBlock && evalBlock.hint) document.getElementById('eval-empty').innerText = evalBlock.hint;
           document.getElementById('eval-content').style.display = 'none';
           document.getElementById('eval-alert').style.display = 'none';
         } else {
           document.getElementById('eval-empty').style.display = 'none';
           document.getElementById('eval-content').style.display = 'block';
-          const trends = data.evaluation_trends;
-          document.getElementById('eval-alert').style.display = trends.alert_metric_dropped ? 'block' : 'none';
+          
+          let hasDrop = false;
+          runs.forEach(r => {
+            if (r.deltas) {
+              for (const k in r.deltas) {
+                if (!k.endsWith('_trend') && typeof r.deltas[k] === 'number' && r.deltas[k] < 0) {
+                  hasDrop = true;
+                }
+              }
+            }
+          });
+          document.getElementById('eval-alert').style.display = hasDrop ? 'block' : 'none';
           
           let html = '';
-          (trends.recent_10_runs || []).forEach((row) => {
+          runs.forEach(row => {
+            const runId = row.id ?? row.run_id ?? '-';
+            const trigger = row.triggered_by ?? row.trigger_type ?? '-';
+            const size = row.dataset_size ?? '-';
+            const m = row.metrics || {};
+            const d = row.deltas || {};
+            const time = row.created_at ?? row.run_time ?? '-';
             html += `<tr>
-              <td>${row.run_id}</td>
-              <td>${row.trigger_type}</td>
-              <td>${row.dataset_size}</td>
-              <td>${formatDelta(row.recall_at_3)}</td>
-              <td>${formatDelta(row.recall_at_5)}</td>
-              <td>${formatDelta(row.recall_at_10)}</td>
-              <td>${formatDelta(row.mrr)}</td>
-              <td>${formatDelta(row.faithfulness)}</td>
-              <td>${row.run_time}</td>
+              <td>#${runId}</td>
+              <td>${trigger}</td>
+              <td>${size}</td>
+              <td>${formatMetric(m.recall_at_3 ?? (row.recall_at_3 ? row.recall_at_3.value : null), d.recall_at_3 ?? (row.recall_at_3 ? row.recall_at_3.delta : null))}</td>
+              <td>${formatMetric(m.recall_at_5 ?? (row.recall_at_5 ? row.recall_at_5.value : null), d.recall_at_5 ?? (row.recall_at_5 ? row.recall_at_5.delta : null))}</td>
+              <td>${formatMetric(m.recall_at_10 ?? (row.recall_at_10 ? row.recall_at_10.value : null), d.recall_at_10 ?? (row.recall_at_10 ? row.recall_at_10.delta : null))}</td>
+              <td>${formatMetric(m.mrr ?? (row.mrr ? row.mrr.value : null), d.mrr ?? (row.mrr ? row.mrr.delta : null))}</td>
+              <td>${formatMetric(m.faithfulness ?? (row.faithfulness ? row.faithfulness.value : null), d.faithfulness ?? (row.faithfulness ? row.faithfulness.delta : null))}</td>
+              <td>${time}</td>
             </tr>`;
           });
           document.getElementById('eval-tbody').innerHTML = html;
         }
 
         // 3. Calibration
-        if (!data.confidence_calibration || data.confidence_calibration.present === false) {
+        const calibBlock = data.calibration_block || data.confidence_calibration;
+        if (!calibBlock || calibBlock.present === false || !calibBlock.data) {
           document.getElementById('calib-empty').style.display = 'block';
+          if (calibBlock && calibBlock.hint) document.getElementById('calib-empty').innerText = calibBlock.hint;
           document.getElementById('calib-content').style.display = 'none';
           document.getElementById('calib-alert').style.display = 'none';
         } else {
           document.getElementById('calib-empty').style.display = 'none';
           document.getElementById('calib-content').style.display = 'block';
-          const cal = data.confidence_calibration;
-          document.getElementById('calib-alert').style.display = cal.kpis.is_mismatched ? 'block' : 'none';
+          const cal = calibBlock.data || calibBlock;
+          const kpis = cal.kpis || cal;
+          const isMismatched = kpis.is_mismatched ?? kpis.threshold_mismatch ?? false;
+          const alertEl = document.getElementById('calib-alert');
+          alertEl.style.display = isMismatched ? 'block' : 'none';
+          if (isMismatched) {
+            const recVal = Number(kpis.recommended_threshold ?? 0).toFixed(2);
+            const actVal = Number(kpis.active_threshold ?? 0).toFixed(2);
+            alertEl.innerHTML = `⚠️ <strong>阈值不匹配</strong>：当前运行时配置阈值 (${actVal}) 与最新推荐阈值 (${recVal}) 不一致，建议回填更新配置文件。`;
+          }
           
-          document.getElementById('calib-kpi-rec').innerText = cal.kpis.recommended_threshold.toFixed(2);
-          document.getElementById('calib-kpi-j').innerText = cal.kpis.best_youden_j.toFixed(4);
-          document.getElementById('calib-kpi-samples').innerText = cal.kpis.evaluated_samples;
-          document.getElementById('calib-kpi-active').innerText = cal.kpis.active_threshold.toFixed(2);
+          document.getElementById('calib-kpi-rec').innerText = Number(kpis.recommended_threshold ?? 0).toFixed(2);
+          document.getElementById('calib-kpi-j').innerText = Number(kpis.best_youden_j ?? 0).toFixed(4);
+          document.getElementById('calib-kpi-samples').innerText = kpis.sample_count ?? kpis.evaluated_samples ?? 0;
+          document.getElementById('calib-kpi-active').innerText = Number(kpis.active_threshold ?? 0).toFixed(2);
           
           let html = '';
-          (cal.grid_scan || []).forEach((row) => {
-            html += `<tr>
-              <td>${row.threshold.toFixed(2)}</td>
-              <td>${row.tpr.toFixed(4)}</td>
-              <td>${row.fpr.toFixed(4)}</td>
-              <td>${row.youden_j.toFixed(4)}</td>
-              <td>${row.f1.toFixed(4)}</td>
-              <td>${row.accuracy.toFixed(4)}</td>
+          if (cal.grid_scan && cal.grid_scan.length > 0) {
+            cal.grid_scan.forEach((row) => {
+              html += `<tr>
+                <td>${Number(row.threshold).toFixed(2)}</td>
+                <td>${Number(row.tpr).toFixed(4)}</td>
+                <td>${Number(row.fpr).toFixed(4)}</td>
+                <td>${Number(row.youden_j).toFixed(4)}</td>
+                <td>${Number(row.f1).toFixed(4)}</td>
+                <td>${Number(row.accuracy ?? row.precision ?? 0).toFixed(4)}</td>
+              </tr>`;
+            });
+          } else if (cal.metrics) {
+            const tpr = cal.metrics.sensitivity ?? cal.metrics.recall ?? 0;
+            const fpr = (cal.metrics.specificity !== undefined) ? 1 - cal.metrics.specificity : 0;
+            const youden = kpis.best_youden_j ?? (tpr - fpr);
+            const f1 = kpis.best_f1 ?? 0;
+            const prec = cal.metrics.precision ?? 0;
+            html = `<tr>
+              <td><strong>${Number(kpis.recommended_threshold).toFixed(2)} (最优推荐)</strong></td>
+              <td>${Number(tpr).toFixed(4)}</td>
+              <td>${Number(fpr).toFixed(4)}</td>
+              <td>${Number(youden).toFixed(4)}</td>
+              <td>${Number(f1).toFixed(4)}</td>
+              <td>${Number(prec).toFixed(4)}</td>
             </tr>`;
-          });
+          }
           document.getElementById('calib-tbody').innerHTML = html;
         }
       } catch(e) {
         console.error("Load overview failed", e);
       }
-    }
-
-    function formatDelta(valObj) {
-      if (!valObj) return '-';
-      const val = (valObj.value !== null && valObj.value !== undefined) ? valObj.value.toFixed(4) : '-';
-      let icon = '─';
-      let cls = 'trend-flat';
-      if (valObj.delta > 0) { icon = '↗'; cls = 'trend-up'; }
-      else if (valObj.delta < 0) { icon = '↘'; cls = 'trend-down'; }
-      return `${val} <span class="${cls}">${icon}</span>`;
     }
 
     let pollTimer = null;
@@ -349,10 +411,15 @@
       const logs = document.getElementById('job-modal-logs');
       const closeBtn = document.getElementById('job-modal-close');
       const title = document.getElementById('job-modal-title');
+      const statusBadge = document.getElementById('job-modal-status');
       
       modal.classList.add('active');
       closeBtn.disabled = true;
       closeBtn.innerText = '等待完成';
+      if (statusBadge) {
+        statusBadge.innerText = 'Running';
+        statusBadge.className = 'badge';
+      }
       logs.innerText = `[${jobName}] Starting job...\n`;
       title.innerText = `Job: ${jobName}`;
       
@@ -369,6 +436,7 @@
         const data = await res.json();
         const jobId = data.job_id;
         
+        if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(async () => {
           try {
             const logRes = await fetch(`/api/jobs/${jobId}/logs`);
@@ -376,23 +444,42 @@
             const logData = await logRes.json();
             logs.innerText = (logData.logs || []).join('\n');
             logs.scrollTop = logs.scrollHeight;
-            if (logData.status === 'completed' || logData.status === 'failed') {
-              clearInterval(pollTimer);
-              closeBtn.disabled = false;
-              closeBtn.innerText = '关闭并刷新';
-              document.getElementById('job-modal-status').innerText = logData.status === 'completed' ? 'Done' : 'Failed';
+            
+            let status = logData.status;
+            if (!status) {
+              const statusRes = await fetch(`/api/jobs/${jobId}`);
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                status = statusData.status;
+              }
             }
-          } catch(e) {}
+            
+            if (status === 'completed' || status === 'failed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              closeBtn.disabled = false;
+              closeBtn.innerText = status === 'completed' ? '完成' : '失败 (关闭)';
+              if (statusBadge) {
+                statusBadge.innerText = status === 'completed' ? 'Done' : 'Failed';
+              }
+            }
+          } catch(e) {
+            console.error("Job polling error", e);
+          }
         }, 1000);
       } catch(e) {
         logs.innerText += `\nError: ${e.message}`;
         closeBtn.disabled = false;
         closeBtn.innerText = '关闭';
+        if (statusBadge) statusBadge.innerText = 'Error';
       }
     }
 
     function closeJobModal() {
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
       document.getElementById('job-modal').classList.remove('active');
       loadOverview();
     }

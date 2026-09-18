@@ -320,11 +320,14 @@ async def get_job_logs(
     job_id: str,
     tail: Optional[int] = Query(None, ge=1, le=2000, description="读取最近 N 行日志"),
 ):
-    """获取作业运行输出日志"""
-    logs = job_runner.get_logs(job_id, tail_lines=tail)
-    if logs is None:
+    """获取作业运行输出日志及当前执行状态"""
+    job = job_runner.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail=f"作业不存在: {job_id}")
+    logs = job_runner.get_logs(job_id, tail_lines=tail)
     return {
         "job_id": job_id,
-        "logs": logs,
+        "status": job["status"],
+        "logs": logs or [],
     }
+

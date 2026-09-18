@@ -341,6 +341,7 @@
         const data = await res.json();
         const jobId = data.job_id;
         
+        if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(async () => {
           try {
             const logRes = await fetch(`/api/jobs/${jobId}/logs`);
@@ -348,23 +349,42 @@
             const logData = await logRes.json();
             logs.innerText = (logData.logs || []).join('\n');
             logs.scrollTop = logs.scrollHeight;
-            if (logData.status === 'completed' || logData.status === 'failed') {
-              clearInterval(pollTimer);
-              closeBtn.disabled = false;
-              closeBtn.innerText = '关闭并刷新';
-              document.getElementById('job-modal-status').innerText = logData.status === 'completed' ? 'Done' : 'Failed';
+            
+            let status = logData.status;
+            if (!status) {
+              const statusRes = await fetch(`/api/jobs/${jobId}`);
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                status = statusData.status;
+              }
             }
-          } catch(e) {}
+
+            if (status === 'completed' || status === 'failed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              closeBtn.disabled = false;
+              closeBtn.innerText = status === 'completed' ? '完成' : '失败 (关闭)';
+              const statusEl = document.getElementById('job-modal-status');
+              if (statusEl) statusEl.innerText = status === 'completed' ? 'Done' : 'Failed';
+            }
+          } catch(e) {
+            console.error("Job polling error", e);
+          }
         }, 1000);
       } catch(e) {
         logs.innerText += `\nError: ${e.message}`;
         closeBtn.disabled = false;
         closeBtn.innerText = '关闭';
+        const statusEl = document.getElementById('job-modal-status');
+        if (statusEl) statusEl.innerText = 'Error';
       }
     }
 
     function closeJobModal() {
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
       document.getElementById('job-modal').classList.remove('active');
       loadQueue();
     }
