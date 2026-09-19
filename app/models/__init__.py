@@ -28,6 +28,9 @@ from app.models.eval_run import (
     EvalRun,
     TriggeredBy,
 )
+from app.models.topic_classification import (
+    TopicClassification,
+)
 
 __all__ = [
     "Conversation",
@@ -50,4 +53,5 @@ __all__ = [
     "ReviewStatus",
     "EvalRun",
     "TriggeredBy",
+    "TopicClassification",
 ]

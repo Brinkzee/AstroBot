@@ -155,6 +155,15 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
         print(f"    ❌ 第九章数据表与迁移失败: {e}")
         return False
 
+    # 2.4 第十章多标签主题分类数据表 (topic_classifications) 迁移
+    from scripts.init_ch10_db import init_ch10_db
+    try:
+        await init_ch10_db(engine_override=engine)
+        print("    ↳ 第十章多标签主题分类数据表 (topic_classifications) 迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第十章数据表与迁移失败: {e}")
+        return False
+
     # 3. 基础 FAQ 种子数据填充
     async with AsyncSessionLocal() as session:
         try:

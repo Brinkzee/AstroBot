@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from sqlalchemy import BigInteger, Integer, Text, Enum, DateTime, ForeignKey, JSON, func
 from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
@@ -11,6 +11,7 @@ from app.db.session import Base
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
     from app.models.review_queue import ReviewQueue
+    from app.models.topic_classification import TopicClassification
 
 
 class LowConfidenceSource(str, enum.Enum):
@@ -71,7 +72,7 @@ class LowConfidenceQuestion(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         server_default=func.now(),
         nullable=False,
         index=True,
@@ -86,6 +87,12 @@ class LowConfidenceQuestion(Base):
         "ReviewQueue",
         back_populates="raw_questions",
         lazy="select",
+    )
+    topic_classification: Mapped[Optional["TopicClassification"]] = relationship(
+        "TopicClassification",
+        back_populates="question",
+        uselist=False,
+        lazy="selectin",
     )
 
 
