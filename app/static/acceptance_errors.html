@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 错例与错因账本</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          📒 错例深度剖析与三向记账账本
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          多标签分类错因三向解耦（漏打、多打、错位）与数学闭环平衡验证，逐条复核测试集错例。
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" onclick="runAcceptanceJob('eval-ch10', { heavy: true, onComplete: loadErrors })">
+          ⚡ 重新分析错例 (eval-ch10)
+        </button>
+        <button class="btn-secondary" onclick="loadErrors()">
+          🔄 刷新数据
+        </button>
+      </div>
+    </div>
+
+    <!-- Empty State if error report missing -->
+    <div id="errors-empty" class="empty-state" style="display:none;">
+      <h3>错例分析报告尚未生成</h3>
+      <p style="margin:8px 0 16px; color:var(--text-muted);">
+        请点击右上角「重新分析错例」或运行 <code>make eval-ch10</code> 生成错例账本。
+      </p>
+      <button class="btn-primary" onclick="runAcceptanceJob('eval-ch10', { heavy: true, onComplete: loadErrors })">
+        ⚡ 立即执行 make eval-ch10
+      </button>
+    </div>
+
+    <div id="errors-content">
+      <!-- 1. 3-Way Error Accounting & Mathematical Closed Loop Hero Card -->
+      <div class="section-block" style="border-left: 6px solid var(--primary);">
+        <div class="section-header">
+          <div>
+            <div class="section-title">⚖️ 错因三向记账与数学闭环平衡卡 (3-Way Error Accounting)</div>
+            <div class="section-desc">
+              将多标签分类误差解耦为三向：<strong>漏打 (Under-tag)</strong>、<strong>多打 (Over-tag)</strong>、<strong>错位 (Displaced)</strong>
+            </div>
+          </div>
+          <div id="accounting-balanced-badge">
+            <span class="badge badge-pass" style="font-size:13px; padding:4px 12px;">✓ 数学闭环平衡</span>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">漏打笔数 (Under-tag)</div>
+            <div class="kpi-value" id="acct-under" style="color:var(--warning-dark);">0</div>
+            <div class="kpi-sub">应打未打 (FN 独占分量)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">多打笔数 (Over-tag)</div>
+            <div class="kpi-value" id="acct-over" style="color:var(--danger-dark);">0</div>
+            <div class="kpi-sub">不该打而打 (FP 独占分量)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">错位笔数 (Displaced)</div>
+            <div class="kpi-value" id="acct-displaced" style="color:var(--purple);">0</div>
+            <div class="kpi-sub">打偏到近邻 (每笔消耗 1 FP + 1 FN)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">测试集总错例样本数</div>
+            <div class="kpi-value" id="acct-total-samples">0</div>
+            <div class="kpi-sub">存在任何误判的提问</div>
+          </div>
+        </div>
+
+        <!-- Mathematical Closed Loop Formula Banner -->
+        <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:14px 18px; margin-top:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+              <span style="font-weight:700; color:#0f172a; font-size:14px;">数学闭环平衡公式:</span>
+              <code style="background:#e2e8f0; padding:3px 8px; border-radius:4px; margin-left:8px; font-weight:bold; color:var(--primary);">
+                漏打 + 多打 + 2 × 错位 == 混淆矩阵 (FP + FN)
+              </code>
+            </div>
+            <div id="formula-check-result" style="font-weight:600; color:var(--success-dark); font-size:13.5px;">
+              验证: 0 + 0 + 2 × 0 = 0 (严格平衡)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Error Samples Detailed List & Filter -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">🔍 错例逐条标准/预测对照列表</div>
+            <div class="section-desc">逐条排查客户提问原文、真实标签与模型预测的多标签差异</div>
+          </div>
+          <!-- Filter Tabs -->
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn-secondary btn-small active-filter" data-filter="all" onclick="filterSamples('all')">
+              全部错例 (<span id="count-filter-all">0</span>)
+            </button>
+            <button class="btn-secondary btn-small" data-filter="under" onclick="filterSamples('under')">
+              仅漏打 (<span id="count-filter-under">0</span>)
+            </button>
+            <button class="btn-secondary btn-small" data-filter="over" onclick="filterSamples('over')">
+              仅多打 (<span id="count-filter-over">0</span>)
+            </button>
+            <button class="btn-secondary btn-small" data-filter="displaced" onclick="filterSamples('displaced')">
+              含错位 (<span id="count-filter-displaced">0</span>)
+            </button>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px;">#</th>
+              <th>客户提问原文 (Text)</th>
+              <th>标准权威标签 (Ground Truth)</th>
+              <th>模型预测标签 (Predicted)</th>
+              <th>错因归类</th>
+              <th>近邻摩擦与边界说明</th>
+            </tr>
+          </thead>
+          <tbody id="error-samples-tbody">
+            <!-- Injected via JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    let allSamples = [];
+    let currentFilter = 'all';
+
+    async function loadErrors() {
+      try {
+        const data = await fetchAcceptanceErrors();
+        if (!data.present) {
+          document.getElementById('errors-empty').style.display = 'block';
+          document.getElementById('errors-content').style.display = 'none';
+          return;
+        }
+
+        document.getElementById('errors-empty').style.display = 'none';
+        document.getElementById('errors-content').style.display = 'block';
+
+        const acct = data.error_accounting || {};
+        const under = acct.under_tag_count || 0;
+        const over = acct.over_tag_count || 0;
+        const displaced = acct.displaced_count || 0;
+        const totalPenalty = acct.total_penalty || (under + over + 2 * displaced);
+        const cmSum = acct.confusion_matrix_sum || totalPenalty;
+        const isBalanced = acct.balanced === true;
+
+        document.getElementById('acct-under').innerText = under;
+        document.getElementById('acct-over').innerText = over;
+        document.getElementById('acct-displaced').innerText = displaced;
+        document.getElementById('acct-total-samples').innerText = data.total_error_samples || (data.error_samples || []).length;
+
+        // Balance badge & formula
+        const badgeEl = document.getElementById('accounting-balanced-badge');
+        const checkEl = document.getElementById('formula-check-result');
+
+        if (isBalanced) {
+          badgeEl.innerHTML = '<span class="badge badge-pass" style="font-size:13px; padding:4px 12px;">✓ 数学闭环平衡 (Balanced)</span>';
+          checkEl.innerHTML = `✅ 验证通过: ${under} + ${over} + 2 × ${displaced} = ${totalPenalty} (与混淆和 ${cmSum} 严格相等)`;
+          checkEl.style.color = 'var(--success-dark)';
+        } else {
+          badgeEl.innerHTML = '<span class="badge badge-fail" style="font-size:13px; padding:4px 12px;">✕ 记账不平衡 (Unbalanced)</span>';
+          checkEl.innerHTML = `❌ 验证不平: 惩罚总和 ${totalPenalty} != 混淆和 ${cmSum}`;
+          checkEl.style.color = 'var(--danger-dark)';
+        }
+
+        // Samples
+        allSamples = data.error_samples || [];
+        updateFilterCounts();
+        renderSamplesTable();
+
+      } catch (err) {
+        console.error("加载错例账本失败", err);
+        showToast("加载错例账本失败: " + err.message, "error");
+      }
+    }
+
+    function updateFilterCounts() {
+      let underCount = 0;
+      let overCount = 0;
+      let displacedCount = 0;
+
+      allSamples.forEach((s) => {
+        const type = s.error_type || s.type || '';
+        if (type.includes('under') || s.under_tags?.length > 0) underCount++;
+        if (type.includes('over') || s.over_tags?.length > 0) overCount++;
+        if (type.includes('displaced') || s.displaced_tags?.length > 0) displacedCount++;
+      });
+
+      document.getElementById('count-filter-all').innerText = allSamples.length;
+      document.getElementById('count-filter-under').innerText = underCount;
+      document.getElementById('count-filter-over').innerText = overCount;
+      document.getElementById('count-filter-displaced').innerText = displacedCount;
+    }
+
+    function filterSamples(filterKey) {
+      currentFilter = filterKey;
+      document.querySelectorAll('[data-filter]').forEach((btn) => {
+        if (btn.getAttribute('data-filter') === filterKey) {
+          btn.style.background = 'var(--primary)';
+          btn.style.color = '#fff';
+        } else {
+          btn.style.background = '#fff';
+          btn.style.color = 'var(--text-main)';
+        }
+      });
+      renderSamplesTable();
+    }
+
+    function renderSamplesTable() {
+      const tbody = document.getElementById('error-samples-tbody');
+      let filtered = allSamples;
+
+      if (currentFilter === 'under') {
+        filtered = allSamples.filter((s) => (s.error_type || '').includes('under') || s.under_tags?.length > 0);
+      } else if (currentFilter === 'over') {
+        filtered = allSamples.filter((s) => (s.error_type || '').includes('over') || s.over_tags?.length > 0);
+      } else if (currentFilter === 'displaced') {
+        filtered = allSamples.filter((s) => (s.error_type || '').includes('displaced') || s.displaced_tags?.length > 0);
+      }
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">暂无符合筛选条件的错例记录</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((s, idx) => {
+        const gtLabels = s.ground_truth || s.true_labels || [];
+        const predLabels = s.predicted || s.pred_labels || [];
+        const errType = s.error_type || '综合误差';
+        const boundaryNote = s.boundary_note || s.note || '近邻摩擦或多诉求弱信号';
+
+        const gtHtml = gtLabels.map((l) => `<span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;">${l}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无标签)</span>';
+        const predHtml = predLabels.map((l) => `<span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">${l}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无预测)</span>';
+
+        return `
+          <tr>
+            <td>${idx + 1}</td>
+            <td style="font-weight:500;max-width:320px;word-break:break-all;">
+              “${s.text}”
+            </td>
+            <td>${gtHtml}</td>
+            <td>${predHtml}</td>
+            <td>
+              <span class="badge badge-fail">${errType}</span>
+            </td>
+            <td style="font-size:12.5px;color:#475569;max-width:300px;">
+              ${boundaryNote}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    window.onload = loadErrors;
+  </script>
+</body>
+</html>

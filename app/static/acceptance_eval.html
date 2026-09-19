@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 评测深度剖析</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          🔬 评测深度剖析与 17 类红线达标看板
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          基于测试集 (test 161) 真实测评，呈现 Micro vs Macro 差异、分档 F1 红线达成、9 候选线扫描与混淆矩阵。
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" onclick="runAcceptanceJob('eval-ch10', { heavy: true, onComplete: loadEval })">
+          ⚡ 重新评测 (eval-ch10)
+        </button>
+        <button class="btn-secondary" onclick="loadEval()">
+          🔄 刷新数据
+        </button>
+      </div>
+    </div>
+
+    <!-- Empty State if report missing -->
+    <div id="eval-empty" class="empty-state" style="display:none;">
+      <h3>评测报告尚未生成</h3>
+      <p style="margin:8px 0 16px; color:var(--text-muted);">
+        请点击右上角「重新评测」或运行 <code>make eval-ch10</code> 生成评测报告。
+      </p>
+      <button class="btn-primary" onclick="runAcceptanceJob('eval-ch10', { heavy: true, onComplete: loadEval })">
+        ⚡ 立即执行 make eval-ch10
+      </button>
+    </div>
+
+    <div id="eval-content">
+      <!-- 1. Micro vs Macro KPI Card -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">📊 宏微平均对照 (Micro vs Macro)</div>
+            <div class="section-desc">宏平均（Macro）无偏重对待长尾类目，微平均（Micro）衡量全量样本总精度</div>
+          </div>
+        </div>
+        <div class="kpi-grid">
+          <div class="kpi-card" style="border-left: 4px solid var(--primary);">
+            <div class="kpi-title">Macro F1 (宏平均)</div>
+            <div class="kpi-value" id="kpi-macro-f1">-</div>
+            <div class="kpi-sub">17 类目均等权重</div>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid var(--success);">
+            <div class="kpi-title">Micro F1 (微平均)</div>
+            <div class="kpi-value" id="kpi-micro-f1" style="color:var(--success-dark);">-</div>
+            <div class="kpi-sub">全样本标签汇总计算</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Macro Precision / Recall</div>
+            <div class="kpi-value" id="kpi-macro-pr" style="font-size:20px;">-</div>
+            <div class="kpi-sub">P / R 均衡度</div>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid var(--warning);">
+            <div class="kpi-title">判定阈值 (Optimal Threshold)</div>
+            <div class="kpi-value" id="kpi-threshold" style="color:var(--warning-dark);">-</div>
+            <div class="kpi-sub">9 候选线扫描最优解</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Single Query Interactive Demo Card -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">🎯 单句试分类实时交互演示</div>
+            <div class="section-desc">演示「17 类各自独立过线，过几个打几个」，体验多诉求同时识别效果</div>
+          </div>
+        </div>
+        <div id="interactive-demo-container"></div>
+      </div>
+
+      <!-- 3. 17-Class Detailed Metrics Table -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">📋 17 类分档考核红线与指标详表</div>
+            <div class="section-desc">严档 (Strict ≥ 0.90)、中档 (Medium ≥ 0.80)、宽档 (Loose 不设考核，画 —)</div>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>类目名称</th>
+              <th>考核分档</th>
+              <th>Precision</th>
+              <th>Recall</th>
+              <th>F1 Score</th>
+              <th>Support (测试样本)</th>
+              <th>红线要求</th>
+              <th>达标状态</th>
+            </tr>
+          </thead>
+          <tbody id="per-class-tbody">
+            <!-- Injected via JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 4. 9 Candidate Lines Grid Scan -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">📉 验证集 9 候选线网格扫描对比 (0.20 ~ 0.60)</div>
+            <div class="section-desc">纯 HTML/CSS 柱状对比，验证最优判定阈值的复现与稳定性</div>
+          </div>
+          <button class="btn-secondary btn-small" onclick="runAcceptanceJob('replay-threshold', { onComplete: loadEval })">
+            ⚡ 重新扫描 (replay-threshold)
+          </button>
+        </div>
+        <div id="threshold-scan-bars" class="bar-chart-container">
+          <!-- Injected via JS -->
+        </div>
+      </div>
+
+      <!-- 5. 17-Class 2x2 Confusion Matrices -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">🧱 17 类 2x2 混淆矩阵色卡 (Confusion Matrices)</div>
+            <div class="section-desc">纯 HTML/CSS 栅格色卡：绿色代表正确分类 (TP / TN)，红色代表误差 (FP / FN)</div>
+          </div>
+        </div>
+        <div id="confusion-matrices-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:18px;">
+          <!-- Injected via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    async function loadEval() {
+      try {
+        const data = await fetchAcceptanceEval();
+        if (!data.present) {
+          document.getElementById('eval-empty').style.display = 'block';
+          document.getElementById('eval-content').style.display = 'none';
+          return;
+        }
+
+        document.getElementById('eval-empty').style.display = 'none';
+        document.getElementById('eval-content').style.display = 'block';
+
+        const summary = data.summary || {};
+        const thresh = data.threshold || 0.45;
+
+        // 1. KPIs
+        document.getElementById('kpi-macro-f1').innerText = Number(summary.macro_f1 || 0).toFixed(4);
+        document.getElementById('kpi-micro-f1').innerText = Number(summary.micro_f1 || 0).toFixed(4);
+        const macroP = Number(summary.macro_precision || 0).toFixed(4);
+        const macroR = Number(summary.macro_recall || 0).toFixed(4);
+        document.getElementById('kpi-macro-pr').innerText = `${macroP} / ${macroR}`;
+        document.getElementById('kpi-threshold').innerText = Number(thresh).toFixed(2);
+
+        // 2. Init Interactive Single Query Demo
+        initClassifyDemo('interactive-demo-container', '买大了想退');
+
+        // 3. 17-Class Table
+        const perClass = data.per_class || [];
+        const tbody = document.getElementById('per-class-tbody');
+        tbody.innerHTML = perClass.map((row) => {
+          const tier = row.tier || 'loose';
+          let tierBadge = '<span class="badge tier-loose">宽 (Loose)</span>';
+          let redlineText = '—';
+          let statusBadge = '<span style="color:var(--text-muted);font-weight:bold;">—</span>';
+
+          if (tier === 'strict') {
+            tierBadge = '<span class="badge tier-strict">严 (Strict)</span>';
+            redlineText = 'F1 ≥ 0.90';
+            statusBadge = row.passed ? '<span class="badge badge-pass">✓ 达标</span>' : '<span class="badge badge-fail">✕ 未达</span>';
+          } else if (tier === 'medium') {
+            tierBadge = '<span class="badge tier-medium">中 (Medium)</span>';
+            redlineText = 'F1 ≥ 0.80';
+            statusBadge = row.passed ? '<span class="badge badge-pass">✓ 达标</span>' : '<span class="badge badge-fail">✕ 未达</span>';
+          }
+
+          const f1Val = Number(row.f1 || 0).toFixed(4);
+          const pVal = Number(row.precision || 0).toFixed(4);
+          const rVal = Number(row.recall || 0).toFixed(4);
+
+          return `
+            <tr>
+              <td style="font-weight:600;">${row.category}</td>
+              <td>${tierBadge}</td>
+              <td>${pVal}</td>
+              <td>${rVal}</td>
+              <td><strong style="color:${row.passed ? 'var(--success-dark)' : '#0f172a'};">${f1Val}</strong></td>
+              <td>${row.support || 0}</td>
+              <td><code>${redlineText}</code></td>
+              <td>${statusBadge}</td>
+            </tr>
+          `;
+        }).join('');
+
+        // 4. 9 Candidate Lines Grid Scan
+        const candidateScores = data.candidate_scores || {};
+        const scanBarsEl = document.getElementById('threshold-scan-bars');
+        const sortedThresh = Object.entries(candidateScores).sort((a, b) => Number(a[0]) - Number(b[0]));
+
+        if (sortedThresh.length === 0) {
+          scanBarsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">暂无候选线扫描数据，请点击「重新扫描」。</div>';
+        } else {
+          // Find max score for relative width
+          const maxF1 = Math.max(...sortedThresh.map(x => Number(x[1])), 0.1);
+          scanBarsEl.innerHTML = sortedThresh.map(([tStr, f1Val]) => {
+            const isOpt = Math.abs(Number(tStr) - Number(thresh)) < 0.001;
+            const pct = Math.max(5, (Number(f1Val) / maxF1) * 100).toFixed(1);
+
+            return `
+              <div class="bar-chart-row">
+                <div class="bar-label" style="${isOpt ? 'color:var(--primary);font-weight:700;' : ''}">
+                  ${isOpt ? '⭐ ' : ''}T = ${Number(tStr).toFixed(2)}
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill ${isOpt ? 'top3' : ''}" style="width:${pct}%;"></div>
+                </div>
+                <div class="bar-meta">
+                  Macro F1: <strong>${Number(f1Val).toFixed(4)}</strong>
+                  ${isOpt ? '<span class="badge badge-pass" style="margin-left:6px;">最优推荐</span>' : ''}
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // 5. 17-Class Confusion Matrices
+        const cms = data.confusion_matrices || {};
+        const cmGridEl = document.getElementById('confusion-matrices-grid');
+        const cmKeys = Object.keys(cms);
+
+        if (cmKeys.length === 0) {
+          cmGridEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">暂无混淆矩阵数据。</div>';
+        } else {
+          cmGridEl.innerHTML = cmKeys.map((cat) => {
+            const m = cms[cat] || {};
+            const tp = m.tp || 0;
+            const fp = m.fp || 0;
+            const fn = m.fn || 0;
+            const tn = m.tn || 0;
+
+            return `
+              <div style="background:var(--bg-color);border:1px solid var(--border-color);border-radius:10px;padding:16px;">
+                <div style="font-weight:700;font-size:15px;color:#0f172a;margin-bottom:10px;display:flex;justify-content:space-between;">
+                  <span>${cat}</span>
+                  <span style="font-size:12px;color:var(--text-muted);">2×2 矩阵</span>
+                </div>
+                <div class="confusion-matrix-grid" style="margin:0 auto;">
+                  <div class="cm-cell tp">
+                    <div class="cm-label">TP (真正)</div>
+                    <div class="cm-val">${tp}</div>
+                  </div>
+                  <div class="cm-cell fp">
+                    <div class="cm-label">FP (假正/多打)</div>
+                    <div class="cm-val">${fp}</div>
+                  </div>
+                  <div class="cm-cell fn">
+                    <div class="cm-label">FN (假负/漏打)</div>
+                    <div class="cm-val">${fn}</div>
+                  </div>
+                  <div class="cm-cell tn">
+                    <div class="cm-label">TN (真负)</div>
+                    <div class="cm-val">${tn}</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+      } catch (err) {
+        console.error("加载评测深剖失败", err);
+        showToast("加载评测深剖失败: " + err.message, "error");
+      }
+    }
+
+    window.onload = loadEval;
+  </script>
+</body>
+</html>

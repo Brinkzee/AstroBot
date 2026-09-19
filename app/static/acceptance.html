@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 实证验收总览与九项闸门</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          🛡️ 第十章实证验收总览与九项闸门
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          9 项严格实证硬闸监控，覆盖零泄漏、分档 F1 红线、记账平衡、阈值扫描、ONNX 一致性与白名单作业安全。
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" onclick="runAcceptanceJob('eval-ch10', { heavy: true, onComplete: loadOverview })">
+          ⚡ 运行全量评测 (eval-ch10)
+        </button>
+        <button class="btn-secondary" onclick="loadOverview()">
+          🔄 重新检测
+        </button>
+      </div>
+    </div>
+
+    <!-- Top Status Grid: Total Progress & Classifier Live Probe -->
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:24px;">
+      <!-- Total Gates Progress Card -->
+      <div class="section-block" style="margin-bottom:0;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:13px; color:var(--text-muted); font-weight:500;">实证闸门达标总览</div>
+            <div style="font-size:32px; font-weight:800; color:#0f172a; display:flex; align-items:baseline; gap:8px; margin:6px 0;">
+              <span id="overview-passed-count" style="color:var(--primary);">0</span>
+              <span style="font-size:18px; color:var(--text-muted);">/ 9 项通过</span>
+            </div>
+          </div>
+          <div id="overview-status-badge">
+            <span class="badge badge-missing" style="font-size:14px; padding:6px 14px;">检测中...</span>
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div id="overview-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <div id="overview-hint" style="font-size:12.5px; color:var(--text-muted); margin-top:6px;">
+          正在读取九项闸门实时状态...
+        </div>
+      </div>
+
+      <!-- Classifier Live Probe Card -->
+      <div class="section-block" style="margin-bottom:0;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:13px; color:var(--text-muted); font-weight:500;">独立推理服务 (:8110) 状态探针</div>
+            <div style="font-size:24px; font-weight:700; color:#0f172a; margin:6px 0; display:flex; align-items:center; gap:10px;">
+              <span id="service-pulse" class="pulse-dot offline"></span>
+              <span id="service-status-text">探测中...</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-secondary btn-small" onclick="runAcceptanceJob('classifier-up', { onComplete: loadOverview })">
+              🚀 启动服务
+            </button>
+            <button class="btn-secondary btn-small" onclick="runAcceptanceJob('classifier-down', { onComplete: loadOverview })">
+              🛑 停止服务
+            </button>
+          </div>
+        </div>
+        <div id="service-details-box" style="font-size:12.5px; color:#475569; background:#f8fafc; padding:10px; border-radius:6px; margin-top:8px; border:1px solid var(--border-color);">
+          服务探活地址: <code>http://127.0.0.1:8110/healthz</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Nine Empirical Gates Grid -->
+    <div class="section-block">
+      <div class="section-header">
+        <div>
+          <div class="section-title">九项实证独立验收闸门</div>
+          <div class="section-desc">每个闸门对应一个核心技术约束，支持就地重跑与独立复算</div>
+        </div>
+      </div>
+      <div id="gates-grid" class="gates-grid">
+        <!-- Injected via JS -->
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    async function loadOverview() {
+      try {
+        const data = await fetchAcceptanceOverview();
+        const passed = data.passed_count || 0;
+        const total = data.total_count || 9;
+        const pct = Math.round((passed / total) * 100);
+
+        document.getElementById('overview-passed-count').innerText = passed;
+        document.getElementById('overview-progress-fill').style.width = pct + '%';
+        
+        const badgeEl = document.getElementById('overview-status-badge');
+        const hintEl = document.getElementById('overview-hint');
+
+        if (passed === total) {
+          badgeEl.innerHTML = '<span class="badge badge-pass" style="font-size:14px; padding:6px 14px;">✓ 全部达标 (9/9)</span>';
+          hintEl.innerHTML = '🎉 <strong>九项实证硬闸全部达标</strong>，模型与服务具备生产准入上线条件！';
+        } else {
+          badgeEl.innerHTML = `<span class="badge ${passed > 0 ? 'badge-missing' : 'badge-fail'}" style="font-size:14px; padding:6px 14px;">${passed}/${total} 达成</span>`;
+          hintEl.innerHTML = `当前达成率 <strong>${pct}%</strong>，还有 <strong>${total - passed}</strong> 项闸门尚未达标或产物缺失，可点击下方卡片对应重跑按钮。`;
+        }
+
+        // Service Probe Card
+        const svc = data.service_status || {};
+        const isOnline = svc.online === true;
+        const pulseEl = document.getElementById('service-pulse');
+        const statusTextEl = document.getElementById('service-status-text');
+        const detailsEl = document.getElementById('service-details-box');
+
+        if (isOnline) {
+          pulseEl.className = 'pulse-dot online';
+          statusTextEl.innerText = '在线运行中 (Online)';
+          statusTextEl.style.color = 'var(--success-dark)';
+          const cats = svc.details?.categories_count || 17;
+          detailsEl.innerHTML = `
+            ✅ 状态正常 | 端口 :8110 | 已装载模型: ${svc.details?.model_loaded ? '是' : '否'} | 支持类目数: <strong>${cats}</strong> | 判定阈值: <strong>${svc.details?.threshold || 0.45}</strong>
+          `;
+        } else {
+          pulseEl.className = 'pulse-dot offline';
+          statusTextEl.innerText = '离线 / 未启动 (Offline)';
+          statusTextEl.style.color = 'var(--danger-dark)';
+          detailsEl.innerHTML = `
+            ⚠️ 服务未响应 (${svc.status || '未启动'})。点击右上角「启动服务」或执行 <code>make classifier-up</code> 即可一键拉起独立服务。
+          `;
+        }
+
+        // Nine Gates Cards
+        const gates = data.gates || [];
+        const gatesGridEl = document.getElementById('gates-grid');
+        gatesGridEl.innerHTML = gates.map((gate) => {
+          let badgeHtml = renderGateBadge(gate.status);
+          let cardClass = gate.status || 'missing';
+
+          return `
+            <div class="gate-card ${cardClass}">
+              <div>
+                <div class="gate-top">
+                  <div class="gate-name">
+                    ${gate.name}
+                  </div>
+                  <div>${badgeHtml}</div>
+                </div>
+                <div class="gate-desc">${gate.description}</div>
+                <div class="gate-detail-box">
+                  <strong>当前状态:</strong> ${gate.detail || '-'}
+                </div>
+              </div>
+              <div class="gate-action">
+                <span class="gate-target">${gate.make_target || ''}</span>
+                <button class="btn-secondary btn-small" onclick="runAcceptanceJob('${gate.job_name}', { onComplete: loadOverview })">
+                  ⚡ 就地重跑
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error("加载验收总览失败", err);
+        showToast("加载验收总览失败: " + err.message, "error");
+      }
+    }
+
+    window.onload = loadOverview;
+  </script>
+</body>
+</html>

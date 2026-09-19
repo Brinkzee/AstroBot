@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.models.low_confidence import LowConfidenceQuestion
 from app.models.topic_classification import TopicClassification
 from app.services.classifier.taxonomy import (
     CATEGORY_BOUNDARIES,
@@ -39,6 +40,7 @@ from app.core.jobs import JobRegistry
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/acceptance", tags=["acceptance"])
+topics_router = APIRouter(prefix="/api/topics", tags=["topics"])
 
 # Paths
 REPORT_PATH = Path("reports/ch10_evaluation_report.json")
@@ -600,3 +602,82 @@ async def get_acceptance_service():
 async def post_acceptance_classify(request: SingleClassifyRequest):
     """代理 :8110/classify 进行单句试分类演示，展示 17 类独立过线。"""
     return await proxy_classify_request(request.text)
+
+
+# =========================================================================
+# 7. GET /api/topics/distribution (and alias /api/acceptance/topics/distribution)
+# =========================================================================
+@topics_router.get("/distribution")
+@router.get("/topics/distribution")
+async def get_topic_distribution(db: AsyncSession = Depends(get_db)):
+    """统计 17 类类目频次与占比、已归类/未归类堆积量及 Top 3 高频堆积主题。"""
+    # 1. 查询已归类记录的标签分布 (支持异常容错降级)
+    try:
+        class_stmt = select(TopicClassification.labels)
+        class_res = await db.execute(class_stmt)
+        labels_list = class_res.scalars().all()
+        classified_count = len(labels_list)
+    except Exception as e:
+        logger.warning(f"读取 topic_classifications 失败: {e}")
+        labels_list = []
+        classified_count = 0
+
+    cat_counts: Dict[str, int] = {cat: 0 for cat in TAXONOMY_17}
+    total_tags = 0
+
+    for labels in labels_list:
+        if isinstance(labels, list):
+            for lbl in labels:
+                if lbl in cat_counts:
+                    cat_counts[lbl] += 1
+                    total_tags += 1
+                else:
+                    cat_counts[lbl] = cat_counts.get(lbl, 0) + 1
+                    total_tags += 1
+
+    # 2. 查询未归类待处理堆积量 (low_confidence_questions 中没有对应 TopicClassification 的记录)
+    try:
+        unclass_stmt = (
+            select(func.count(LowConfidenceQuestion.id))
+            .outerjoin(TopicClassification, LowConfidenceQuestion.id == TopicClassification.question_id)
+            .where(TopicClassification.id.is_(None))
+        )
+        unclass_res = await db.execute(unclass_stmt)
+        unclassified_count = unclass_res.scalar_one() or 0
+    except Exception as e:
+        logger.warning(f"读取未归类问题数量失败: {e}")
+        unclassified_count = 0
+
+    # 3. 计算 Top 3 堆积主题与 Top 1
+    # 按照频次从高到低排序
+    sorted_cats = sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)
+    top_3_topics = [c for c, count in sorted_cats[:3] if count > 0]
+    top_1_topic = sorted_cats[0][0] if sorted_cats and sorted_cats[0][1] > 0 else None
+
+    # 4. 构建 17 类目详细统计列表
+    distribution = []
+    for cat in TAXONOMY_17:
+        cnt = cat_counts.get(cat, 0)
+        pct = round((cnt / total_tags * 100), 2) if total_tags > 0 else 0.0
+        q_pct = round((cnt / classified_count * 100), 2) if classified_count > 0 else 0.0
+        is_top3 = cat in top_3_topics
+        tier = get_tier_for_category(cat)
+        priority_hint = "知识库优先补充重点" if is_top3 else ""
+        distribution.append({
+            "category": cat,
+            "count": cnt,
+            "percentage": pct,
+            "question_percentage": q_pct,
+            "tier": tier,
+            "is_top3": is_top3,
+            "priority_hint": priority_hint,
+        })
+
+    return {
+        "total_classified": classified_count,
+        "total_unclassified": unclassified_count,
+        "total_pool": classified_count + unclassified_count,
+        "top_3_topics": top_3_topics,
+        "top_1_topic": top_1_topic,
+        "distribution": distribution,
+    }

@@ -299,3 +299,88 @@ async def test_acceptance_classify_proxy_service_offline_graceful():
             assert res.status_code == 503
             data = res.json()
             assert "make classifier-up" in data["detail"]
+
+
+@pytest.mark.asyncio
+async def test_topics_distribution_endpoint_structure():
+    """Verify GET /api/topics/distribution returns complete 17-class statistics."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/api/topics/distribution")
+        assert res.status_code == 200
+        data = res.json()
+
+        assert "total_classified" in data
+        assert "total_unclassified" in data
+        assert "total_pool" in data
+        assert "top_3_topics" in data
+        assert "top_1_topic" in data
+        assert "distribution" in data
+        assert len(data["distribution"]) == 17
+
+        for item in data["distribution"]:
+            assert "category" in item
+            assert "count" in item
+            assert "percentage" in item
+            assert "tier" in item
+            assert "is_top3" in item
+            assert "priority_hint" in item
+
+        # Also verify alias endpoint
+        alias_res = await client.get("/api/acceptance/topics/distribution")
+        assert alias_res.status_code == 200
+        alias_data = alias_res.json()
+        assert len(alias_data["distribution"]) == 17
+
+
+@pytest.mark.asyncio
+async def test_topics_distribution_with_mocked_data():
+    """Verify topic distribution calculation with mock DB session."""
+    from app.db.session import get_db
+
+    mock_session = AsyncMock()
+    # Mock class_res.scalars().all() -> sample labels
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [
+        ["尺码", "退换货"],
+        ["退换货"],
+        ["物流"],
+        ["尺码", "物流"],
+        ["退换货", "发票"],
+    ]
+    mock_class_res = MagicMock()
+    mock_class_res.scalars.return_value = mock_scalars
+
+    # Mock unclass_res.scalar_one() -> 10 unclassified
+    mock_unclass_res = MagicMock()
+    mock_unclass_res.scalar_one.return_value = 10
+
+    mock_session.execute.side_effect = [mock_class_res, mock_unclass_res]
+
+    app.dependency_overrides[get_db] = lambda: mock_session
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.get("/api/topics/distribution")
+            assert res.status_code == 200
+            data = res.json()
+
+            assert data["total_classified"] == 5
+            assert data["total_unclassified"] == 10
+            assert data["total_pool"] == 15
+            # "退换货": 3, "尺码": 2, "物流": 2, "发票": 1
+            assert "退换货" in data["top_3_topics"]
+            assert data["top_1_topic"] == "退换货"
+
+            dist_map = {item["category"]: item for item in data["distribution"]}
+            assert dist_map["退换货"]["count"] == 3
+            assert dist_map["退换货"]["is_top3"] is True
+            assert dist_map["退换货"]["priority_hint"] == "知识库优先补充重点"
+            assert dist_map["退换货"]["tier"] == "strict"
+
+            assert dist_map["尺码"]["count"] == 2
+            assert dist_map["物流"]["count"] == 2
+            assert dist_map["发票"]["count"] == 1
+            assert dist_map["账号"]["count"] == 0
+    finally:
+        app.dependency_overrides.pop(get_db, None)
