@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -77,11 +78,17 @@ async def test_cross_platform_recipe_resolution():
 
 async def test_anti_reentrancy_mechanism():
     """4. 验证同名作业处于 running 状态时的严格防重入机制。"""
-    # 模拟一个长期运行的进程
+    # 模拟一个长期运行的进程，使用事件保持 running 状态
+    stop_event = threading.Event()
     mock_proc = MagicMock()
     mock_proc.poll.return_value = None  # 处于 running
-    mock_proc.stdout = iter(["running line 1\n", "running line 2\n"])
     mock_proc.pid = 99999
+
+    def mock_readline():
+        stop_event.wait(timeout=5)
+        return ""
+
+    mock_proc.stdout.readline.side_effect = mock_readline
 
     with patch("subprocess.Popen", return_value=mock_proc):
         # 首次启动
@@ -95,6 +102,7 @@ async def test_anti_reentrancy_mechanism():
 
         # 停止该作业，避免影响其他测试
         await stop_job(job_id)
+        stop_event.set()
 
 
 async def test_log_file_persistence_and_reading(tmp_path):
@@ -132,7 +140,7 @@ async def test_log_file_persistence_and_reading(tmp_path):
 
 
 async def test_process_tree_termination():
-    """6. 验证 stop_job 停止作业与进程树清理。"""
+    """6. 验证 stop_job 停止作业与底层真实 OS 进程树清理。"""
     # 启动一个真实的后台 sleep 进程作为子进程
     # 在 Windows / Linux 跨平台启动 python -c "import time; time.sleep(30)"
     sleep_cmd = [sys.executable, "-c", "import time; time.sleep(30)"]
@@ -140,8 +148,20 @@ async def test_process_tree_termination():
         job_info = await start_job("classifier-up")
         job_id = job_info["job_id"]
 
+        # 等待进程启动并获取真实 pid
+        pid = None
+        for _ in range(50):
+            job = job_runner._jobs.get(job_id)
+            if job and job.pid:
+                pid = job.pid
+                break
+            await asyncio.sleep(0.1)
+
+        assert pid is not None
+        import psutil
+        assert psutil.pid_exists(pid)
+
         # 确认已经处于 running
-        await asyncio.sleep(0.2)
         status = await get_job_status(job_id)
         assert status["status"] == "running"
 
@@ -152,6 +172,10 @@ async def test_process_tree_termination():
         # 确认状态已变更
         after_status = await get_job_status(job_id)
         assert after_status["status"] == "stopped"
+
+        # 断言真实底层 OS 进程已被终止
+        await asyncio.sleep(0.5)
+        assert not psutil.pid_exists(pid) or (job.proc and job.proc.poll() is not None)
 
 
 async def test_jobs_api_endpoints_contract():
@@ -198,3 +222,58 @@ async def test_jobs_api_endpoints_contract():
             # 7. 查询不存在的作业 -> 404
             res_404 = await client.get("/api/jobs/non_existent_job_123")
             assert res_404.status_code == 404
+
+
+async def test_sliding_window_deque_logs():
+    """8. 验证内存日志滑动窗口 deque 机制，确保 tail 在长任务中不冻结。"""
+    original_max = job_runner._max_logs_per_job
+    job_runner._max_logs_per_job = 5
+    try:
+        test_cmd = [sys.executable, "-c", "for i in range(10): print(f'line_{i}')"]
+        with patch.object(JobRegistry, "get_command", return_value=test_cmd):
+            job_info = await start_job("classify-pool")
+            job_id = job_info["job_id"]
+
+            for _ in range(50):
+                status = await get_job_status(job_id)
+                if status and status["status"] in ["completed", "failed"]:
+                    break
+                await asyncio.sleep(0.1)
+
+            logs_res = await get_job_logs(job_id)
+            assert logs_res is not None
+            # 内存日志总数受 deque maxlen (5) 限制
+            assert len(logs_res["logs"]) <= 5
+            # 滑动窗口必须保留最新产生的日志，而不是被冻结在最早的几行
+            assert any("line_9" in line for line in logs_res["logs"])
+
+            # tail=2 应该返回最后 2 行
+            tail_res = await get_job_logs(job_id, tail=2)
+            assert len(tail_res["logs"]) == 2
+            assert any("line_9" in line or "完成" in line for line in tail_res["logs"])
+    finally:
+        job_runner._max_logs_per_job = original_max
+
+
+async def test_stop_before_execute_race_condition():
+    """9. 验证在子进程实际 Popen 前调用 stop_job 绝不遗留孤儿进程。"""
+    sleep_cmd = [sys.executable, "-c", "import time; time.sleep(30)"]
+    with patch.object(JobRegistry, "get_command", return_value=sleep_cmd):
+        # 模拟在 _execute_job 执行前，人为将状态标记为 stopped
+        job_info = await start_job("eval-ch10")
+        job_id = job_info["job_id"]
+
+        # 立即停止作业
+        stop_res = await stop_job(job_id)
+        assert stop_res["status"] == "stopped"
+
+        # 等待后台工作线程走完
+        await asyncio.sleep(0.5)
+        final_status = await get_job_status(job_id)
+        assert final_status["status"] == "stopped"
+        # 确认没有孤儿进程遗留为 running
+        job = job_runner._jobs[job_id]
+        if job.pid:
+            import psutil
+            assert not psutil.pid_exists(job.pid) or (job.proc and job.proc.poll() is not None)
+

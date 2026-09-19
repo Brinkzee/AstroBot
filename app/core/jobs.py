@@ -9,6 +9,7 @@
 6. 进程生命周期治理：start_new_session=True（或 Windows CREATE_NEW_PROCESS_GROUP），停止作业时递归终止整棵进程树（避免孤儿进程）。
 """
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
@@ -141,7 +142,7 @@ class JobRecord:
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     return_code: Optional[int] = None
-    logs: List[str] = field(default_factory=list)
+    logs: deque = field(default_factory=deque)
     pid: Optional[int] = None
     log_file: Optional[str] = None
     proc: Optional[subprocess.Popen] = None
@@ -168,6 +169,9 @@ class JobRunner:
                 f"合法作业列表: {JobRegistry.WHITELIST}"
             )
 
+        # 在加入作业记录之前解析命令，避免解析失败留下残留脏记录
+        cmd_args = JobRegistry.get_command(job_name)
+
         with self._lock:
             # 防重入检查：同一作业在 running 状态时拒绝重复启动
             for j in self._jobs.values():
@@ -188,11 +192,10 @@ class JobRunner:
                 job_name=job_name,
                 status="running",
                 heavy=heavy,
+                logs=deque(maxlen=self._max_logs_per_job),
                 log_file=str(log_path),
             )
             self._jobs[job_id] = job
-
-        cmd_args = JobRegistry.get_command(job_name)
 
         thread = threading.Thread(
             target=self._execute_job,
@@ -215,6 +218,8 @@ class JobRunner:
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
+                return
+            if job.status == "stopped":
                 return
             job.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             start_msg = f"[{job.started_at}] 作业启动: {' '.join(cmd_args)}"
@@ -248,21 +253,29 @@ class JobRunner:
                 else:
                     kwargs["start_new_session"] = True
 
-                proc = subprocess.Popen(cmd_args, **kwargs)
+                # 消除与 stop_job 的竞态：启动进程前双重校验
                 with self._lock:
+                    if job.status == "stopped":
+                        return
+
+                proc = subprocess.Popen(cmd_args, **kwargs)
+
+                # 启动进程后双重校验，若在 Popen 期间已调用 stop_job 则立即清理并退出
+                with self._lock:
+                    if job.status == "stopped":
+                        try:
+                            self._terminate_process_tree(proc.pid)
+                        except Exception:
+                            pass
+                        return
                     job.proc = proc
                     job.pid = proc.pid
 
                 if proc.stdout:
                     for raw_line in iter(proc.stdout.readline, ""):
                         line = raw_line.rstrip("\r\n")
-                        if not line and proc.poll() is not None:
-                            break
                         with self._lock:
-                            if len(job.logs) < self._max_logs_per_job:
-                                job.logs.append(line)
-                            elif len(job.logs) == self._max_logs_per_job:
-                                job.logs.append("... [日志已达最大存储限制，后续输出截断] ...")
+                            job.logs.append(line)
                         f_log.write(line + "\n")
                         f_log.flush()
 
