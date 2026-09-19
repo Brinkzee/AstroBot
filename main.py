@@ -21,7 +21,9 @@ app.add_middleware(
 
 from app.api.review_queue_routes import review_queue_router
 from app.api.observability import router as observability_router
+from app.api.jobs import router as jobs_router
 
+app.include_router(jobs_router)
 app.include_router(router)
 app.include_router(review_queue_router)
 app.include_router(observability_router)
