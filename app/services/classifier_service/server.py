@@ -194,6 +194,11 @@ app = FastAPI(
 app.state.engine = engine
 
 
+def create_classifier_app() -> FastAPI:
+    """Return the classifier service FastAPI app instance."""
+    return app
+
+
 class ClassifyRequest(BaseModel):
     texts: List[str] = Field(..., description="List of user queries to classify")
 
