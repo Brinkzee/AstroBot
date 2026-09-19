@@ -22,11 +22,13 @@ app.add_middleware(
 from app.api.review_queue_routes import review_queue_router
 from app.api.observability import router as observability_router
 from app.api.jobs import router as jobs_router
+from app.api.acceptance import router as acceptance_router
 
 app.include_router(jobs_router)
 app.include_router(router)
 app.include_router(review_queue_router)
 app.include_router(observability_router)
+app.include_router(acceptance_router)
 
 static_dir = os.path.join(os.path.dirname(__file__), "app", "static")
 if os.path.exists(static_dir):
