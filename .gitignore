@@ -10,5 +10,6 @@ venv/
 data/milvus/
 data/ch10/best_model/
 data/ch10/onnx/
+data/ch10/*.pid
 log/
 

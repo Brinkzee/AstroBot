@@ -384,3 +384,28 @@ async def test_topics_distribution_with_mocked_data():
             assert dist_map["账号"]["count"] == 0
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_proxy_classify_request_trust_env_and_error_handling():
+    """Verify proxy_classify_request handles offline/502 without exposing raw proxy error."""
+    from app.api.acceptance import proxy_classify_request
+    from fastapi import HTTPException
+
+    # 1. 模拟 502 Bad Gateway (代理拦截或未就绪)，应转译为 503 并提示 make classifier-up
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 502
+        mock_resp.text = ""
+        mock_post.return_value = mock_resp
+
+        with pytest.raises(HTTPException) as exc_info:
+            await proxy_classify_request("买大了想退")
+        assert exc_info.value.status_code == 503
+        assert "make classifier-up" in exc_info.value.detail
+
+    # 2. 真实离线端口请求，应捕获 ConnectError/NetworkError 并抛出友好 503
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_classify_request("买大了想退", port=59999)
+    assert exc_info.value.status_code == 503
+    assert "make classifier-up" in exc_info.value.detail

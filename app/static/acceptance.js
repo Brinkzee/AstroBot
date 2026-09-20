@@ -292,7 +292,7 @@
           `;
         }).join("");
       } catch (err) {
-        showToast(`分类请求失败: ${err.message}`, "error");
+        showToast(err.message || "分类请求失败", "error");
       } finally {
         btnEl.disabled = false;
         btnEl.innerText = "⚡ 立即分类";

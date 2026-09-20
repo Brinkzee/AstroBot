@@ -79,6 +79,12 @@
             <div class="section-title">🎯 单句试分类实时交互演示</div>
             <div class="section-desc">演示「17 类各自独立过线，过几个打几个」，体验多诉求同时识别效果</div>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="demo-service-badge" class="badge" style="background:#f1f5f9;color:#64748b;">探活中...</span>
+            <button class="btn-secondary btn-small" onclick="runAcceptanceJob('classifier-up', { onComplete: () => { checkDemoServiceStatus(); } })">
+              ⚡ 启动分类器 (classifier-up)
+            </button>
+          </div>
         </div>
         <div id="interactive-demo-container"></div>
       </div>
@@ -282,9 +288,30 @@
           }).join('');
         }
 
+        // 6. Check Service Status
+        await checkDemoServiceStatus();
+
       } catch (err) {
         console.error("加载评测深剖失败", err);
         showToast("加载评测深剖失败: " + err.message, "error");
+      }
+    }
+
+    async function checkDemoServiceStatus() {
+      const badge = document.getElementById("demo-service-badge");
+      if (!badge) return;
+      try {
+        const s = await fetchAcceptanceService();
+        if (s.online) {
+          badge.className = "badge badge-pass";
+          badge.innerText = "🟢 服务在线 (:8110)";
+        } else {
+          badge.className = "badge badge-fail";
+          badge.innerText = "🔴 服务离线";
+        }
+      } catch (e) {
+        badge.className = "badge badge-fail";
+        badge.innerText = "🔴 服务离线";
       }
     }
 

@@ -111,7 +111,7 @@ async def query_classifier_healthz(
     """Probe :8110/healthz live status."""
     url = f"http://{host}:{port}/healthz"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 data = resp.json()
@@ -119,6 +119,13 @@ async def query_classifier_healthz(
                     "online": True,
                     "status": "ok",
                     "details": data,
+                }
+            if resp.status_code in (502, 503, 504):
+                return {
+                    "online": False,
+                    "status": "offline",
+                    "error": f"HTTP {resp.status_code} (服务未就绪)",
+                    "make_target": "make classifier-up",
                 }
             return {
                 "online": False,
@@ -144,20 +151,33 @@ async def proxy_classify_request(
     """Proxy single-sentence classification request to :8110/classify."""
     url = f"http://{host}:{port}/classify"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.post(url, json={"texts": [text]})
-            if resp.status_code != 200:
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and "results" in data and len(data["results"]) > 0:
+                    return data["results"][0]
+                elif isinstance(data, list) and len(data) > 0:
+                    return data[0]
+                return {"text": text, "labels": [], "scores": {}}
+            elif resp.status_code in (502, 503, 504):
+                raise HTTPException(
+                    status_code=503,
+                    detail="推理服务未就绪或无法连接，请先运行 make classifier-up 启动服务",
+                )
+            else:
+                err_text = resp.text.strip()
+                try:
+                    err_json = resp.json()
+                    if isinstance(err_json, dict) and "detail" in err_json:
+                        err_text = err_json["detail"]
+                except Exception:
+                    pass
                 raise HTTPException(
                     status_code=resp.status_code,
-                    detail=f"分类服务返回错误: {resp.text}",
+                    detail=f"分类服务返回错误: {err_text}" if err_text else f"分类服务返回 HTTP {resp.status_code}",
                 )
-            data = resp.json()
-            if isinstance(data, dict) and "results" in data and len(data["results"]) > 0:
-                return data["results"][0]
-            elif isinstance(data, list) and len(data) > 0:
-                return data[0]
-            return {"text": text, "labels": [], "scores": {}}
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.NetworkError):
         raise HTTPException(
             status_code=503,
             detail="推理服务未启动，请先运行 make classifier-up",
@@ -166,6 +186,11 @@ async def proxy_classify_request(
         raise HTTPException(
             status_code=504,
             detail="推理服务请求超时，请检查服务状态",
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"推理服务网络请求失败 ({type(e).__name__})，请检查服务是否运行",
         )
 
 
