@@ -35,6 +35,14 @@ class JobAlreadyRunningError(Exception):
     pass
 
 
+def _resolve_cuda_python() -> str:
+    """Resolve Python executable with CUDA GPU support if available."""
+    pytorch_env_python = Path("D:/Anaconda3/envs/pytorch/python.exe")
+    if pytorch_env_python.exists():
+        return str(pytorch_env_python)
+    return sys.executable
+
+
 class JobRegistry:
     """作业注册表与跨平台配方解析器"""
 
@@ -66,9 +74,9 @@ class JobRegistry:
             "desc": "导出 ONNX 紧凑模型与元数据",
         },
         "train-ch10": {
-            "cmd": [sys.executable, str(ROOT_DIR / "scripts" / "train_classifier.py")],
+            "cmd": [_resolve_cuda_python(), str(ROOT_DIR / "scripts" / "train_classifier.py"), "--device", "cuda"],
             "heavy": True,
-            "desc": "全量训练多标签分类器",
+            "desc": "全量训练多标签分类器 (CUDA GPU)",
         },
         "data-prep-ch10": {
             "cmd": [sys.executable, str(ROOT_DIR / "scripts" / "data_prep_ch10.py")],

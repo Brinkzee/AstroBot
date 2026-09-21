@@ -235,3 +235,44 @@ def test_dry_run_training_pipeline(tmp_path):
     assert "best_threshold" in result
     assert 0.30 <= result["best_threshold"] <= 0.70
 
+
+def test_compute_pos_weights():
+    from scripts.train_classifier import compute_pos_weights
+
+    records = [
+        {"labels": ["退换货", "尺码"]},
+        {"labels": ["退换货"]},
+        {"labels": ["物流"]},
+        {"labels": ["物流"]},
+    ]
+    # Total 4 records.
+    # 退换货: 2 pos, 2 neg -> (2/2)^0.5 = 1.0
+    # 尺码: 1 pos, 3 neg -> (3/1)^0.5 = 1.732
+    # 物流: 2 pos, 2 neg -> 1.0
+    # Others: 0 pos, 4 neg -> clamped or fallback
+    weights = compute_pos_weights(records, taxonomy=TAXONOMY_17, power=0.5, max_weight=5.0)
+    assert isinstance(weights, torch.Tensor)
+    assert weights.shape == (len(TAXONOMY_17),)
+    idx_size = TAXONOMY_17.index("尺码")
+    idx_return = TAXONOMY_17.index("退换货")
+    assert weights[idx_size].item() > weights[idx_return].item()
+    assert torch.all(weights >= 1.0)
+    assert torch.all(weights <= 5.0)
+
+
+def test_compute_multilabel_metrics_with_core_categories():
+    from scripts.train_classifier import compute_multilabel_metrics
+
+    # 2 samples, 17 classes
+    y_true = np.zeros((2, 17), dtype=int)
+    y_true[0, 0] = 1  # 退换货 (strict)
+    y_true[1, 1] = 1  # 物流 (strict)
+
+    y_pred_probs = np.zeros((2, 17), dtype=float)
+    y_pred_probs[0, 0] = 0.9
+    y_pred_probs[1, 1] = 0.9
+
+    metrics = compute_multilabel_metrics(y_true, y_pred_probs, threshold=0.5)
+    assert "core_macro_f1" in metrics
+    assert metrics["core_macro_f1"] >= 0.0
+
