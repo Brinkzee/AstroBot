@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 语料与考卷血缘</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          🧬 语料血缘、考卷盘点与零泄漏硬闸看板
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          追踪四段语料血缘流水线，严格校验 train/val/test 零泄漏交叉重叠硬闸，监管模型与 ONNX 产物健全性。
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" onclick="runAcceptanceJob('data-prep-ch10', { heavy: true, onComplete: loadData })">
+          ⚡ 重新准备语料 (data-prep-ch10)
+        </button>
+        <button class="btn-secondary" onclick="loadData()">
+          🔄 刷新数据
+        </button>
+      </div>
+    </div>
+
+    <!-- Empty State if dataset missing -->
+    <div id="data-empty" class="empty-state" style="display:none;">
+      <h3>语料数据集尚未就绪</h3>
+      <p style="margin:8px 0 16px; color:var(--text-muted);">
+        尚未生成 <code>mewhelp-ch10-dataset</code> 数据集文件。
+      </p>
+      <button class="btn-primary" onclick="runAcceptanceJob('data-prep-ch10', { heavy: true, onComplete: loadData })">
+        ⚡ 立即执行 make data-prep-ch10
+      </button>
+    </div>
+
+    <div id="data-content">
+      <!-- 1. Zero-Leakage Hard Gate Hero Card -->
+      <div class="section-block" id="leakage-hero-card" style="border-left: 6px solid var(--success);">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <h2 style="font-size:18px; font-weight:700; color:#0f172a;">
+                🛡️ 考卷零泄漏自检硬闸 (Zero-Leakage Hard Gate)
+              </h2>
+              <span id="leakage-gate-badge">
+                <span class="badge badge-pass" style="font-size:13px; padding:4px 12px;">✓ 严格通过</span>
+              </span>
+            </div>
+            <p id="leakage-gate-desc" style="font-size:13.5px; color:#334155; margin-top:6px;">
+              三份考卷 (train, val, test) 文本交叉重叠必须严格为 0。若存在交叉泄漏，验收状态直接判 fail。
+            </p>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:12px; color:var(--text-muted);">考核规则:</div>
+            <div style="font-family:monospace; font-size:13px; font-weight:bold; color:var(--primary);">
+              train ∩ val = 0 | train ∩ test = 0 | val ∩ test = 0
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:16px;">
+          <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:12px; color:var(--text-muted);">train ∩ val 重叠数</div>
+            <div id="overlap-train-val" style="font-size:22px; font-weight:700; color:var(--success-dark); margin-top:4px;">0</div>
+          </div>
+          <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:12px; color:var(--text-muted);">train ∩ test 重叠数</div>
+            <div id="overlap-train-test" style="font-size:22px; font-weight:700; color:var(--success-dark); margin-top:4px;">0</div>
+          </div>
+          <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:12px; color:var(--text-muted);">val ∩ test 重叠数</div>
+            <div id="overlap-val-test" style="font-size:22px; font-weight:700; color:var(--success-dark); margin-top:4px;">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Four-Stage Corpus Lineage Flow Card -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">🌊 语料血缘四段流水线 (Corpus Lineage Pipeline)</div>
+            <div class="section-desc">从真实客户对话打捞，经清洗、去重、归并聚类到文本增强的端到端血缘</div>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px;">
+          <div style="background:var(--bg-color); border:1px solid var(--border-color); border-radius:10px; padding:16px;">
+            <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; color:#0f172a; margin-bottom:8px;">
+              <span style="background:var(--primary); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:12px;">1</span>
+              真实打捞 (Raw Crawl)
+            </div>
+            <p style="font-size:13px; color:#475569; line-height:1.5;">
+              从低置信度问题表 (low_confidence_questions) 及在线生产对话中收录客户原话，捕捉情绪口语与真实错拼表达。
+            </p>
+          </div>
+
+          <div style="background:var(--bg-color); border:1px solid var(--border-color); border-radius:10px; padding:16px;">
+            <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; color:#0f172a; margin-bottom:8px;">
+              <span style="background:var(--primary); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:12px;">2</span>
+              清洗脱敏 (Clean & Filter)
+            </div>
+            <p style="font-size:13px; color:#475569; line-height:1.5;">
+              去除无意义语气助词、广告、违禁词及隐私敏感信息；执行严格的字符规范化与空白字符折叠。
+            </p>
+          </div>
+
+          <div style="background:var(--bg-color); border:1px solid var(--border-color); border-radius:10px; padding:16px;">
+            <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; color:#0f172a; margin-bottom:8px;">
+              <span style="background:var(--primary); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:12px;">3</span>
+              实体归并 (Cluster & Align)
+            </div>
+            <p style="font-size:13px; color:#475569; line-height:1.5;">
+              对照 17 类权威类目与标准意图实体，将口语提问多标签对齐，明确多诉求交集与近邻摩擦边界。
+            </p>
+          </div>
+
+          <div style="background:var(--bg-color); border:1px solid var(--border-color); border-radius:10px; padding:16px;">
+            <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; color:#0f172a; margin-bottom:8px;">
+              <span style="background:var(--primary); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:12px;">4</span>
+              受控增强 (EDA & Augment)
+            </div>
+            <p style="font-size:13px; color:#475569; line-height:1.5;">
+              针对长尾类目进行同义词替换与句式重构，生成均衡多标签训练语料，严格杜绝考卷反向污染。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Three Exam Papers Inventory Card -->
+      <div class="section-block">
+        <div class="section-header">
+          <div>
+            <div class="section-title">📚 三份考卷规模盘点 (Train / Val / Test)</div>
+            <div class="section-desc">训练集 2594 条、验证集 161 条、测试集 161 条严格隔离划分</div>
+          </div>
+        </div>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">训练集 (train.jsonl)</div>
+            <div class="kpi-value" id="exam-train-count">2,594</div>
+            <div class="kpi-sub" id="exam-train-size">大小: -</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">验证集 (val.jsonl)</div>
+            <div class="kpi-value" id="exam-val-count">161</div>
+            <div class="kpi-sub" id="exam-val-size">大小: -</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">测试集 (test.jsonl)</div>
+            <div class="kpi-value" id="exam-test-count">161</div>
+            <div class="kpi-sub" id="exam-test-size">大小: -</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">语料总样本量</div>
+            <div class="kpi-value" id="exam-total-count">2,916</div>
+            <div class="kpi-sub">三卷样本汇总</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Training & ONNX Artifacts Inventory -->
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+        <!-- Training Artifacts Card -->
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">📦 训练微调产物清单</div>
+              <div class="section-desc"><code>data/ch10/best_model</code></div>
+            </div>
+            <button class="btn-secondary btn-small" onclick="runAcceptanceJob('train-ch10', { heavy: true, onComplete: loadData })">
+              ⚡ 重新训练
+            </button>
+          </div>
+          <div id="train-artifacts-list">
+            <!-- Injected via JS -->
+          </div>
+        </div>
+
+        <!-- ONNX Export Artifacts Card -->
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">⚡ ONNX 独立推理产物清单</div>
+              <div class="section-desc"><code>data/ch10/onnx</code></div>
+            </div>
+            <button class="btn-secondary btn-small" onclick="runAcceptanceJob('export-onnx', { heavy: true, onComplete: loadData })">
+              ⚡ 重新导出
+            </button>
+          </div>
+          <div id="onnx-artifacts-list">
+            <!-- Injected via JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+    }
+
+    async function loadData() {
+      try {
+        const data = await fetchAcceptanceData();
+        if (!data.present) {
+          document.getElementById('data-empty').style.display = 'block';
+          document.getElementById('data-content').style.display = 'none';
+          return;
+        }
+
+        document.getElementById('data-empty').style.display = 'none';
+        document.getElementById('data-content').style.display = 'block';
+
+        // 1. Zero-Leakage Hard Gate
+        const leakage = data.leakage_check || {};
+        const isPassed = leakage.passed === true;
+        const gateCard = document.getElementById('leakage-hero-card');
+        const badgeEl = document.getElementById('leakage-gate-badge');
+        const descEl = document.getElementById('leakage-gate-desc');
+
+        if (isPassed) {
+          gateCard.style.borderLeftColor = 'var(--success)';
+          badgeEl.innerHTML = '<span class="badge badge-pass" style="font-size:13px; padding:4px 12px;">✓ 严格通过 (Zero Leakage)</span>';
+          descEl.innerHTML = '✅ <strong>零泄漏自检通过</strong>：train / val / test 考卷文本完全正交，交叉重叠样本数严格为 0。';
+        } else {
+          gateCard.style.borderLeftColor = 'var(--danger)';
+          badgeEl.innerHTML = '<span class="badge badge-fail" style="font-size:13px; padding:4px 12px;">✕ 泄漏失败 (Leakage Detected)</span>';
+          descEl.innerHTML = '❌ <strong>检测到数据泄漏</strong>：考卷之间存在重叠样本，评测结果不作数，必须重新清洗切分！';
+        }
+
+        // Overlaps
+        const trainValOverlap = (leakage.train_val_overlap || []).length;
+        const trainTestOverlap = (leakage.train_test_overlap || []).length;
+        const valTestOverlap = (leakage.val_test_overlap || []).length;
+
+        document.getElementById('overlap-train-val').innerText = trainValOverlap;
+        document.getElementById('overlap-train-test').innerText = trainTestOverlap;
+        document.getElementById('overlap-val-test').innerText = valTestOverlap;
+
+        if (trainValOverlap > 0) document.getElementById('overlap-train-val').style.color = 'var(--danger-dark)';
+        if (trainTestOverlap > 0) document.getElementById('overlap-train-test').style.color = 'var(--danger-dark)';
+        if (valTestOverlap > 0) document.getElementById('overlap-val-test').style.color = 'var(--danger-dark)';
+
+        // 2. Exam Papers Inventory
+        const ds = data.dataset || {};
+        const trainCnt = ds.train_count || 0;
+        const valCnt = ds.val_count || 0;
+        const testCnt = ds.test_count || 0;
+        const totalCnt = trainCnt + valCnt + testCnt;
+
+        document.getElementById('exam-train-count').innerText = trainCnt.toLocaleString();
+        document.getElementById('exam-val-count').innerText = valCnt.toLocaleString();
+        document.getElementById('exam-test-count').innerText = testCnt.toLocaleString();
+        document.getElementById('exam-total-count').innerText = totalCnt.toLocaleString();
+
+        document.getElementById('exam-train-size').innerText = '文件大小: ' + formatBytes(ds.train_size_bytes);
+        document.getElementById('exam-val-size').innerText = '文件大小: ' + formatBytes(ds.val_size_bytes);
+        document.getElementById('exam-test-size').innerText = '文件大小: ' + formatBytes(ds.test_size_bytes);
+
+        // 3. Training Artifacts
+        const trainArt = data.training_artifacts || {};
+        const trainListEl = document.getElementById('train-artifacts-list');
+        const trainFiles = trainArt.files || [];
+        if (trainFiles.length === 0) {
+          trainListEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">暂无训练产物，请执行 make train-ch10。</div>';
+        } else {
+          trainListEl.innerHTML = trainFiles.map((f) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;">
+              <div>
+                <span style="font-weight:600;color:#0f172a;">📄 ${f.name}</span>
+              </div>
+              <div style="font-family:monospace;color:var(--text-muted);">
+                ${formatBytes(f.size_bytes)}
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // 4. ONNX Artifacts
+        const onnxArt = data.onnx_artifacts || {};
+        const onnxListEl = document.getElementById('onnx-artifacts-list');
+        const onnxFiles = onnxArt.files || [];
+        if (onnxFiles.length === 0) {
+          onnxListEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">暂无 ONNX 产物，请执行 make export-onnx。</div>';
+        } else {
+          onnxListEl.innerHTML = onnxFiles.map((f) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;">
+              <div>
+                <span style="font-weight:600;color:#0f172a;">⚡ ${f.name}</span>
+              </div>
+              <div style="font-family:monospace;color:var(--text-muted);">
+                ${formatBytes(f.size_bytes)}
+              </div>
+            </div>
+          `).join('');
+        }
+
+      } catch (err) {
+        console.error("加载语料血缘失败", err);
+        showToast("加载语料血缘失败: " + err.message, "error");
+      }
+    }
+
+    window.onload = loadData;
+  </script>
+</body>
+</html>

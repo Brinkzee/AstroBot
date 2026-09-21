@@ -144,3 +144,31 @@ def test_session_data_contract_and_fallback_resilience(client):
 
     html = client.get("/").text
     assert "catch" in html, "前端网络请求必须包含 catch 错误处理以实现静默降级"
+
+
+def test_chapter_10_frontend_pages_and_static_assets(client):
+    """验证第十章五页看板与后台聚合页路由及静态资源正常可达。"""
+    routes = [
+        ("/topic-distribution", "待审问题 17 类主题分布看板"),
+        ("/acceptance", "实证验收总览与九项闸门"),
+        ("/acceptance/eval", "评测深度剖析"),
+        ("/acceptance/data", "语料血缘"),
+        ("/acceptance/errors", "错例深度剖析与三向记账账本"),
+        ("/admin", "后台聚合管理中心"),
+    ]
+
+    for path, expected_text in routes:
+        resp = client.get(path)
+        assert resp.status_code == 200, f"Route {path} failed with {resp.status_code}"
+        assert "text/html" in resp.headers.get("content-type", "")
+        assert expected_text in resp.text, f"Route {path} missing expected text: {expected_text}"
+
+    # Verify static assets
+    static_assets = [
+        "/static/acceptance.css",
+        "/static/acceptance.js",
+        "/static/admin.js",
+    ]
+    for asset in static_assets:
+        resp = client.get(asset)
+        assert resp.status_code == 200, f"Static asset {asset} failed with {resp.status_code}"

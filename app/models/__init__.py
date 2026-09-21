@@ -15,6 +15,22 @@ from app.models.faith_case import (
     FaithCaseStatus,
     upsert_faith_case,
 )
+from app.models.tool_audit_log import (
+    ToolAuditLog,
+    ToolSource,
+    ToolStatus,
+)
+from app.models.review_queue import (
+    ReviewQueue,
+    ReviewStatus,
+)
+from app.models.eval_run import (
+    EvalRun,
+    TriggeredBy,
+)
+from app.models.topic_classification import (
+    TopicClassification,
+)
 
 __all__ = [
     "Conversation",
@@ -30,4 +46,12 @@ __all__ = [
     "FaithCase",
     "FaithCaseStatus",
     "upsert_faith_case",
+    "ToolAuditLog",
+    "ToolSource",
+    "ToolStatus",
+    "ReviewQueue",
+    "ReviewStatus",
+    "EvalRun",
+    "TriggeredBy",
+    "TopicClassification",
 ]

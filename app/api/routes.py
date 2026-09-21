@@ -3,15 +3,19 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.chat import ChatStreamRequest
+from app.schemas.chat import ChatStreamRequest, ChatResumeRequest
 from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
 from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
 from app.schemas.conversation import ConversationItem, ConversationMessageItem
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.ticket import Ticket
+from app.models.summary import ConversationSummary
+from app.models.tool_audit_log import ToolAuditLog
+from app.models.low_confidence import LowConfidenceQuestion
 from app.services.after_sale_service import extract_after_sale_ticket
 from app.services.chat_service import ChatService
 from app.tools.business_tools import create_ticket
@@ -63,6 +67,45 @@ async def chat_stream(
     )
 
 
+@router.post("/chat/resume")
+async def chat_resume(
+    request: ChatResumeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    async def event_generator():
+        try:
+            async for event in chat_service.resume_chat(
+                db=db,
+                conversation_id=request.conversation_id,
+                action=request.action,
+            ):
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            err_payload = json.dumps(
+                {
+                    "event_type": "error",
+                    "conversation_id": request.conversation_id,
+                    "error": str(e),
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {err_payload}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+
 @router.post("/after-sale/extract", response_model=AfterSaleTicket)
 async def extract_ticket(request: AfterSaleExtractRequest):
     try:
@@ -90,6 +133,91 @@ async def api_create_ticket(request: TicketCreateRequest):
         status=data["status"],
     )
 
+from pydantic import BaseModel, Field
+from app.models.low_confidence import record_low_confidence
+
+class FeedbackRequest(BaseModel):
+    conversation_id: int
+    message_id: Optional[int] = None
+    feedback_type: str = Field(..., description="赞同/点踩: 'up' 或 'down'")
+    reason: Optional[str] = None
+    query: Optional[str] = None
+
+@router.post("/chat/feedback")
+async def chat_feedback(request: FeedbackRequest, db: AsyncSession = Depends(get_db)):
+    if request.feedback_type == "down":
+        raw_question = request.query
+        if not raw_question:
+            stmt = select(Message).where(
+                Message.conversation_id == request.conversation_id,
+                Message.role == "user"
+            ).order_by(Message.id.desc()).limit(1)
+            res = await db.execute(stmt)
+            msg = res.scalar()
+            raw_question = msg.content if msg else "未知用户问题"
+
+        retrieved_chunks = None
+        # Attempt to find the retrieval context from the last assistant message
+        stmt_tool = select(Message).where(
+            Message.conversation_id == request.conversation_id,
+            Message.role == "assistant"
+        ).order_by(Message.id.desc()).limit(1)
+        res_tool = await db.execute(stmt_tool)
+        ast_msg = res_tool.scalar()
+        if ast_msg and ast_msg.tool_calls:
+            tc = ast_msg.tool_calls
+            if isinstance(tc, str):
+                try:
+                    tc = json.loads(tc)
+                except (json.JSONDecodeError, Exception) as e:
+                    import logging
+                    logging.warning(f"Failed to parse tool_calls: {e}")
+            if isinstance(tc, list) and len(tc) > 0:
+                tool_name = tc[0].get("name")
+                if tool_name in ("query_faq", "search_knowledge"):
+                    stmt_audit = select(ToolAuditLog).where(
+                        ToolAuditLog.conversation_id == request.conversation_id,
+                        ToolAuditLog.tool_name.in_(["query_faq", "search_knowledge"])
+                    ).order_by(ToolAuditLog.id.desc()).limit(1)
+                    res_audit = await db.execute(stmt_audit)
+                    audit_log = res_audit.scalar()
+                    
+                    if audit_log and audit_log.result_summary:
+                        try:
+                            res_data = json.loads(audit_log.result_summary) if isinstance(audit_log.result_summary, str) else audit_log.result_summary
+                            if isinstance(res_data, dict) and "hits" in res_data:
+                                hits = res_data["hits"]
+                            elif isinstance(res_data, list):
+                                hits = res_data
+                            else:
+                                hits = []
+
+                            parsed_chunks = []
+                            for hit in hits:
+                                text = hit.get("text") or hit.get("content") or hit.get("answer") or ""
+                                score = hit.get("score") or hit.get("distance") or 0.0
+                                section = hit.get("section") or hit.get("section_path") or ""
+                                parsed_chunks.append({
+                                    "text": text[:300],
+                                    "score": float(score),
+                                    "section": section
+                                })
+                            if parsed_chunks:
+                                retrieved_chunks = parsed_chunks
+                        except (json.JSONDecodeError, Exception) as e:
+                            import logging
+                            logging.warning(f"Failed to parse tool result for chunks: {e}")
+        
+        entry = await record_low_confidence(
+            db=db,
+            raw_question=raw_question,
+            source="user_feedback",
+            conversation_id=request.conversation_id,
+            reason=request.reason or "用户点踩未解决",
+            retrieved_chunks=retrieved_chunks
+        )
+        return {"status": "success", "message": "Feedback recorded", "entry_id": entry.id}
+    return {"status": "success", "message": "Thanks for your feedback"}
 
 # ==============================================================================
 # 多会话管理与历史回溯 API 接口 (/api/conversations/...)
@@ -204,6 +332,51 @@ async def get_conversation_messages(
         )
 
     return items
+
+
+@router.delete("/conversations/{id}")
+async def delete_conversation(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除指定会话并原子级联清理或解绑关联数据"""
+    conv = await db.get(Conversation, id)
+    if not conv:
+        raise HTTPException(status_code=404, detail=f"会话 {id} 不存在")
+
+    # 1. LowConfidenceQuestion: 来源会话解绑（设 conversation_id = None）
+    await db.execute(
+        update(LowConfidenceQuestion)
+        .where(LowConfidenceQuestion.conversation_id == id)
+        .values(conversation_id=None)
+    )
+
+    # 2. ToolAuditLog: 删除该会话的调用审计记录
+    await db.execute(delete(ToolAuditLog).where(ToolAuditLog.conversation_id == id))
+
+    # 3. Ticket: 删除该会话创建的人工工单
+    await db.execute(delete(Ticket).where(Ticket.conversation_id == id))
+
+    # 4. ConversationSummary: 删除该会话的分段摘要
+    await db.execute(delete(ConversationSummary).where(ConversationSummary.conversation_id == id))
+
+    # 5. Message: 删除该会话的消息流水
+    await db.execute(delete(Message).where(Message.conversation_id == id))
+
+    # 6. Conversation: 删除会话实体
+    await db.delete(conv)
+
+    # 7. 提交事务
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"会话 #{id} 已成功删除",
+        "conversation_id": id,
+    }
+
+
+# ==============================================================================
 # 知识库可视化管理与自测工作台 API 接口 (/api/kb/...)
 # ==============================================================================
 import time

@@ -137,6 +137,33 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
         print(f"    ❌ 第七章数据表与字段迁移失败: {e}")
         return False
 
+    # 2.2 第八章工具调用审计数据表 (tool_audit_logs) 迁移
+    from scripts.init_ch08_db import init_ch08_db
+    try:
+        await init_ch08_db()
+        print("    ↳ 第八章工具调用审计数据表 (tool_audit_logs) 迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第八章数据表与迁移失败: {e}")
+        return False
+
+    # 2.3 第九章飞轮待审队列与评估记录数据表迁移
+    from scripts.init_ch09_db import init_ch09_db
+    try:
+        await init_ch09_db(engine_override=engine)
+        print("    ↳ 第九章飞轮待审队列与评估记录数据表迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第九章数据表与迁移失败: {e}")
+        return False
+
+    # 2.4 第十章多标签主题分类数据表 (topic_classifications) 迁移
+    from scripts.init_ch10_db import init_ch10_db
+    try:
+        await init_ch10_db(engine_override=engine)
+        print("    ↳ 第十章多标签主题分类数据表 (topic_classifications) 迁移已就绪 ✅")
+    except Exception as e:
+        print(f"    ❌ 第十章数据表与迁移失败: {e}")
+        return False
+
     # 3. 基础 FAQ 种子数据填充
     async with AsyncSessionLocal() as session:
         try:
@@ -205,9 +232,108 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     else:
         print("  • 知识库向量索引就绪，无须重新建库 ✅")
 
+    # 5. MCP 独立协议服务与动态工具注册中心就绪检查
+    print("\n" + "=" * 65)
+    print("🔌 [第 4 步] MCP 独立协议服务与动态工具注册中心就绪检查")
+    print("=" * 65)
+
+    from urllib.parse import urlparse
+    from app.config import settings
+    from scripts.wsl_helper import is_port_open
+    from app.tools.registry import default_tool_registry
+
+    # 5.1 MCP Server 连通性探测 (8001 物流 / 8002 售后)
+    logistics_url = urlparse(settings.MCP_LOGISTICS_SERVER_URL)
+    aftersale_url = urlparse(settings.MCP_AFTERSALE_SERVER_URL)
+    logistics_host = logistics_url.hostname or "127.0.0.1"
+    logistics_port = logistics_url.port or 8001
+    aftersale_host = aftersale_url.hostname or "127.0.0.1"
+    aftersale_port = aftersale_url.port or 8002
+
+    logistics_online = is_port_open(logistics_host, logistics_port, timeout=0.2)
+    aftersale_online = is_port_open(aftersale_host, aftersale_port, timeout=0.2)
+
+    if logistics_online:
+        print(f"  • 物流 MCP 服务 ({logistics_host}:{logistics_port}): 在线  ✅ [OK]")
+    else:
+        print(f"  • 物流 MCP 服务 ({logistics_host}:{logistics_port}): 未启动 (已降级为内置/模拟处理)  ⚠️ [提示]")
+
+    if aftersale_online:
+        print(f"  • 售后 MCP 服务 ({aftersale_host}:{aftersale_port}): 在线  ✅ [OK]")
+    else:
+        print(f"  • 售后 MCP 服务 ({aftersale_host}:{aftersale_port}): 未启动 (已降级为内置/模拟处理)  ⚠️ [提示]")
+
+    # 5.2 工具注册中心动态加载与拓扑展示
+    client = getattr(default_tool_registry, "mcp_client", None)
+    orig_connections = getattr(client, "connections", None) if client else None
+
+    try:
+        if not logistics_online and not aftersale_online:
+            # 双 Server 均离线时快速降级，避免 10s 无谓超时等待
+            default_tool_registry.mcp_client = None
+            all_tools = await default_tool_registry.get_all_tools()
+        elif isinstance(orig_connections, dict):
+            # 仅保留已在线的服务连接进行工具动态发现
+            filtered = {}
+            if logistics_online and "logistics" in orig_connections:
+                filtered["logistics"] = orig_connections["logistics"]
+            if aftersale_online and "aftersale" in orig_connections:
+                filtered["aftersale"] = orig_connections["aftersale"]
+            client.connections = filtered
+            all_tools = await default_tool_registry.get_all_tools()
+        else:
+            all_tools = await default_tool_registry.get_all_tools()
+    finally:
+        if not logistics_online and not aftersale_online:
+            default_tool_registry.mcp_client = client
+        elif client and orig_connections is not None:
+            client.connections = orig_connections
+
+    builtin_tools = [t for t in all_tools if getattr(t, "tool_source", "builtin") == "builtin"]
+    mcp_tools = [t for t in all_tools if getattr(t, "tool_source", "") == "mcp"]
+
+    print(f"  • 工具注册中心: 动态就绪 {len(all_tools)} 个工具 (内置: {len(builtin_tools)}, MCP: {len(mcp_tools)})  ✅ [OK]")
+    if builtin_tools:
+        print(f"    ↳ 内置工具: {', '.join(t.name for t in builtin_tools)}")
+    if mcp_tools:
+        mcp_names = [f"{t.name} ({getattr(t, 'mcp_server', 'mcp')})" for t in mcp_tools]
+        print(f"    ↳ MCP 动态工具: {', '.join(mcp_names)}")
+    else:
+        print("    ↳ MCP 动态工具: 无 (服务离线或未注册动态工具，系统降级运行)")
+
     # 释放连接池，避免与后续 Uvicorn 子进程发生连接冲突
     await engine.dispose()
     return True
+
+
+def check_port_availability(host: str, port: int) -> bool:
+    """检查主服务端口是否空闲可用。若已被占用则返回 False 并输出友好诊断提示。"""
+    from scripts.wsl_helper import is_port_open
+
+    if is_port_open(host, port, timeout=0.5):
+        print("\n" + "!" * 65)
+        print(f"❌ [端口冲突] 检测到端口 {host}:{port} 已被其它程序占用！")
+        print("   💡 建议解决方案:")
+        print("      1. 关闭正在占用该端口的旧进程/服务；")
+        print("      2. 或启动时指定其它可用端口: python run.py --port 8080")
+        print("!" * 65 + "\n")
+        return False
+    return True
+
+
+def open_browser_async(url: str, delay: float = 0.8):
+    """异步延迟在系统默认浏览器中打开指定 URL，避免阻塞主服务就绪循环。"""
+    import threading
+    import webbrowser
+
+    def _worker():
+        time.sleep(delay)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def print_banner(host: str, port: int):
@@ -231,6 +357,13 @@ def print_banner(host: str, port: int):
         print(f"  🪟 上下文管理 (Tokens): 窗口 {active_settings.model_context_window} | 滑窗 {budget.window_budget} (L1:{budget.layer1_budget}/L2:{budget.layer2_budget})")
     except Exception:
         pass
+    try:
+        from app.tools.registry import default_tool_registry
+        builtin_count = len(default_tool_registry.get_all_builtin_tools())
+        print(f"  🔌 协议拓展 (MCP Server): 物流(:8001) | 售后(:8002) (Streamable HTTP)")
+        print(f"  🛠️ 工具注册中心 (Tools): 内置 {builtin_count} 项 | 审计表 (tool_audit_logs 就绪)")
+    except Exception:
+        pass
     print("=" * 65)
     print("  [提示] 按 Ctrl+C 即可安全停止服务。\n")
 
@@ -242,6 +375,8 @@ def main():
     parser.add_argument("--no-reload", action="store_true", help="禁用代码热重载 (默认开启便于调试)")
     parser.add_argument("--check-only", action="store_true", help="仅执行环境与存储状态自检，不启动 Web 服务")
     parser.add_argument("--clean-kb", action="store_true", help="启动前强制重建知识库向量数据")
+    parser.add_argument("--no-mcp", action="store_true", help="禁用自动拉起外部 MCP 独立服务子进程")
+    parser.add_argument("--no-browser", action="store_true", help="禁用主服务就绪后自动在浏览器打开聊天界面")
     args = parser.parse_args()
 
     # 1. 环境基础检查
@@ -249,20 +384,49 @@ def main():
         print("\n❌ 环境检查未通过，启动终止。")
         sys.exit(1)
 
-    # 2. 存储与容器就绪检查
+    # 2. 联动拉起 MCP 独立子进程（若未显式禁用）
+    mcp_manager = None
+    if not args.no_mcp:
+        print("\n" + "=" * 65)
+        print("🚀 [联动服务] 检查并拉起外部 MCP 独立进程服务")
+        print("=" * 65)
+        try:
+            from scripts.mcp_process_manager import MCPServerManager
+            mcp_manager = MCPServerManager()
+            mcp_manager.start_servers(verbose=True)
+        except Exception as e:
+            print(f"  ⚠️ MCP 子进程管理器启动异常: {e}，将降级运行")
+
+    # 3. 存储与容器就绪检查
     storage_ready = asyncio.run(check_storage_readiness(clean_kb=args.clean_kb))
     if not storage_ready:
         print("\n❌ 存储就绪检查未通过，启动终止。")
+        if mcp_manager:
+            mcp_manager.stop_all()
         sys.exit(1)
 
     if args.check_only:
         print("\n🎉 [检查完成] 所有环境、容器与存储状态均已就绪！(--check-only 模式，退出启动)")
+        if mcp_manager:
+            mcp_manager.stop_all()
         sys.exit(0)
 
-    # 3. 打印仪表盘
+    # 4. 主服务端口冲突检查
+    if not check_port_availability(args.host, args.port):
+        if mcp_manager:
+            mcp_manager.stop_all()
+        sys.exit(1)
+
+    # 5. 打印仪表盘
     print_banner(args.host, args.port)
 
-    # 4. 启动 Uvicorn 主服务
+    # 6. 自动异步打开系统浏览器
+    if not args.no_browser:
+        display_host = "127.0.0.1" if args.host in ("0.0.0.0", "127.0.0.1") else args.host
+        chat_url = f"http://{display_host}:{args.port}/chat"
+        open_browser_async(chat_url, delay=0.8)
+
+    # 7. 启动 Uvicorn 主服务
     import uvicorn
     reload_enabled = not args.no_reload
     try:
@@ -275,6 +439,9 @@ def main():
         )
     except KeyboardInterrupt:
         print("\n👋 AstroBot 服务已安全停止。")
+    finally:
+        if mcp_manager:
+            mcp_manager.stop_all()
 
 
 if __name__ == "__main__":

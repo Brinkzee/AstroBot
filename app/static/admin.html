@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 后台聚合管理中心</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+  <style>
+    .portal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 20px;
+    }
+    .portal-card {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.25s ease;
+      text-decoration: none;
+      color: inherit;
+    }
+    .portal-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-lg);
+      border-color: #93c5fd;
+    }
+    .portal-card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .portal-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      background: var(--bg-color);
+      border: 1px solid var(--border-color);
+    }
+    .portal-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .portal-desc {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.55;
+      margin-bottom: 16px;
+      flex: 1;
+    }
+    .portal-stats {
+      background: #f8fafc;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .portal-action {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      color: var(--primary);
+      font-weight: 600;
+      font-size: 13.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Top Welcome Banner -->
+    <div style="margin-bottom:24px;">
+      <h1 style="font-size:24px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:10px;">
+        ⚙️ AstroBot 智能电商客服后台聚合管理中心
+      </h1>
+      <p style="font-size:14px; color:var(--text-muted); margin-top:6px;">
+        全方位监控知识沉淀、数据飞轮流转、多标签分类模型验收与生产质量成本。
+      </p>
+    </div>
+
+    <!-- Chapter 10 Feature Spotlight Hero -->
+    <div class="section-block" style="border-left: 6px solid var(--primary); background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="badge" style="background:#2563eb; color:#fff;">第十章重磅交付</span>
+            <h2 style="font-size:18px; font-weight:700; color:#0f172a;">
+              多标签主题分类器、独立推理服务与九项实证验收体系
+            </h2>
+          </div>
+          <p style="font-size:13.5px; color:#475569; margin-top:8px; line-height:1.6; max-width:850px;">
+            全参微调哈工大讯飞中文 RoBERTa 模型，实现 17 类多标签精准归类与多诉求识别；配备独立轻量 ONNX 推理服务 (:8110)、低置信度问题旁路批处理流水线，以及 9 项严格实证硬闸验收。
+          </p>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <a href="/acceptance" class="btn-primary">🛡️ 实证验收总览</a>
+          <a href="/topic-distribution" class="btn-secondary">📊 主题分布看板</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Portal Cards Grid -->
+    <div class="portal-grid">
+      <!-- 1. Empirical Acceptance (Chapter 10) -->
+      <a href="/acceptance" class="portal-card" style="border-top: 4px solid var(--primary);">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">🛡️</div>
+            <div>
+              <div class="portal-title">九项实证验收</div>
+              <span class="badge badge-pass" id="portal-gate-badge">0 / 9 达标</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            零泄漏硬闸、17 类分档 F1 红线、三向记账平衡、9 候选线阈值复算与 ONNX 一致性全链路监管。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>实证闸门通过数</span>
+            <strong id="portal-gate-count" style="color:var(--primary); font-size:16px;">0 / 9</strong>
+          </div>
+          <div class="portal-action">进入验收总览 ➔</div>
+        </div>
+      </a>
+
+      <!-- 2. Topic Distribution (Chapter 10) -->
+      <a href="/topic-distribution" class="portal-card" style="border-top: 4px solid var(--warning);">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">📊</div>
+            <div>
+              <div class="portal-title">17 类主题分布</div>
+              <span class="badge badge-top3">飞轮决策入口</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            17 类目横向柱状图，实时识别 Top 3 高频堆积盲区，指导知识库优先补充重点。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>待处理堆积量</span>
+            <strong id="portal-unclassified-count" style="color:var(--warning-dark); font-size:16px;">0 条</strong>
+          </div>
+          <div class="portal-action">查看主题分布 ➔</div>
+        </div>
+      </a>
+
+      <!-- 3. Review Queue (Chapter 9) -->
+      <a href="/review-queue" class="portal-card">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">🔄</div>
+            <div>
+              <div class="portal-title">飞轮待审队列</div>
+              <span class="badge badge-missing">数据飞轮</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            低置信度问题语义聚类与去重，运营人员一键核准或驳回 AI 推荐回答并自动写回知识库。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>飞轮流转</span>
+            <span>半自动知识演进</span>
+          </div>
+          <div class="portal-action">进入待审队列 ➔</div>
+        </div>
+      </a>
+
+      <!-- 4. Observability (Chapter 9) -->
+      <a href="/observability" class="portal-card">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">📈</div>
+            <div>
+              <div class="portal-title">观测与成本看版</div>
+              <span class="badge" style="background:#eff6ff;color:var(--primary);">质量与成本</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            全链路 Trace 意图成本测算、RAG 评估多轮趋势对比与置信度阈值动态校准。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>成本账目</span>
+            <span>按意图精细化计量</span>
+          </div>
+          <div class="portal-action">查看监控看板 ➔</div>
+        </div>
+      </a>
+
+      <!-- 5. Knowledge Base (Chapter 8) -->
+      <a href="/kb" class="portal-card">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">📚</div>
+            <div>
+              <div class="portal-title">知识库管理</div>
+              <span class="badge" style="background:#f1f5f9;color:#475569;">向量与切片</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            官方 FAQ 与商品规则文档维护，混合检索与 Rerank 索引持久化。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>检索增强</span>
+            <span>精准事实供给</span>
+          </div>
+          <div class="portal-action">进入知识库 ➔</div>
+        </div>
+      </a>
+
+      <!-- 6. Online Customer Service Chat -->
+      <a href="/chat" class="portal-card">
+        <div>
+          <div class="portal-card-header">
+            <div class="portal-icon">💬</div>
+            <div>
+              <div class="portal-title">在线客服体验</div>
+              <span class="badge badge-pass">生产就绪</span>
+            </div>
+          </div>
+          <div class="portal-desc">
+            多轮 SSE 流式对话、客服角色约束、意图识别与售后工单结构化提取。
+          </div>
+        </div>
+        <div>
+          <div class="portal-stats">
+            <span>用户端窗口</span>
+            <span>即时交互验证</span>
+          </div>
+          <div class="portal-action">发起对话体验 ➔</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    async function loadAdminSummary() {
+      try {
+        // Load acceptance overview count
+        const overview = await fetchAcceptanceOverview();
+        const passed = overview.passed_count || 0;
+        const total = overview.total_count || 9;
+        document.getElementById('portal-gate-count').innerText = `${passed} / ${total}`;
+        const gateBadgeEl = document.getElementById('portal-gate-badge');
+        if (passed === total) {
+          gateBadgeEl.className = 'badge badge-pass';
+          gateBadgeEl.innerText = '9 / 9 全部达标';
+        } else {
+          gateBadgeEl.className = 'badge badge-missing';
+          gateBadgeEl.innerText = `${passed} / ${total} 达标`;
+        }
+
+        // Load topic distribution accumulation
+        const dist = await fetchTopicDistribution();
+        const unclassified = dist.total_unclassified || 0;
+        document.getElementById('portal-unclassified-count').innerText = `${unclassified.toLocaleString()} 条`;
+
+      } catch (err) {
+        console.error("加载管理中心摘要失败", err);
+      }
+    }
+
+    window.onload = loadAdminSummary;
+  </script>
+</body>
+</html>

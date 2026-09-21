@@ -58,23 +58,25 @@ async def knowledge_fallback_node(
     # 异步沉淀至 low_confidence_questions 表
     if db is not None:
         try:
-            from app.models.low_confidence import LowConfidenceQuestion
-            try:
-                low_q = LowConfidenceQuestion(
-                    raw_question=query,
-                    source="retrieval_low_conf",
-                    conversation_id=target_conv_id,
-                    reason="retrieval_score_below_threshold",
-                )
-            except Exception:
-                low_q = LowConfidenceQuestion(
-                    query=query,
-                    conversation_id=conv_id,
-                    entrance="workflow_confidence_gate",
-                    reason="retrieval_score_below_threshold",
-                )
-            db.add(low_q)
-            await db.commit()
+            from app.models.low_confidence import record_low_confidence
+            retrieved_docs = state.get("retrieved_docs") or []
+            retrieved_chunks = [
+                {
+                    "text": str(doc.get("text") or doc.get("content") or "")[:300],
+                    "score": float(doc.get("score") or 0.0),
+                    "section": str(doc.get("section_path") or doc.get("section") or "")
+                }
+                for doc in retrieved_docs[:5]
+            ] if retrieved_docs else None
+
+            await record_low_confidence(
+                db=db,
+                raw_question=query,
+                source="retrieval_low_conf",
+                conversation_id=target_conv_id,
+                reason="retrieval_score_below_threshold",
+                retrieved_chunks=retrieved_chunks
+            )
         except Exception as e:
             logger.warning(f"沉淀低置信度问题失败: {e}")
 

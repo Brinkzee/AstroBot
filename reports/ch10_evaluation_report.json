@@ -1,0 +1,637 @@
+{
+  "summary": {
+    "macro_f1": 0.9723,
+    "macro_precision": 0.9598,
+    "macro_recall": 0.9882,
+    "micro_f1": 0.9728,
+    "micro_precision": 0.9572,
+    "micro_recall": 0.989,
+    "total_samples": 161,
+    "total_error_samples": 9
+  },
+  "threshold": 0.35,
+  "per_class": [
+    {
+      "category": "退换货",
+      "tier": "strict",
+      "redline": 0.9,
+      "precision": 0.9333,
+      "recall": 1.0,
+      "f1": 0.9655,
+      "support": 14,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 14,
+        "fp": 1,
+        "tn": 146,
+        "fn": 0
+      }
+    },
+    {
+      "category": "物流",
+      "tier": "strict",
+      "redline": 0.9,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 12,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 12,
+        "fp": 0,
+        "tn": 149,
+        "fn": 0
+      }
+    },
+    {
+      "category": "尺码",
+      "tier": "strict",
+      "redline": 0.9,
+      "precision": 0.8333,
+      "recall": 1.0,
+      "f1": 0.9091,
+      "support": 10,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 10,
+        "fp": 2,
+        "tn": 149,
+        "fn": 0
+      }
+    },
+    {
+      "category": "发票",
+      "tier": "strict",
+      "redline": 0.9,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "质量问题",
+      "tier": "strict",
+      "redline": 0.9,
+      "precision": 0.8182,
+      "recall": 1.0,
+      "f1": 0.9,
+      "support": 9,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 9,
+        "fp": 2,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "运费",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "优惠活动",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 0.9231,
+      "recall": 1.0,
+      "f1": 0.96,
+      "support": 12,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 12,
+        "fp": 1,
+        "tn": 148,
+        "fn": 0
+      }
+    },
+    {
+      "category": "价保",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 0.9,
+      "recall": 1.0,
+      "f1": 0.9474,
+      "support": 9,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 9,
+        "fp": 1,
+        "tn": 151,
+        "fn": 0
+      }
+    },
+    {
+      "category": "支付",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 10,
+        "fp": 0,
+        "tn": 151,
+        "fn": 0
+      }
+    },
+    {
+      "category": "订单修改",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "库存补货",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "商品信息",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 0.9091,
+      "recall": 1.0,
+      "f1": 0.9524,
+      "support": 10,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 10,
+        "fp": 1,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "保修维修",
+      "tier": "medium",
+      "redline": 0.8,
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9474,
+      "support": 10,
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
+      "confusion_matrix": {
+        "tp": 9,
+        "fp": 0,
+        "tn": 151,
+        "fn": 1
+      }
+    },
+    {
+      "category": "账号",
+      "tier": "loose",
+      "redline": null,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "none",
+      "status_symbol": "—",
+      "passed": null,
+      "message": "不设线（宽档）",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "会员积分",
+      "tier": "loose",
+      "redline": null,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 11,
+      "status": "none",
+      "status_symbol": "—",
+      "passed": null,
+      "message": "不设线（宽档）",
+      "confusion_matrix": {
+        "tp": 11,
+        "fp": 0,
+        "tn": 150,
+        "fn": 0
+      }
+    },
+    {
+      "category": "评价",
+      "tier": "loose",
+      "redline": null,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 9,
+      "status": "none",
+      "status_symbol": "—",
+      "passed": null,
+      "message": "不设线（宽档）",
+      "confusion_matrix": {
+        "tp": 9,
+        "fp": 0,
+        "tn": 152,
+        "fn": 0
+      }
+    },
+    {
+      "category": "其他",
+      "tier": "loose",
+      "redline": null,
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9474,
+      "support": 10,
+      "status": "none",
+      "status_symbol": "—",
+      "passed": null,
+      "message": "不设线（宽档）",
+      "confusion_matrix": {
+        "tp": 9,
+        "fp": 0,
+        "tn": 151,
+        "fn": 1
+      }
+    }
+  ],
+  "confusion_matrices": {
+    "退换货": {
+      "tp": 14,
+      "fp": 1,
+      "tn": 146,
+      "fn": 0
+    },
+    "物流": {
+      "tp": 12,
+      "fp": 0,
+      "tn": 149,
+      "fn": 0
+    },
+    "尺码": {
+      "tp": 10,
+      "fp": 2,
+      "tn": 149,
+      "fn": 0
+    },
+    "发票": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "质量问题": {
+      "tp": 9,
+      "fp": 2,
+      "tn": 150,
+      "fn": 0
+    },
+    "运费": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "优惠活动": {
+      "tp": 12,
+      "fp": 1,
+      "tn": 148,
+      "fn": 0
+    },
+    "价保": {
+      "tp": 9,
+      "fp": 1,
+      "tn": 151,
+      "fn": 0
+    },
+    "支付": {
+      "tp": 10,
+      "fp": 0,
+      "tn": 151,
+      "fn": 0
+    },
+    "订单修改": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "库存补货": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "商品信息": {
+      "tp": 10,
+      "fp": 1,
+      "tn": 150,
+      "fn": 0
+    },
+    "保修维修": {
+      "tp": 9,
+      "fp": 0,
+      "tn": 151,
+      "fn": 1
+    },
+    "账号": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "会员积分": {
+      "tp": 11,
+      "fp": 0,
+      "tn": 150,
+      "fn": 0
+    },
+    "评价": {
+      "tp": 9,
+      "fp": 0,
+      "tn": 152,
+      "fn": 0
+    },
+    "其他": {
+      "tp": 9,
+      "fp": 0,
+      "tn": 151,
+      "fn": 1
+    }
+  },
+  "error_accounting": {
+    "total_error_samples": 9,
+    "under_tag_count": 1,
+    "over_tag_count": 7,
+    "displaced_count": 1,
+    "total_penalty": 10,
+    "confusion_matrix_sum": 10,
+    "balanced": true
+  },
+  "error_samples": [
+    {
+      "text": "这猫砂盆搞活动不，俺瞅着价格有点高哩。",
+      "true_labels": [
+        "优惠活动"
+      ],
+      "pred_labels": [
+        "优惠活动",
+        "价保"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "价保"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "会原专享价是不是必须达到某个等级才能看到？",
+      "true_labels": [
+        "会员积分"
+      ],
+      "pred_labels": [
+        "优惠活动",
+        "会员积分"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "优惠活动"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "自动饮水机的线被猫咬坏了，这种情况还能保修吗？",
+      "true_labels": [
+        "保修维修"
+      ],
+      "pred_labels": [
+        "质量问题",
+        "保修维修"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "质量问题"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "猫抓板用旧了可以回收吗",
+      "true_labels": [
+        "其他"
+      ],
+      "pred_labels": [
+        "商品信息"
+      ],
+      "missed_labels": [
+        "其他"
+      ],
+      "extra_labels": [
+        "商品信息"
+      ],
+      "displaced_count": 1,
+      "under_tag_count": 0,
+      "over_tag_count": 0,
+      "penalty": 2,
+      "boundary_note": "—"
+    },
+    {
+      "text": "俺想问下这个猫粮颗粒大不大，俺家小猫牙口嫩能嚼动不？",
+      "true_labels": [
+        "商品信息"
+      ],
+      "pred_labels": [
+        "尺码",
+        "商品信息"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "尺码"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "这款猫粮颗粒大不大，牙口不太好的成年猫嚼得动吗？",
+      "true_labels": [
+        "商品信息"
+      ],
+      "pred_labels": [
+        "尺码",
+        "商品信息"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "尺码"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "猫砂盆显示揽收后一直没动，是不是丢件了？",
+      "true_labels": [
+        "物流"
+      ],
+      "pred_labels": [
+        "物流",
+        "质量问题"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "质量问题"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    },
+    {
+      "text": "猫爬架配件坏了能寄新的给我吗，补发的物流大概几天到？",
+      "true_labels": [
+        "保修维修",
+        "物流"
+      ],
+      "pred_labels": [
+        "物流"
+      ],
+      "missed_labels": [
+        "保修维修"
+      ],
+      "extra_labels": [],
+      "displaced_count": 0,
+      "under_tag_count": 1,
+      "over_tag_count": 0,
+      "penalty": 1,
+      "boundary_note": "保修维修: 修归保修维修、退归退换货"
+    },
+    {
+      "text": "退货运费由谁承担",
+      "true_labels": [
+        "运费"
+      ],
+      "pred_labels": [
+        "退换货",
+        "运费"
+      ],
+      "missed_labels": [],
+      "extra_labels": [
+        "退换货"
+      ],
+      "displaced_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
+      "penalty": 1,
+      "boundary_note": "—"
+    }
+  ],
+  "candidate_scores": {
+    "0.30": 0.9742,
+    "0.35": 0.9767,
+    "0.40": 0.9767,
+    "0.45": 0.9688,
+    "0.50": 0.9688,
+    "0.55": 0.9713,
+    "0.60": 0.9764,
+    "0.65": 0.9763,
+    "0.70": 0.9681
+  },
+  "generated_at": "2026-09-21T14:06:02.234986Z"
+}

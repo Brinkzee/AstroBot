@@ -19,7 +19,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.api.review_queue_routes import review_queue_router
+from app.api.observability import router as observability_router
+from app.api.jobs import router as jobs_router
+from app.api.acceptance import router as acceptance_router, topics_router
+
+app.include_router(jobs_router)
 app.include_router(router)
+app.include_router(review_queue_router)
+app.include_router(observability_router)
+app.include_router(acceptance_router)
+app.include_router(topics_router)
 
 static_dir = os.path.join(os.path.dirname(__file__), "app", "static")
 if os.path.exists(static_dir):
@@ -41,6 +51,46 @@ def get_kb_page():
 def get_rag_eval_page():
     eval_file = os.path.join(static_dir, "rag_eval.html")
     return FileResponse(eval_file)
+
+@app.get("/observability")
+def get_observability_page():
+    file_path = os.path.join(static_dir, "observability.html")
+    return FileResponse(file_path)
+
+@app.get("/review-queue")
+def get_review_queue_page():
+    file_path = os.path.join(static_dir, "review_queue.html")
+    return FileResponse(file_path)
+
+@app.get("/topic-distribution")
+def get_topic_distribution_page():
+    file_path = os.path.join(static_dir, "topic_distribution.html")
+    return FileResponse(file_path)
+
+@app.get("/acceptance")
+def get_acceptance_page():
+    file_path = os.path.join(static_dir, "acceptance.html")
+    return FileResponse(file_path)
+
+@app.get("/acceptance/eval")
+def get_acceptance_eval_page():
+    file_path = os.path.join(static_dir, "acceptance_eval.html")
+    return FileResponse(file_path)
+
+@app.get("/acceptance/data")
+def get_acceptance_data_page():
+    file_path = os.path.join(static_dir, "acceptance_data.html")
+    return FileResponse(file_path)
+
+@app.get("/acceptance/errors")
+def get_acceptance_errors_page():
+    file_path = os.path.join(static_dir, "acceptance_errors.html")
+    return FileResponse(file_path)
+
+@app.get("/admin")
+def get_admin_page():
+    file_path = os.path.join(static_dir, "admin.html")
+    return FileResponse(file_path)
 
 @app.get("/health")
 def health():

@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -224,6 +225,29 @@ class ChatService:
                     layer1_messages=layer1_messages,
                 )
 
+                # 6.1 检测工作流是否挂起 (LangGraph interrupt)
+                interrupts = final_state.get("__interrupt__")
+                if interrupts:
+                    interrupt_items = interrupts if isinstance(interrupts, (list, tuple)) else [interrupts]
+                    for item in interrupt_items:
+                        val = getattr(item, "value", item)
+                        if isinstance(val, dict) and "value" in val:
+                            val = val["value"]
+                        if isinstance(val, dict):
+                            if val.get("event_type") == "ticket_preview":
+                                yield {
+                                    "event_type": "ticket_preview",
+                                    "conversation_id": val.get("conversation_id", conv_id),
+                                    "ticket_type": val.get("ticket_type", "售后"),
+                                    "description": val.get("description", ""),
+                                    "tool_call_id": val.get("tool_call_id", ""),
+                                }
+                                return
+                            elif "event_type" in val:
+                                yield val
+                                return
+                    return
+
                 # 7. 如果有工具调用历史（优先提取本轮新产生的工具消息，杜绝扫描历史消息导致重复回显与入库）
                 msgs = final_state.get("current_turn_tool_messages")
                 if msgs is None:
@@ -342,7 +366,11 @@ class ChatService:
             prompt_messages = prompt_value.to_messages()
 
             # 4. 获取决策模型并绑定工具集
-            tools = self.registry.get_all_tools()
+            tools_res = self.registry.get_all_tools()
+            if inspect.isawaitable(tools_res):
+                tools = await tools_res
+            else:
+                tools = tools_res
             llm = self.model if self.model is not None else get_chat_model(streaming=False)
             if tools and hasattr(llm, "bind_tools"):
                 bound_llm = llm.bind_tools(tools)
@@ -566,3 +594,102 @@ class ChatService:
                 "conversation_id": conv_id,
                 "error": str(e),
             }
+
+    async def resume_chat(
+        self,
+        db: AsyncSession,
+        conversation_id: int,
+        action: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """恢复挂起工作流的流式接口
+
+        Yields:
+            {"event_type": "tool_start", "conversation_id": int, "tool_name": str, "tool_label": str, "args": dict}
+            {"event_type": "tool_end", "conversation_id": int, "tool_name": str, "success": bool}
+            {"event_type": "text", "conversation_id": int, "content": str}
+            {"event_type": "actions", "conversation_id": int, "actions": list}
+            {"event_type": "error", "conversation_id": int, "error": str}
+        """
+        try:
+            if self.workflow_engine is None:
+                self.workflow_engine = WorkflowEngine()
+            engine = self.workflow_engine
+
+            final_state = await engine.resume(conversation_id=conversation_id, action=action)
+
+            # 1. 发射工具执行事件（若有）
+            msgs = final_state.get("current_turn_tool_messages") or []
+            tool_call_map: Dict[str, str] = {}
+            for m in msgs:
+                if hasattr(m, "tool_calls") and m.tool_calls:
+                    for tc in m.tool_calls:
+                        t_name = tc.get("name", "")
+                        t_id = str(tc.get("id") or "")
+                        if t_id:
+                            tool_call_map[t_id] = t_name
+                        t_label = self.TOOL_LABELS.get(t_name, t_name)
+                        t_args = tc.get("args") or {}
+                        yield {
+                            "event_type": "tool_start",
+                            "conversation_id": conversation_id,
+                            "tool_name": t_name,
+                            "tool_label": t_label,
+                            "args": t_args,
+                        }
+                        await self.save_message(
+                            db,
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=m.content if m.content else None,
+                            tool_calls=[tc],
+                        )
+                elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+                    t_content = str(m.content or "")
+                    t_call_id = str(getattr(m, "tool_call_id", "") or "")
+                    t_name = getattr(m, "name", "") or tool_call_map.get(t_call_id, "")
+                    yield {
+                        "event_type": "tool_end",
+                        "conversation_id": conversation_id,
+                        "tool_name": t_name,
+                        "success": not t_content.startswith("执行异常"),
+                    }
+                    await self.save_message(
+                        db,
+                        conversation_id=conversation_id,
+                        role="tool",
+                        content=t_content,
+                        tool_call_id=t_call_id,
+                    )
+
+            # 2. 输出 text 文本事件并落库
+            resp_text = str(final_state.get("response_text") or "")
+            if resp_text:
+                yield {
+                    "event_type": "text",
+                    "conversation_id": conversation_id,
+                    "content": resp_text,
+                }
+                await self.save_message(
+                    db,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=resp_text,
+                )
+
+            # 3. 输出建议操作
+            actions = final_state.get("suggested_actions") or []
+            if actions:
+                yield {
+                    "event_type": "actions",
+                    "conversation_id": conversation_id,
+                    "actions": actions,
+                }
+
+        except Exception as e:
+            logger.exception(f"Fatal error in resume_chat: {e}")
+            yield {
+                "event_type": "error",
+                "conversation_id": conversation_id,
+                "error": str(e),
+            }
+

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AstroBot - 主题分布看板</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          📊 待审问题 17 类主题分布看板
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          对低置信度问题池进行 17 类多标签精准归类，指导数据飞轮后台「先补哪块知识库」。
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" onclick="runAcceptanceJob('classify-pool', { onComplete: loadDistribution })">
+          ⚡ 执行批量归类 (classify-pool)
+        </button>
+        <button class="btn-secondary" onclick="loadDistribution()">
+          🔄 刷新数据
+        </button>
+      </div>
+    </div>
+
+    <!-- KPI Grid -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">已归类问题总数</div>
+        <div class="kpi-value" id="kpi-classified">0</div>
+        <div class="kpi-sub">已持久化至 topic_classifications</div>
+      </div>
+      <div class="kpi-card" style="border-left: 4px solid var(--warning);">
+        <div class="kpi-title">未归类待处理堆积量</div>
+        <div class="kpi-value" id="kpi-unclassified" style="color:var(--warning-dark);">0</div>
+        <div class="kpi-sub">待审池中等待批量归类的问题</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">待审池总容量</div>
+        <div class="kpi-value" id="kpi-total">0</div>
+        <div class="kpi-sub">低置信度问题累计沉淀总数</div>
+      </div>
+      <div class="kpi-card" style="border-left: 4px solid var(--danger);">
+        <div class="kpi-title">Top 1 堆积最高频主题</div>
+        <div class="kpi-value" id="kpi-top1" style="font-size:22px; color:var(--danger);">-</div>
+        <div class="kpi-sub" style="color:var(--danger); font-weight:600;">知识库优先补充重点 #1</div>
+      </div>
+    </div>
+
+    <!-- Alert for unclassified accumulation -->
+    <div id="accumulation-alert" class="alert-banner alert-warning" style="display:none;">
+      ⚠️ <strong>待处理池堆积提醒</strong>：当前有 <span id="alert-unclassified-count">0</span> 条低置信度问题尚未归类，建议点击右上角「执行批量归类」进行批量标注。
+    </div>
+
+    <!-- Top 3 Priority Recommendation Card -->
+    <div class="section-block" id="top3-section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">🎯 知识库补充决策建议 (Top 3 堆积优先攻坚)</div>
+          <div class="section-desc">基于近期用户咨询盲区频次，识别最急需扩充官方 FAQ 与知识切片的权威领域</div>
+        </div>
+      </div>
+      <div id="top3-cards" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+        <!-- Injected via JS -->
+      </div>
+    </div>
+
+    <!-- 17-Class Bar Chart Section -->
+    <div class="section-block">
+      <div class="section-header">
+        <div>
+          <div class="section-title">📈 17 类目频次与占比全景图 (纯 HTML/CSS 渐变条形图)</div>
+          <div class="section-desc">按问题命中频次从高到低排序，Top 3 鲜明高亮，展示类目分档与优先级</div>
+        </div>
+      </div>
+      <div id="chart-empty" class="empty-state" style="display:none;">
+        暂无主题分类数据。请先执行批量归类流水线 (<code>make classify-pool</code>)。
+      </div>
+      <div id="chart-container" class="bar-chart-container">
+        <!-- Bars injected via JS -->
+      </div>
+    </div>
+
+    <!-- Detailed Table Section -->
+    <div class="section-block">
+      <div class="section-header">
+        <div>
+          <div class="section-title">📋 17 类目详细统计明细表</div>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>排名</th>
+            <th>权威类目</th>
+            <th>分档红线</th>
+            <th>命中频次</th>
+            <th>标签占比</th>
+            <th>问题覆盖率</th>
+            <th>优先级标注</th>
+          </tr>
+        </thead>
+        <tbody id="distribution-tbody">
+          <!-- Rows injected via JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+  <script src="/static/acceptance.js"></script>
+  <script>
+    async function loadDistribution() {
+      try {
+        const data = await fetchTopicDistribution();
+        
+        // KPIs
+        const classified = data.total_classified || 0;
+        const unclassified = data.total_unclassified || 0;
+        const total = data.total_pool || (classified + unclassified);
+        const top1 = data.top_1_topic || (data.top_3_topics && data.top_3_topics[0]) || '-';
+
+        document.getElementById('kpi-classified').innerText = classified.toLocaleString();
+        document.getElementById('kpi-unclassified').innerText = unclassified.toLocaleString();
+        document.getElementById('kpi-total').innerText = total.toLocaleString();
+        document.getElementById('kpi-top1').innerText = top1;
+
+        // Alert
+        const alertEl = document.getElementById('accumulation-alert');
+        if (unclassified > 0) {
+          alertEl.style.display = 'flex';
+          document.getElementById('alert-unclassified-count').innerText = unclassified;
+        } else {
+          alertEl.style.display = 'none';
+        }
+
+        const items = data.distribution || [];
+        // Sort descending by count
+        const sortedItems = [...items].sort((a, b) => b.count - a.count);
+
+        // Top 3 Cards
+        const top3List = sortedItems.slice(0, 3).filter(x => x.count > 0);
+        const top3CardsEl = document.getElementById('top3-cards');
+        if (top3List.length === 0) {
+          top3CardsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13.5px;">暂无高频堆积主题，待审池健康。</div>';
+        } else {
+          top3CardsEl.innerHTML = top3List.map((item, idx) => `
+            <div style="background:var(--bg-color);border:1px solid var(--border-color);border-top:4px solid ${idx===0 ? 'var(--danger)' : 'var(--warning)'};border-radius:10px;padding:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-weight:700;font-size:16px;color:#0f172a;">#${idx+1} ${item.category}</span>
+                <span class="badge badge-top3">⭐ 重点补充</span>
+              </div>
+              <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">
+                堆积命中 <strong>${item.count}</strong> 次 (占比 <strong>${item.percentage}%</strong>)
+              </div>
+              <div style="font-size:12.5px;color:#475569;background:#fff;padding:8px;border-radius:6px;border:1px solid var(--border-color);">
+                建议行动：优先在知识库管理中补充「${item.category}」相关官方 FAQ 与文档切片。
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // Horizontal Bar Chart (Pure HTML/CSS)
+        const maxCount = sortedItems.length > 0 ? Math.max(...sortedItems.map(x => x.count), 1) : 1;
+        const chartContainer = document.getElementById('chart-container');
+        const chartEmpty = document.getElementById('chart-empty');
+
+        if (classified === 0) {
+          chartContainer.style.display = 'none';
+          chartEmpty.style.display = 'block';
+        } else {
+          chartContainer.style.display = 'flex';
+          chartEmpty.style.display = 'none';
+
+          chartContainer.innerHTML = sortedItems.map((item, idx) => {
+            const isTop3 = idx < 3 && item.count > 0;
+            const barWidth = Math.max(2, (item.count / maxCount) * 100).toFixed(1);
+            return `
+              <div class="bar-chart-row">
+                <div class="bar-label">
+                  ${isTop3 ? '<span style="color:var(--danger);font-weight:bold;">#' + (idx + 1) + '</span>' : '<span style="color:var(--text-muted);">' + (idx + 1) + '</span>'}
+                  ${item.category}
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill ${isTop3 ? 'top3' : ''}" style="width: ${barWidth}%;"></div>
+                </div>
+                <div class="bar-meta">
+                  <strong>${item.count}</strong> 次 (${item.percentage}%)
+                  ${isTop3 ? '<span class="badge badge-top3" style="margin-left:4px;">Top ' + (idx + 1) + '</span>' : ''}
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // Table Rows
+        const tbody = document.getElementById('distribution-tbody');
+        tbody.innerHTML = sortedItems.map((item, idx) => {
+          const isTop3 = idx < 3 && item.count > 0;
+          let tierBadge = '<span class="badge tier-loose">宽 (—)</span>';
+          if (item.tier === 'strict') tierBadge = '<span class="badge tier-strict">严 (≥0.90)</span>';
+          else if (item.tier === 'medium') tierBadge = '<span class="badge tier-medium">中 (≥0.80)</span>';
+
+          return `
+            <tr class="${isTop3 ? 'highlight-row' : ''}">
+              <td><strong>${idx + 1}</strong></td>
+              <td style="font-weight:600;">${item.category}</td>
+              <td>${tierBadge}</td>
+              <td><strong>${item.count}</strong></td>
+              <td>${item.percentage}%</td>
+              <td>${item.question_percentage || '-'}%</td>
+              <td>
+                ${isTop3 ? '<span class="badge badge-top3">⭐ 知识库优先补充重点</span>' : '<span style="color:var(--text-muted);font-size:12px;">常规维护</span>'}
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (e) {
+        console.error("加载主题分布失败", e);
+        showToast("加载主题分布失败: " + e.message, "error");
+      }
+    }
+
+    window.onload = loadDistribution;
+  </script>
+</body>
+</html>

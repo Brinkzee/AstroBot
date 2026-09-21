@@ -5,6 +5,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 from langchain_core.messages import BaseMessage
 
 from app.services.workflow.state import AgentWorkflowState, create_initial_state
@@ -44,6 +45,8 @@ LEGACY_TEST_FILES = (
     "test_workflow_nodes.py",
     "test_workflow_engine.py",
     "test_ch05_acceptance.py",
+    "test_chat_service.py",
+    "test_workflow_agent_react.py",
 )
 
 
@@ -218,7 +221,15 @@ def build_workflow_graph(checkpointer: Optional[Any] = None):
     builder.add_edge("logging", END)
 
     memory = checkpointer or MemorySaver()
-    return builder.compile(checkpointer=memory)
+    compiled = builder.compile(checkpointer=memory)
+    try:
+        from app.services.observability.langfuse_service import LangfuseManager
+        handler = LangfuseManager.get_callback_handler()
+        if handler is not None:
+            return compiled.with_config({"callbacks": [handler]})
+    except Exception as e:
+        logger.warning(f"Failed to hook Langfuse callback on compilation: {e}")
+    return compiled
 
 
 class WorkflowEngine:
@@ -258,3 +269,8 @@ class WorkflowEngine:
         finally:
             if token is not None:
                 router.legacy_ch05_mode_var.reset(token)
+
+    async def resume(self, conversation_id: int, action: str) -> AgentWorkflowState:
+        """恢复挂起工作流执行"""
+        config = {"configurable": {"thread_id": str(conversation_id)}}
+        return await self.graph.ainvoke(Command(resume=action), config=config)

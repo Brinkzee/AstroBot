@@ -702,6 +702,8 @@
       <button class="btn-primary" id="btn-open-run-modal">⚡ 重跑 RAG 评估</button>
       <a href="/chat" class="btn-nav">💬 返回在线客服</a>
       <a href="/kb" class="btn-nav">📚 知识库管理</a>
+      <a href="/observability" class="btn-nav">📈 观测与成本</a>
+      <a href="/review-queue" class="btn-nav">🔄 飞轮待审</a>
       <a href="/docs" target="_blank" class="btn-nav">📖 API 接口文档</a>
     </div>
   </header>
@@ -719,6 +721,30 @@
 
     <!-- 正常工作台内容容器 -->
     <div id="workbench-content">
+
+      <!-- Quick Jump Cards -->
+      <div style="display: flex; gap: 16px; margin-bottom: 24px;">
+        <a href="/observability" style="flex: 1; text-decoration: none; display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: linear-gradient(to right, #eff6ff, #ffffff); border: 1px solid #bfdbfe; border-radius: var(--radius); transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.05);">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="font-size: 24px;">📈</div>
+            <div>
+              <div style="font-size: 15px; font-weight: 700; color: #1e293b;">观测与成本 (Observability)</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">查看意图成本、评估趋势与阈值校准</div>
+            </div>
+          </div>
+          <div style="color: var(--primary); font-weight: bold;">→</div>
+        </a>
+        <a href="/review-queue" style="flex: 1; text-decoration: none; display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: linear-gradient(to right, #f0fdf4, #ffffff); border: 1px solid #bbf7d0; border-radius: var(--radius); transition: all 0.2s; box-shadow: 0 2px 4px rgba(16,185,129,0.05);">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="font-size: 24px;">🔄</div>
+            <div>
+              <div style="font-size: 15px; font-weight: 700; color: #1e293b;">飞轮待审队列 (Review Queue)</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">处理线上 fallback 沉淀的新知识与负反馈</div>
+            </div>
+          </div>
+          <div style="color: #10b981; font-weight: bold;">→</div>
+        </a>
+      </div>
 
       <!-- 报告元信息条 -->
       <div class="meta-banner" id="report-meta-banner">

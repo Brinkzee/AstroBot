@@ -33,8 +33,10 @@ class TestRunCheckStorageReadiness:
 
     @pytest.mark.asyncio
     async def test_storage_readiness_calls_init_ch07_db(self, capsys):
-        """Mock init_ch07_db，验证其在存储检查阶段被正确调用并打印成功提示"""
+        """Mock init_ch07_db, init_ch08_db 与 init_ch09_db，验证其在存储检查阶段被正确调用并打印成功提示"""
         mock_init_ch07 = mock.AsyncMock(return_value=["ALTER TABLE conversations ..."])
+        mock_init_ch08 = mock.AsyncMock(return_value=["CREATE TABLE tool_audit_logs ..."])
+        mock_init_ch09 = mock.AsyncMock(return_value=["CREATE TABLE review_queue ..."])
         mock_session = mock.AsyncMock()
         mock_res_pending = mock.MagicMock()
         mock_res_pending.scalar.return_value = 0
@@ -58,14 +60,20 @@ class TestRunCheckStorageReadiness:
             mock.patch("app.db.session.engine", mock_engine),
             mock.patch("scripts.seed_data.seed_all_data", new_callable=mock.AsyncMock, return_value=0),
             mock.patch("scripts.init_ch07_db.init_ch07_db", mock_init_ch07),
+            mock.patch("scripts.init_ch08_db.init_ch08_db", mock_init_ch08),
+            mock.patch("scripts.init_ch09_db.init_ch09_db", mock_init_ch09),
             mock.patch("app.db.session.AsyncSessionLocal", return_value=mock_session_ctx),
             mock.patch("app.services.rag.milvus_client.MilvusKnowledgeStore", return_value=mock_store),
         ):
             ok = await run.check_storage_readiness(clean_kb=False)
             assert ok is True
             mock_init_ch07.assert_awaited_once()
+            mock_init_ch08.assert_awaited_once()
+            mock_init_ch09.assert_awaited_once()
             out = capsys.readouterr().out
             assert "第七章三层会话上下文数据表与字段迁移已就绪 ✅" in out
+            assert "第八章工具调用审计数据表 (tool_audit_logs) 迁移已就绪 ✅" in out
+            assert "第九章飞轮待审队列与评估记录数据表迁移已就绪 ✅" in out
 
     @pytest.mark.asyncio
     async def test_storage_readiness_init_ch07_db_failure_intercepts(self, capsys):
