@@ -1,23 +1,23 @@
 {
   "summary": {
-    "macro_f1": 0.9693,
-    "macro_precision": 0.9656,
-    "macro_recall": 0.9775,
-    "micro_f1": 0.9699,
-    "micro_precision": 0.962,
-    "micro_recall": 0.9779,
+    "macro_f1": 0.9723,
+    "macro_precision": 0.9598,
+    "macro_recall": 0.9882,
+    "micro_f1": 0.9728,
+    "micro_precision": 0.9572,
+    "micro_recall": 0.989,
     "total_samples": 161,
     "total_error_samples": 9
   },
-  "threshold": 0.45,
+  "threshold": 0.35,
   "per_class": [
     {
       "category": "退换货",
       "tier": "strict",
       "redline": 0.9,
-      "precision": 1.0,
+      "precision": 0.9333,
       "recall": 1.0,
-      "f1": 1.0,
+      "f1": 0.9655,
       "support": 14,
       "status": "pass",
       "status_symbol": "✅",
@@ -25,8 +25,8 @@
       "message": "达标",
       "confusion_matrix": {
         "tp": 14,
-        "fp": 0,
-        "tn": 147,
+        "fp": 1,
+        "tn": 146,
         "fn": 0
       }
     },
@@ -91,18 +91,18 @@
       "category": "质量问题",
       "tier": "strict",
       "redline": 0.9,
-      "precision": 0.75,
+      "precision": 0.8182,
       "recall": 1.0,
-      "f1": 0.8571,
+      "f1": 0.9,
       "support": 9,
-      "status": "fail",
-      "status_symbol": "❌",
-      "passed": false,
-      "message": "先回头搞数据 (F1: 0.86 < 0.90)",
+      "status": "pass",
+      "status_symbol": "✅",
+      "passed": true,
+      "message": "达标",
       "confusion_matrix": {
         "tp": 9,
-        "fp": 3,
-        "tn": 149,
+        "fp": 2,
+        "tn": 150,
         "fn": 0
       }
     },
@@ -148,9 +148,9 @@
       "category": "价保",
       "tier": "medium",
       "redline": 0.8,
-      "precision": 1.0,
+      "precision": 0.9,
       "recall": 1.0,
-      "f1": 1.0,
+      "f1": 0.9474,
       "support": 9,
       "status": "pass",
       "status_symbol": "✅",
@@ -158,8 +158,8 @@
       "message": "达标",
       "confusion_matrix": {
         "tp": 9,
-        "fp": 0,
-        "tn": 152,
+        "fp": 1,
+        "tn": 151,
         "fn": 0
       }
     },
@@ -187,18 +187,18 @@
       "tier": "medium",
       "redline": 0.8,
       "precision": 1.0,
-      "recall": 0.9091,
-      "f1": 0.9524,
+      "recall": 1.0,
+      "f1": 1.0,
       "support": 11,
       "status": "pass",
       "status_symbol": "✅",
       "passed": true,
       "message": "达标",
       "confusion_matrix": {
-        "tp": 10,
+        "tp": 11,
         "fp": 0,
         "tn": 150,
-        "fn": 1
+        "fn": 0
       }
     },
     {
@@ -282,18 +282,18 @@
       "tier": "loose",
       "redline": null,
       "precision": 1.0,
-      "recall": 0.9091,
-      "f1": 0.9524,
+      "recall": 1.0,
+      "f1": 1.0,
       "support": 11,
       "status": "none",
       "status_symbol": "—",
       "passed": null,
       "message": "不设线（宽档）",
       "confusion_matrix": {
-        "tp": 10,
+        "tp": 11,
         "fp": 0,
         "tn": 150,
-        "fn": 1
+        "fn": 0
       }
     },
     {
@@ -338,8 +338,8 @@
   "confusion_matrices": {
     "退换货": {
       "tp": 14,
-      "fp": 0,
-      "tn": 147,
+      "fp": 1,
+      "tn": 146,
       "fn": 0
     },
     "物流": {
@@ -362,8 +362,8 @@
     },
     "质量问题": {
       "tp": 9,
-      "fp": 3,
-      "tn": 149,
+      "fp": 2,
+      "tn": 150,
       "fn": 0
     },
     "运费": {
@@ -380,8 +380,8 @@
     },
     "价保": {
       "tp": 9,
-      "fp": 0,
-      "tn": 152,
+      "fp": 1,
+      "tn": 151,
       "fn": 0
     },
     "支付": {
@@ -391,10 +391,10 @@
       "fn": 0
     },
     "订单修改": {
-      "tp": 10,
+      "tp": 11,
       "fp": 0,
       "tn": 150,
-      "fn": 1
+      "fn": 0
     },
     "库存补货": {
       "tp": 11,
@@ -421,10 +421,10 @@
       "fn": 0
     },
     "会员积分": {
-      "tp": 10,
+      "tp": 11,
       "fp": 0,
       "tn": 150,
-      "fn": 1
+      "fn": 0
     },
     "评价": {
       "tp": 9,
@@ -441,30 +441,30 @@
   },
   "error_accounting": {
     "total_error_samples": 9,
-    "under_tag_count": 2,
-    "over_tag_count": 5,
-    "displaced_count": 2,
-    "total_penalty": 11,
-    "confusion_matrix_sum": 11,
+    "under_tag_count": 1,
+    "over_tag_count": 7,
+    "displaced_count": 1,
+    "total_penalty": 10,
+    "confusion_matrix_sum": 10,
     "balanced": true
   },
   "error_samples": [
     {
-      "text": "刚下单的猫抓板还没发，突然便宜了，我是改订单价格还是申请价保？",
+      "text": "这猫砂盆搞活动不，俺瞅着价格有点高哩。",
       "true_labels": [
-        "价保",
-        "订单修改"
+        "优惠活动"
       ],
       "pred_labels": [
+        "优惠活动",
         "价保"
       ],
-      "missed_labels": [
-        "订单修改"
+      "missed_labels": [],
+      "extra_labels": [
+        "价保"
       ],
-      "extra_labels": [],
       "displaced_count": 0,
-      "under_tag_count": 1,
-      "over_tag_count": 0,
+      "under_tag_count": 0,
+      "over_tag_count": 1,
       "penalty": 1,
       "boundary_note": "—"
     },
@@ -474,18 +474,17 @@
         "会员积分"
       ],
       "pred_labels": [
-        "优惠活动"
-      ],
-      "missed_labels": [
+        "优惠活动",
         "会员积分"
       ],
+      "missed_labels": [],
       "extra_labels": [
         "优惠活动"
       ],
-      "displaced_count": 1,
+      "displaced_count": 0,
       "under_tag_count": 0,
-      "over_tag_count": 0,
-      "penalty": 2,
+      "over_tag_count": 1,
+      "penalty": 1,
       "boundary_note": "—"
     },
     {
@@ -604,17 +603,17 @@
       "boundary_note": "保修维修: 修归保修维修、退归退换货"
     },
     {
-      "text": "猫抓板买回来味道太大了，可以申请退款吗？",
+      "text": "退货运费由谁承担",
       "true_labels": [
-        "退换货"
+        "运费"
       ],
       "pred_labels": [
         "退换货",
-        "质量问题"
+        "运费"
       ],
       "missed_labels": [],
       "extra_labels": [
-        "质量问题"
+        "退换货"
       ],
       "displaced_count": 0,
       "under_tag_count": 0,
@@ -624,15 +623,15 @@
     }
   ],
   "candidate_scores": {
-    "0.30": 0.9585,
-    "0.35": 0.961,
-    "0.40": 0.9608,
-    "0.45": 0.9634,
-    "0.50": 0.9604,
-    "0.55": 0.9602,
-    "0.60": 0.9547,
-    "0.65": 0.9491,
-    "0.70": 0.9434
+    "0.30": 0.9742,
+    "0.35": 0.9767,
+    "0.40": 0.9767,
+    "0.45": 0.9688,
+    "0.50": 0.9688,
+    "0.55": 0.9713,
+    "0.60": 0.9764,
+    "0.65": 0.9763,
+    "0.70": 0.9681
   },
-  "generated_at": "2026-09-21T13:55:35.591109Z"
+  "generated_at": "2026-09-21T14:06:02.234986Z"
 }

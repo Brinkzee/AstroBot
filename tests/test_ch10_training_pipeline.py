@@ -213,6 +213,7 @@ def test_save_and_load_threshold_file(tmp_path):
 def test_dry_run_training_pipeline(tmp_path):
     output_dir = tmp_path / "model"
     threshold_file = tmp_path / "threshold.json"
+    val_scores_file = tmp_path / "val_scores.json"
 
     result = train_classifier(
         train_file="mewhelp-ch10-dataset/train.jsonl",
@@ -220,6 +221,7 @@ def test_dry_run_training_pipeline(tmp_path):
         model_name="hfl/chinese-roberta-wwm-ext",
         output_dir=str(output_dir),
         threshold_file=str(threshold_file),
+        val_scores_file=str(val_scores_file),
         epochs=1,
         batch_size=4,
         lr=2e-5,
