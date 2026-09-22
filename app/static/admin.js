@@ -116,12 +116,17 @@
   // Export to window
   window.renderAdminShell = renderAdminShell;
 
-  // Auto-run if script is loaded
-  document.addEventListener("DOMContentLoaded", function () {
-    // If header has data-auto-render="true" or page hasn't manually called it
+  function initAdminShell() {
     if (!window._adminShellRendered) {
       window._adminShellRendered = true;
       renderAdminShell();
     }
-  });
+  }
+
+  // Auto-run if script is loaded
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAdminShell);
+  } else {
+    initAdminShell();
+  }
 })();
