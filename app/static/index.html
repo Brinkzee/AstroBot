@@ -300,34 +300,53 @@
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 11px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .btn-nav:hover {
+      background: #f8fafc;
+      color: var(--primary);
+      border-color: #bfdbfe;
+    }
+
+    .btn-nav.active {
+      background: #eff6ff;
+      color: var(--primary);
+      border-color: #93c5fd;
+      font-weight: 600;
+    }
+
+    .btn-nav.btn-reset-chat:hover {
+      background: #fef2f2;
+      color: #ef4444;
+      border-color: #fca5a5;
     }
 
     .session-badge {
       font-size: 12px;
       color: var(--text-muted);
       background: #f8fafc;
-      padding: 4px 10px;
+      padding: 5px 10px;
       border-radius: 8px;
       border: 1px solid var(--border-color);
       font-family: monospace;
-    }
-
-    .btn-reset {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-reset:hover {
-      background: #f1f5f9;
-      color: #ef4444;
-      border-color: #fca5a5;
     }
 
     /* 消息流区域 */
@@ -1383,10 +1402,10 @@
           </div>
         </div>
         <div class="header-actions">
-          <a href="/kb" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="知识库管理工作台">📚 知识库</a>
-          <a href="/rag-eval" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="RAG 质量评估工作台">📊 RAG 评估</a>
+          <a href="/admin" class="btn-nav" title="后台聚合管理中心">🏠 管理首页</a>
+          <a href="/kb" class="btn-nav" title="知识库管理工作台">📚 知识库</a>
           <div class="session-badge" id="session-display">会话: 自动生成</div>
-          <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
+          <button class="btn-nav btn-reset-chat" id="btn-clear" title="开启全新会话">🔄 新建对话</button>
         </div>
       </header>
 
