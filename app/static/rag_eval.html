@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AstroBot - RAG 质量评估与编造台账工作台</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
   <style>
     :root {
       --primary: #2563eb;
@@ -40,76 +41,6 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-    }
-
-    /* 顶栏 Header */
-    header {
-      background: #ffffff;
-      border-bottom: 1px solid var(--border-color);
-      padding: 14px 28px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand-icon {
-      width: 38px;
-      height: 38px;
-      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-      color: #fff;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      font-size: 20px;
-      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
-    }
-
-    .brand-title {
-      font-size: 18px;
-      font-weight: 700;
-      color: #1e293b;
-    }
-
-    .brand-subtitle {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    .header-links {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .btn-nav {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 14px;
-      font-size: 13.5px;
-      font-weight: 500;
-      color: var(--primary);
-      background: #eff6ff;
-      border: 1px solid #bfdbfe;
-      border-radius: 8px;
-      text-decoration: none;
-      transition: all 0.2s;
-    }
-
-    .btn-nav:hover {
-      background: #dbeafe;
     }
 
     .btn-primary {
@@ -689,27 +620,22 @@
 
 <body>
 
-  <!-- 顶栏 -->
-  <header>
-    <div class="brand">
-      <div class="brand-icon">📊</div>
-      <div>
-        <div class="brand-title">AstroBot RAG 质量评估工作台</div>
-        <div class="brand-subtitle">四策略综合对比 · 忠实度裁判与编造台账</div>
-      </div>
-    </div>
-    <div class="header-links">
-      <button class="btn-primary" id="btn-open-run-modal">⚡ 重跑 RAG 评估</button>
-      <a href="/chat" class="btn-nav">💬 返回在线客服</a>
-      <a href="/kb" class="btn-nav">📚 知识库管理</a>
-      <a href="/observability" class="btn-nav">📈 观测与成本</a>
-      <a href="/review-queue" class="btn-nav">🔄 飞轮待审</a>
-      <a href="/docs" target="_blank" class="btn-nav">📖 API 接口文档</a>
-    </div>
-  </header>
-
   <!-- 主内容视窗 -->
   <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          ⚖️ AstroBot RAG 质量评估工作台
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          四策略综合对比 · 忠实度裁判与编造台账 · 全链路多指标自动化评测
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-primary" id="btn-open-run-modal">⚡ 重跑 RAG 评估</button>
+      </div>
+    </div>
 
     <!-- 产物缺失空状态 (产物缺失是状态，非报错) -->
     <div class="empty-state" id="empty-state-card">
@@ -1441,6 +1367,7 @@
       fetchCasesData();
     });
   </script>
+  <script src="/static/admin.js"></script>
 </body>
 
 </html>

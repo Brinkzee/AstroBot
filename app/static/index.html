@@ -300,34 +300,53 @@
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 11px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .btn-nav:hover {
+      background: #f8fafc;
+      color: var(--primary);
+      border-color: #bfdbfe;
+    }
+
+    .btn-nav.active {
+      background: #eff6ff;
+      color: var(--primary);
+      border-color: #93c5fd;
+      font-weight: 600;
+    }
+
+    .btn-nav.btn-reset-chat:hover {
+      background: #fef2f2;
+      color: #ef4444;
+      border-color: #fca5a5;
     }
 
     .session-badge {
       font-size: 12px;
       color: var(--text-muted);
       background: #f8fafc;
-      padding: 4px 10px;
+      padding: 5px 10px;
       border-radius: 8px;
       border: 1px solid var(--border-color);
       font-family: monospace;
-    }
-
-    .btn-reset {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-reset:hover {
-      background: #f1f5f9;
-      color: #ef4444;
-      border-color: #fca5a5;
     }
 
     /* 消息流区域 */
@@ -359,13 +378,25 @@
     }
 
     .msg-content {
-      padding: 12px 18px;
+      padding: 10px 16px;
       border-radius: 16px;
       font-size: 14.5px;
-      line-height: 1.6;
+      line-height: 1.55;
       word-break: break-word;
-      white-space: pre-wrap;
+      white-space: normal;
       position: relative;
+    }
+
+    .msg-row.user .msg-content,
+    .text-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .text-body {
+      margin: 0;
+      padding: 0;
+      line-height: 1.55;
     }
 
     .msg-row.user .msg-content {
@@ -386,18 +417,78 @@
 
     /* 工具轨迹徽章 Tool Badges */
     .tool-badge-container {
-      margin-bottom: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 0;
+      margin-bottom: 4px;
+      line-height: 1;
+    }
+
+    .tool-badge-container:last-child {
+      margin-bottom: 0;
     }
 
     .tool-badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      padding: 4px 10px;
-      border-radius: 20px;
+      gap: 5px;
+      font-size: 11.5px;
+      padding: 2.5px 8px;
+      border-radius: 16px;
       font-weight: 500;
       transition: all 0.3s ease;
+      line-height: 1.3;
+    }
+
+    /* 历史记录/独立工具调用行专用紧凑样式 */
+    .msg-row.tool-msg-row {
+      margin-top: -12px;
+      margin-bottom: -10px;
+      gap: 8px;
+    }
+
+    .msg-row.tool-msg-row .avatar {
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+      opacity: 0.75;
+      transform: scale(0.9);
+      align-self: center;
+    }
+
+    .msg-row.tool-msg-row .msg-content {
+      padding: 2px 4px;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      min-width: unset;
+    }
+
+    .msg-row.tool-msg-row .tool-badge-container {
+      margin-bottom: 0;
+    }
+
+    /* 工具返回结果行紧凑样式 */
+    .msg-row.tool-result-row {
+      margin-top: -10px;
+      margin-bottom: -8px;
+      gap: 8px;
+    }
+
+    .msg-row.tool-result-row .avatar {
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+      opacity: 0.75;
+      transform: scale(0.9);
+    }
+
+    .msg-row.tool-result-row .msg-content {
+      padding: 8px 12px;
+      border-radius: 10px;
+      max-width: 80%;
     }
 
     .tool-badge.loading {
@@ -1311,10 +1402,10 @@
           </div>
         </div>
         <div class="header-actions">
-          <a href="/kb" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="知识库管理工作台">📚 知识库</a>
-          <a href="/rag-eval" class="btn-reset" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-weight:600;" title="RAG 质量评估工作台">📊 RAG 评估</a>
+          <a href="/admin" class="btn-nav" title="后台聚合管理中心">🏠 管理首页</a>
+          <a href="/kb" class="btn-nav" title="知识库管理工作台">📚 知识库</a>
           <div class="session-badge" id="session-display">会话: 自动生成</div>
-          <button class="btn-reset" id="btn-clear" title="开启全新会话">新建对话</button>
+          <button class="btn-nav btn-reset-chat" id="btn-clear" title="开启全新会话">🔄 新建对话</button>
         </div>
       </header>
 
@@ -1597,40 +1688,57 @@
         return;
       }
 
-      for (const m of messages) {
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
         if (m.role === 'user') {
           appendUserMessage(m.content || '');
         } else if (m.role === 'assistant') {
-          if (m.tool_calls && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
-            for (const call of m.tool_calls) {
-              const callName = call.name || '业务工具';
-              const row = document.createElement('div');
-              row.className = 'msg-row bot';
-              row.innerHTML = `
-                <div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div>
-                <div class="msg-content">
-                  <div class="tool-badge-container">
-                    <div class="tool-badge completed">
-                      <span>📦 已调用工具: <strong>${escapeHtml(callName)}</strong></span>
-                      <span style="opacity:0.8; font-size:11px;">[已执行]</span>
-                    </div>
-                  </div>
-                </div>
-              `;
-              messagesContainer.appendChild(row);
+          const toolCalls = (m.tool_calls && Array.isArray(m.tool_calls)) ? m.tool_calls : [];
+          const content = (m.content || '').replace(/^[\r\n]+/, '');
+
+          // 如果当前 assistant 只有 tool_calls 没有文本，且后面跟着当前轮次的 assistant 文本回复，则合并至同一气泡渲染
+          if (toolCalls.length > 0 && !content && i + 1 < messages.length) {
+            let nextAssistantIdx = -1;
+            for (let j = i + 1; j < messages.length; j++) {
+              if (messages[j].role === 'user') break;
+              if (messages[j].role === 'assistant' && messages[j].content) {
+                nextAssistantIdx = j;
+                break;
+              }
+            }
+            if (nextAssistantIdx !== -1) {
+              messages[nextAssistantIdx]._mergedToolCalls = (messages[nextAssistantIdx]._mergedToolCalls || []).concat(toolCalls);
+              continue;
             }
           }
-          if (m.content) {
-            appendAssistantMessage(m.content, '🌟');
-          }
-        } else if (m.role === 'tool') {
+
+          const allToolCalls = (m._mergedToolCalls || []).concat(toolCalls);
           const row = document.createElement('div');
           row.className = 'msg-row bot';
+
+          let toolBadgesHtml = '';
+          if (allToolCalls.length > 0) {
+            const badges = allToolCalls.map(call => {
+              const callName = call.name || '业务工具';
+              return `<div class="tool-badge completed"><span>📦 已调用工具: <strong>${escapeHtml(callName)}</strong></span><span style="opacity:0.8; font-size:11px;">[已执行]</span></div>`;
+            }).join('');
+            toolBadgesHtml = `<div class="tool-badge-container">${badges}</div>`;
+          }
+
+          const textHtml = content ? `<div class="text-body">${renderContentWithCitations(content)}</div>` : '';
+          row.innerHTML = `<div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div><div class="msg-content">${toolBadgesHtml}${textHtml}</div>`;
+          messagesContainer.appendChild(row);
+
+        } else if (m.role === 'tool') {
+          const row = document.createElement('div');
+          row.className = 'msg-row bot tool-result-row';
           row.innerHTML = `
-            <div class="avatar" style="width:36px; height:36px; font-size:18px;">🔧</div>
-            <div class="msg-content" style="background:#f1f5f9; font-family:monospace; font-size:12px;">
-              <div style="font-weight:600; margin-bottom:4px; color:#475569;">⚙️ 工具返回结果:</div>
-              <div style="white-space:pre-wrap; word-break:break-all;">${escapeHtml(m.content || '')}</div>
+            <div class="avatar">🔧</div>
+            <div class="msg-content" style="background:#f8fafc; font-family:monospace; font-size:11px; border:1px dashed #cbd5e1; color:#64748b; padding:4px 10px;">
+              <details style="cursor:pointer;">
+                <summary style="font-weight:600; color:#475569;">⚙️ 工具返回结果 (点击展开)</summary>
+                <div style="white-space:pre-wrap; word-break:break-all; max-height:80px; overflow-y:auto; margin-top:4px;">${escapeHtml(m.content || '')}</div>
+              </details>
             </div>
           `;
           messagesContainer.appendChild(row);
@@ -1730,20 +1838,104 @@
 
       const content = document.createElement('div');
       content.className = 'msg-content';
-      content.innerHTML = `
-        <div class="tool-badge-container" style="display:none;"></div>
-        <div class="text-body">
-          <span class="typing-indicator">
-            <span></span><span></span><span></span>
-          </span>
-        </div>
-      `;
+      content.innerHTML = '<div class="tool-badge-container" style="display:none;"></div><div class="text-body"><span class="typing-indicator"><span></span><span></span><span></span></span></div>';
 
       row.appendChild(avatar);
       row.appendChild(content);
       messagesContainer.appendChild(row);
       scrollToBottom();
       return content;
+    }
+
+    /**
+     * 逐 Token 平滑打字机队列管理器
+     * @param {HTMLElement} targetEl 目标容器元素 (textBody)
+     * @param {Object} options 配置项 (delay, onUpdate, onComplete, fallbackText)
+     */
+    function createTokenStreamer(targetEl, options = {}) {
+      let targetText = '';
+      let displayedIndex = 0;
+      let timer = null;
+      let isCompleted = false;
+      const baseDelay = options.delay || 18; // 基础步进间隔 ms
+
+      function tick() {
+        if (!targetEl) return;
+
+        if (displayedIndex < targetText.length) {
+          // 动态自适应调速：根据滞后字符量动态调整单次步进长度，兼顾平滑打字感与大段文本响应速度
+          const remaining = targetText.length - displayedIndex;
+          let step = 1;
+          if (remaining > 100) {
+            step = 5;
+          } else if (remaining > 50) {
+            step = 3;
+          } else if (remaining > 20) {
+            step = 2;
+          }
+
+          displayedIndex = Math.min(displayedIndex + step, targetText.length);
+          const currentSub = targetText.slice(0, displayedIndex);
+
+          // 渲染内容（含引用角标）并附带打字机光标
+          targetEl.innerHTML = renderContentWithCitations(currentSub) + '<span class="typing-cursor"></span>';
+          if (options.onUpdate) options.onUpdate(currentSub);
+          scrollToBottom();
+
+          timer = setTimeout(tick, baseDelay);
+        } else {
+          timer = null;
+          if (isCompleted) {
+            // 所有字符全部输出完成，移除光标，渲染最终状态
+            targetEl.innerHTML = renderContentWithCitations(targetText || options.fallbackText || '');
+            if (options.onComplete) {
+              options.onComplete(targetText);
+            }
+            scrollToBottom();
+          }
+        }
+      }
+
+      return {
+        append(chunk) {
+          if (!chunk) return;
+          // 首包去除开头的换行符，防止模型响应自带 \n\n 撑开巨大空隙
+          if (targetText.length === 0) {
+            chunk = chunk.replace(/^[\r\n]+/, '');
+            if (!chunk) return;
+          }
+          targetText += chunk;
+          if (!timer) {
+            tick();
+          }
+        },
+        complete(fallbackText = '') {
+          isCompleted = true;
+          options.fallbackText = fallbackText;
+          if (!timer && displayedIndex >= targetText.length) {
+            targetEl.innerHTML = renderContentWithCitations(targetText || fallbackText);
+            if (options.onComplete) {
+              options.onComplete(targetText);
+            }
+            scrollToBottom();
+          }
+        },
+        flush() {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          displayedIndex = targetText.length;
+          targetEl.innerHTML = renderContentWithCitations(targetText || options.fallbackText || '');
+          if (options.onComplete) {
+            options.onComplete(targetText);
+          }
+          scrollToBottom();
+        },
+        getText() {
+          return targetText;
+        }
+      };
     }
 
     async function sendMessage() {
@@ -1767,8 +1959,34 @@
       const toolContainer = botContentEl.querySelector('.tool-badge-container');
       const textBody = botContentEl.querySelector('.text-body');
 
-      let fullText = '';
       let hasReceivedFirstToken = false;
+      let streamer = null;
+
+      const finishStreaming = () => {
+        isStreaming = false;
+        btnSend.disabled = false;
+        userInput.focus();
+        loadSessions(currentConversationId);
+      };
+
+      streamer = createTokenStreamer(textBody, {
+        delay: 18,
+        onComplete: (fullText) => {
+          // 为 Bot 回复挂载左下角满意度反馈 (👍/👎 点亮锁定)
+          if (fullText && !botContentEl.querySelector('.feedback-bar')) {
+            const fbBar = document.createElement('div');
+            fbBar.className = 'feedback-bar';
+            fbBar.innerHTML = `
+              <button type="button" class="btn-fb-thumb up" onclick="handleFeedback(this, 'up')" title="回答有帮助">👍 赞</button>
+              <button type="button" class="btn-fb-thumb down" onclick="handleFeedback(this, 'down')" title="回答不准确">👎 踩</button>
+              <span class="fb-tip"></span>
+            `;
+            botContentEl.appendChild(fbBar);
+          }
+          scrollToBottom();
+          finishStreaming();
+        }
+      });
 
       try {
         const payload = {
@@ -1863,12 +2081,11 @@
                     hasReceivedFirstToken = true;
                     textBody.innerHTML = ''; // 移除 loading 三个点
                   }
-                  fullText += chunk;
-                  textBody.innerHTML = renderContentWithCitations(fullText) + '<span class="typing-cursor"></span>';
-                  scrollToBottom();
+                  streamer.append(chunk);
                 }
               } else if (data.event_type === 'error' || data.error) {
                 const errMsg = data.error || '未知异常';
+                if (streamer) streamer.flush();
                 textBody.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(errMsg)}</span>`;
                 scrollToBottom();
               }
@@ -1878,31 +2095,13 @@
           }
         }
 
-        // 流结束，移除光标并渲染最终格式
-        if (textBody) {
-          textBody.innerHTML = renderContentWithCitations(fullText || (hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。'));
-        }
-
-        // 为 Bot 回复挂载左下角满意度反馈 (👍/👎 点亮锁定)
-        if (fullText && !botContentEl.querySelector('.feedback-bar')) {
-          const fbBar = document.createElement('div');
-          fbBar.className = 'feedback-bar';
-          fbBar.innerHTML = `
-            <button type="button" class="btn-fb-thumb up" onclick="handleFeedback(this, 'up')" title="回答有帮助">👍 赞</button>
-            <button type="button" class="btn-fb-thumb down" onclick="handleFeedback(this, 'down')" title="回答不准确">👎 踩</button>
-            <span class="fb-tip"></span>
-          `;
-          botContentEl.appendChild(fbBar);
-        }
-        scrollToBottom();
+        // 网络流结束，通知打字机准备收尾
+        streamer.complete(hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。');
 
       } catch (err) {
+        if (streamer) streamer.flush();
         textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
-      } finally {
-        isStreaming = false;
-        btnSend.disabled = false;
-        userInput.focus();
-        loadSessions(currentConversationId);
+        finishStreaming();
       }
     }
 
@@ -2315,23 +2514,32 @@
 
       // 创建新的 Bot 气泡
       const botMsgEl = document.createElement('div');
-      botMsgEl.className = 'message-row bot';
-      botMsgEl.innerHTML = `
-        <div class="avatar bot-avatar">小星</div>
-        <div class="message-content bot-content">
-          <div class="tool-container" style="display:none;"></div>
-          <div class="text-body"><div class="typing-indicator"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>
-        </div>
-      `;
-      chatMessages.appendChild(botMsgEl);
+      botMsgEl.className = 'msg-row bot';
+      botMsgEl.innerHTML = '<div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div><div class="msg-content"><div class="tool-badge-container" style="display:none;"></div><div class="text-body"><span class="typing-indicator"><span></span><span></span><span></span></span></div></div>';
+      messagesContainer.appendChild(botMsgEl);
       scrollToBottom();
 
-      const botContentEl = botMsgEl.querySelector('.bot-content');
-      const toolContainer = botMsgEl.querySelector('.tool-container');
+      const botContentEl = botMsgEl.querySelector('.msg-content');
+      const toolContainer = botMsgEl.querySelector('.tool-badge-container');
       const textBody = botMsgEl.querySelector('.text-body');
 
-      let fullText = '';
       let hasReceivedFirstToken = false;
+      let streamer = null;
+
+      const finishStreaming = () => {
+        isStreaming = false;
+        btnSend.disabled = false;
+        userInput.focus();
+        loadSessions(currentConversationId);
+      };
+
+      streamer = createTokenStreamer(textBody, {
+        delay: 18,
+        onComplete: () => {
+          scrollToBottom();
+          finishStreaming();
+        }
+      });
 
       try {
         const response = await fetch('/api/chat/resume', {
@@ -2394,9 +2602,7 @@
                     hasReceivedFirstToken = true;
                     textBody.innerHTML = '';
                   }
-                  fullText += chunk;
-                  textBody.innerHTML = renderContentWithCitations(fullText) + '<span class="typing-cursor"></span>';
-                  scrollToBottom();
+                  streamer.append(chunk);
                 }
               } else if (data.event_type === 'actions') {
                 renderActionButtons(botContentEl, data.actions || []);
@@ -2407,17 +2613,11 @@
           }
         }
 
-        if (textBody) {
-          textBody.innerHTML = renderContentWithCitations(fullText || (hasReceivedFirstToken ? '' : '已处理完成。'));
-        }
-        scrollToBottom();
+        streamer.complete(hasReceivedFirstToken ? '' : '已处理完成。');
       } catch (err) {
+        if (streamer) streamer.flush();
         textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
-      } finally {
-        isStreaming = false;
-        btnSend.disabled = false;
-        userInput.focus();
-        loadSessions(currentConversationId);
+        finishStreaming();
       }
     }
 

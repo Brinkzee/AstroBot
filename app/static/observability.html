@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AstroBot - 观测与成本看板</title>
+  <link rel="stylesheet" href="/static/acceptance.css">
   <style>
     :root {
       --primary: #2563eb;
@@ -35,28 +36,6 @@
       display: flex; flex-direction: column;
     }
 
-    /* Header */
-    header {
-      background: #ffffff; border-bottom: 1px solid var(--border-color);
-      padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
-      position: sticky; top: 0; z-index: 50; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-    }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-icon {
-      width: 38px; height: 38px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-      color: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center;
-      font-weight: bold; font-size: 20px; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
-    }
-    .brand-title { font-size: 18px; font-weight: 700; color: #1e293b; }
-    .brand-subtitle { font-size: 12px; color: var(--text-muted); }
-    .header-links { display: flex; align-items: center; gap: 12px; }
-    .btn-nav {
-      display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px;
-      font-size: 13.5px; font-weight: 500; color: var(--primary);
-      background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
-      text-decoration: none; transition: all 0.2s;
-    }
-    .btn-nav:hover { background: #dbeafe; }
     .btn-primary {
       display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
       font-size: 13.5px; font-weight: 600; color: #ffffff;
@@ -133,27 +112,18 @@
 </head>
 <body>
 
-  <header>
-    <div class="brand">
-      <div class="brand-icon">📈</div>
+  <div class="container">
+    <!-- Top Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
-        <div class="brand-title">观测与成本看版</div>
-        <div class="brand-subtitle">质量监控、成本测算与意图洞察</div>
+        <h1 style="font-size:22px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          📈 观测与成本看版
+        </h1>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          全链路 Trace 意图成本测算 · RAG 评估多轮趋势对比与置信度阈值动态校准
+        </p>
       </div>
     </div>
-    <div class="header-links">
-      <a href="/admin" class="btn-nav">🏠 管理首页</a>
-      <a href="/chat" class="btn-nav">💬 在线客服</a>
-      <a href="/kb" class="btn-nav">📚 知识库</a>
-      <a href="/rag-eval" class="btn-nav">⚖️ RAG 评测</a>
-      <a href="/review-queue" class="btn-nav">🔄 飞轮待审</a>
-      <a href="/topic-distribution" class="btn-nav">📊 主题分布</a>
-      <a href="/acceptance" class="btn-nav">🛡️ 实证验收</a>
-      <a href="/docs" target="_blank" class="btn-nav">📖 API 文档</a>
-    </div>
-  </header>
-
-  <div class="container">
     
     <!-- 1. Cost by Intent -->
     <div class="section-block" id="cost-section">
@@ -489,5 +459,6 @@
 
     window.onload = loadOverview;
   </script>
+  <script src="/static/admin.js"></script>
 </body>
 </html>
