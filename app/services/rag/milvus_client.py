@@ -15,6 +15,56 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 安全的默认 gRPC 客户端选项，解决长连接闲置过频 Ping 触发的 too_many_pings (GOAWAY) 报错
+DEFAULT_GRPC_OPTIONS: Dict[str, Any] = {
+    # 禁用无请求活跃时的侵略性心跳 Ping，避免触发服务端防 DoS/Ping-flooding 惩罚 (too_many_pings)
+    "grpc.keepalive_permit_without_calls": False,
+    # 将长连接保活探测周期放宽至 60 秒（pymilvus 默认 10 秒过频）
+    "grpc.keepalive_time_ms": 60000,
+    "grpc.keepalive_timeout_ms": 10000,
+    # 允许在无数据时发送的 ping 数量限制放宽
+    "grpc.http2.max_pings_without_data": 0,
+}
+
+
+def _patch_milvus_lite_server_keepalive() -> None:
+    """为 milvus-lite 进程内 gRPC 服务端注入宽容的 keepalive 配置，彻底消除 too_many_pings。"""
+    try:
+        from concurrent import futures
+        import grpc
+        import milvus_lite.adapter.grpc.server as ml_server
+
+        if getattr(ml_server, "_astro_keepalive_patched", False):
+            return
+
+        def patched_build_server(db, max_workers: int):
+            server = grpc.server(
+                futures.ThreadPoolExecutor(max_workers=max_workers),
+                options=[
+                    ("grpc.max_receive_message_length", ml_server._MAX_MESSAGE_SIZE),
+                    ("grpc.max_send_message_length", ml_server._MAX_MESSAGE_SIZE),
+                    # 允许客户端发送心跳 ping，且不触发 GOAWAY ENHANCE_YOUR_CALM
+                    ("grpc.http2.min_recv_ping_interval_without_data_ms", 1000),
+                    ("grpc.http2.min_ping_interval_without_data_ms", 1000),
+                    ("grpc.http2.max_ping_strikes", 0),  # 0 次 strike -> 永不因 too_many_pings 发送 GOAWAY
+                    ("grpc.http2.max_pings_without_data", 0),  # 允许无数据下无限制 ping
+                    ("grpc.keepalive_permit_without_calls", 1),
+                ],
+            )
+            servicer = ml_server.MilvusServicer(db)
+            ml_server.milvus_pb2_grpc.add_MilvusServiceServicer_to_server(servicer, server)
+            return server
+
+        ml_server._build_server = patched_build_server
+        ml_server._astro_keepalive_patched = True
+        logger.debug("已成功为 milvus-lite gRPC 服务端挂载 keepalive 宽容补丁")
+    except Exception as e:
+        logger.debug(f"挂载 milvus-lite 服务端补丁跳过: {e}")
+
+
+# 模块导入时预先挂载 milvus-lite 补丁
+_patch_milvus_lite_server_keepalive()
+
 
 class MilvusKnowledgeStore:
     """基于 Milvus-Lite / Milvus 的 RAG 知识库向量与原生 BM25 混合存储管理器。
@@ -23,7 +73,12 @@ class MilvusKnowledgeStore:
     COSINE 相似度、BM25 稀疏检索、RRFRanker(k=60) 倒数排名融合检索、标量过滤及安全生命周期管理。
     """
 
-    def __init__(self, uri: Optional[str] = None):
+    def __init__(
+        self,
+        uri: Optional[str] = None,
+        grpc_options: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ):
         if uri is None:
             uri = (
                 getattr(settings, "MILVUS_URI", None)
@@ -39,7 +94,17 @@ class MilvusKnowledgeStore:
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
 
-        self.client: Optional[MilvusClient] = MilvusClient(uri=self.uri)
+        _patch_milvus_lite_server_keepalive()
+
+        client_grpc_options = dict(DEFAULT_GRPC_OPTIONS)
+        if grpc_options:
+            client_grpc_options.update(grpc_options)
+
+        self.client: Optional[MilvusClient] = MilvusClient(
+            uri=self.uri,
+            grpc_options=client_grpc_options,
+            **kwargs,
+        )
         logger.info(f"MilvusKnowledgeStore 已初始化，连接至: {self.uri}")
 
     def init_collection(self, collection_name: str = "knowledge", drop_existing: bool = False):

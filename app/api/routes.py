@@ -653,6 +653,11 @@ async def search_knowledge(request: KBSearchRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索自测异常: {str(e)}")
+    finally:
+        try:
+            retriever.close()
+        except Exception:
+            pass
 
 
 @router.post("/kb/documents/preview", response_model=DocumentPreviewResponse)

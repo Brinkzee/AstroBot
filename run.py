@@ -214,7 +214,7 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     try:
         milvus_count = store.count("knowledge")
     finally:
-        store.close(release_server=True)
+        store.close()
 
     print(f"  • MySQL 权威源有效知识块数: {done_count}")
     print(f"  • Milvus 向量库已索引记录数: {milvus_count}")
