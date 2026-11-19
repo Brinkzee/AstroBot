@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         description="Langfuse Host URL"
     )
     langfuse_enabled: bool = Field(default=True, description="Whether Langfuse tracing is enabled")
-    evidence_confidence_threshold: float = Field(default=0.40, description="置信度闸门判定阈值，由评估集网格搜索校准推荐")
+    evidence_confidence_threshold: float = Field(default=0.35, description="置信度闸门判定阈值，由评估集网格搜索校准推荐")
 
     @property
     def MCP_LOGISTICS_SERVER_URL(self) -> str:
