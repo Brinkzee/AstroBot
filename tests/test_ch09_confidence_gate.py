@@ -69,3 +69,67 @@ def test_calibrate_confidence_gate_script():
         assert "recommended_threshold" in data
         assert "best_youden_j" in data
         assert "best_f1" in data
+
+
+def test_compute_evidence_confidence_supports_rerank_score_and_distance():
+    # rerank_score 应与 score 等效计算
+    docs_rerank = [{"rerank_score": 0.8}, {"rerank_score": 0.5}, {"rerank_score": 0.2}]
+    score_rerank = compute_evidence_confidence(docs_rerank, k=3)
+    assert abs(score_rerank - 0.6916666666666667) < 1e-6
+
+    # 仅有 distance（如 vector_only / bm25_only）时也应正确读取
+    docs_distance = [{"distance": 0.6}]
+    score_distance = compute_evidence_confidence(docs_distance, k=3)
+    assert abs(score_distance - 0.4883333333333333) < 1e-6
+
+    # 显式 score=0.0 不应被 rerank_score 覆盖
+    docs_explicit_zero = [{"score": 0.0, "rerank_score": 0.9}]
+    assert compute_evidence_confidence(docs_explicit_zero, k=3) == 0.0
+
+
+def test_calibrate_confidence_gate_uses_real_retriever_and_should_refuse(tmp_path):
+    from scripts.calibrate_confidence_gate import run_calibration
+    from app.services.rag.advanced_retriever import AdvancedRetrievalResult
+
+    dataset_file = tmp_path / "eval_mini.jsonl"
+    report_file = tmp_path / "calib_report.json"
+
+    # 特意按 [正, 正, 负, 负] 顺序排列，验证脚本真实读取 should_refuse 而非按 i % 2 奇偶构造标签
+    rows = [
+        {"id": "P1", "query": "退货政策是什么", "should_refuse": False},
+        {"id": "P2", "query": "多久发货", "should_refuse": False},
+        {"id": "N1", "query": "你们卖活体猫吗", "should_refuse": True},
+        {"id": "N2", "query": "实体门店在哪", "should_refuse": True},
+    ]
+    dataset_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+
+    class StubRetriever:
+        def __init__(self):
+            self.called_queries = []
+
+        async def retrieve_with_strategy(self, query: str, strategy: str = "hybrid_rerank", min_score: float = 0.1, **kwargs):
+            self.called_queries.append(query)
+            if query in ("退货政策是什么", "多久发货"):
+                return AdvancedRetrievalResult(
+                    docs=[{"rerank_score": 0.78, "chunk_text": "相关规则"}, {"rerank_score": 0.42, "chunk_text": "补充"}],
+                    strategy=strategy,
+                )
+            return AdvancedRetrievalResult(
+                docs=[{"rerank_score": 0.14, "chunk_text": "弱相关"}],
+                strategy=strategy,
+            )
+
+    stub = StubRetriever()
+    report = run_calibration(
+        dataset_path=str(dataset_file),
+        output_path=str(report_file),
+        retriever=stub,
+    )
+
+    assert stub.called_queries == ["退货政策是什么", "多久发货", "你们卖活体猫吗", "实体门店在哪"]
+    assert report["sample_count"] == 4
+    assert report["positive_count"] == 2
+    assert report["negative_count"] == 2
+    assert report["best_youden_j"] == 1.0
+    assert 0.12 <= report["recommended_threshold"] <= 0.65
+    assert report_file.exists()
