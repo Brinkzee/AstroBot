@@ -209,6 +209,16 @@
   </div>
 
   <script>
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
     function formatMetric(val, delta) {
       if (val === null || val === undefined) return '-';
       const numStr = Number(val).toFixed(4);
@@ -257,9 +267,9 @@
             const tTok = Number(row.total_tokens ?? 0).toLocaleString();
             const costUsd = Number(row.estimated_cost_usd ?? 0).toFixed(4);
             const pctVal = Number(row.cost_percentage ?? 0);
-            const pctStr = (pctVal > 1 ? pctVal : pctVal * 100).toFixed(1);
+            const pctStr = pctVal.toFixed(1);
             html += `<tr class="${isTop ? 'highlight-row' : ''}">
-              <td>${row.intent} ${isTop ? '<span class="badge badge-star">⭐ #1</span>' : ''}</td>
+              <td>${escapeHtml(row.intent)} ${isTop ? '<span class="badge badge-star">⭐ #1</span>' : ''}</td>
               <td>${calls}</td>
               <td>${pTok}</td>
               <td>${cTok}</td>
@@ -284,15 +294,15 @@
           document.getElementById('eval-content').style.display = 'block';
           
           let hasDrop = false;
-          runs.forEach(r => {
-            if (r.deltas) {
-              for (const k in r.deltas) {
-                if (!k.endsWith('_trend') && typeof r.deltas[k] === 'number' && r.deltas[k] < 0) {
-                  hasDrop = true;
-                }
+          const latestRun = runs[0];
+          if (latestRun && latestRun.deltas) {
+            for (const k in latestRun.deltas) {
+              if (!k.endsWith('_trend') && typeof latestRun.deltas[k] === 'number' && latestRun.deltas[k] < 0) {
+                hasDrop = true;
+                break;
               }
             }
-          });
+          }
           document.getElementById('eval-alert').style.display = hasDrop ? 'block' : 'none';
           
           let html = '';
@@ -304,15 +314,15 @@
             const d = row.deltas || {};
             const time = row.created_at ?? row.run_time ?? '-';
             html += `<tr>
-              <td>#${runId}</td>
-              <td>${trigger}</td>
-              <td>${size}</td>
+              <td>#${escapeHtml(runId)}</td>
+              <td>${escapeHtml(trigger)}</td>
+              <td>${escapeHtml(size)}</td>
               <td>${formatMetric(m.recall_at_3 ?? (row.recall_at_3 ? row.recall_at_3.value : null), d.recall_at_3 ?? (row.recall_at_3 ? row.recall_at_3.delta : null))}</td>
               <td>${formatMetric(m.recall_at_5 ?? (row.recall_at_5 ? row.recall_at_5.value : null), d.recall_at_5 ?? (row.recall_at_5 ? row.recall_at_5.delta : null))}</td>
               <td>${formatMetric(m.recall_at_10 ?? (row.recall_at_10 ? row.recall_at_10.value : null), d.recall_at_10 ?? (row.recall_at_10 ? row.recall_at_10.delta : null))}</td>
               <td>${formatMetric(m.mrr ?? (row.mrr ? row.mrr.value : null), d.mrr ?? (row.mrr ? row.mrr.delta : null))}</td>
               <td>${formatMetric(m.faithfulness ?? (row.faithfulness ? row.faithfulness.value : null), d.faithfulness ?? (row.faithfulness ? row.faithfulness.delta : null))}</td>
-              <td>${time}</td>
+              <td>${escapeHtml(time)}</td>
             </tr>`;
           });
           document.getElementById('eval-tbody').innerHTML = html;
@@ -396,6 +406,19 @@
       logs.innerText = `[${jobName}] Starting job...\n`;
       title.innerText = `Job: ${jobName}`;
       
+      const stopPolling = (badgeText, btnText, errMsg = '') => {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        if (errMsg) {
+          logs.innerText += `\nError: ${errMsg}`;
+        }
+        closeBtn.disabled = false;
+        closeBtn.innerText = btnText;
+        if (statusBadge) statusBadge.innerText = badgeText;
+      };
+
       try {
         const res = await fetch('/api/jobs/start', {
           method: 'POST',
@@ -410,10 +433,21 @@
         const jobId = data.job_id;
         
         if (pollTimer) clearInterval(pollTimer);
+        let consecutiveErrors = 0;
+        let isPolling = false;
         pollTimer = setInterval(async () => {
+          if (isPolling) return;
+          isPolling = true;
           try {
             const logRes = await fetch(`/api/jobs/${jobId}/logs`);
-            if (!logRes.ok) return;
+            if (!logRes.ok) {
+              consecutiveErrors++;
+              if (logRes.status === 404 || consecutiveErrors >= 3) {
+                stopPolling('Error', '关闭', `日志轮询失败 (HTTP ${logRes.status})`);
+              }
+              return;
+            }
+            consecutiveErrors = 0;
             const logData = await logRes.json();
             logs.innerText = (logData.logs || []).join('\n');
             logs.scrollTop = logs.scrollHeight;
@@ -427,24 +461,25 @@
               }
             }
             
-            if (status === 'completed' || status === 'failed') {
-              clearInterval(pollTimer);
-              pollTimer = null;
-              closeBtn.disabled = false;
-              closeBtn.innerText = status === 'completed' ? '完成' : '失败 (关闭)';
-              if (statusBadge) {
-                statusBadge.innerText = status === 'completed' ? 'Done' : 'Failed';
-              }
+            if (status === 'completed') {
+              stopPolling('Done', '完成');
+            } else if (status === 'failed') {
+              stopPolling('Failed', '失败 (关闭)');
+            } else if (status === 'stopped') {
+              stopPolling('Stopped', '已停止 (关闭)');
             }
           } catch(e) {
+            consecutiveErrors++;
             console.error("Job polling error", e);
+            if (consecutiveErrors >= 3) {
+              stopPolling('Error', '关闭', e.message);
+            }
+          } finally {
+            isPolling = false;
           }
         }, 1000);
       } catch(e) {
-        logs.innerText += `\nError: ${e.message}`;
-        closeBtn.disabled = false;
-        closeBtn.innerText = '关闭';
-        if (statusBadge) statusBadge.innerText = 'Error';
+        stopPolling('Error', '关闭', e.message);
       }
     }
 

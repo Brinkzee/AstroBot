@@ -240,18 +240,23 @@
           descEl.innerHTML = '❌ <strong>检测到数据泄漏</strong>：考卷之间存在重叠样本，评测结果不作数，必须重新清洗切分！';
         }
 
-        // Overlaps
-        const trainValOverlap = (leakage.train_val_overlap || []).length;
-        const trainTestOverlap = (leakage.train_test_overlap || []).length;
-        const valTestOverlap = (leakage.val_test_overlap || []).length;
+        // Overlaps (backend returns integers; also tolerate legacy arrays)
+        const getOverlapCount = (v) => Array.isArray(v) ? v.length : Number(v || 0);
+        const trainValOverlap = getOverlapCount(leakage.train_val_overlap);
+        const trainTestOverlap = getOverlapCount(leakage.train_test_overlap);
+        const valTestOverlap = getOverlapCount(leakage.val_test_overlap);
 
-        document.getElementById('overlap-train-val').innerText = trainValOverlap;
-        document.getElementById('overlap-train-test').innerText = trainTestOverlap;
-        document.getElementById('overlap-val-test').innerText = valTestOverlap;
+        const tvEl = document.getElementById('overlap-train-val');
+        const ttEl = document.getElementById('overlap-train-test');
+        const vtEl = document.getElementById('overlap-val-test');
 
-        if (trainValOverlap > 0) document.getElementById('overlap-train-val').style.color = 'var(--danger-dark)';
-        if (trainTestOverlap > 0) document.getElementById('overlap-train-test').style.color = 'var(--danger-dark)';
-        if (valTestOverlap > 0) document.getElementById('overlap-val-test').style.color = 'var(--danger-dark)';
+        tvEl.innerText = trainValOverlap;
+        ttEl.innerText = trainTestOverlap;
+        vtEl.innerText = valTestOverlap;
+
+        tvEl.style.color = trainValOverlap > 0 ? 'var(--danger-dark)' : 'var(--success-dark)';
+        ttEl.style.color = trainTestOverlap > 0 ? 'var(--danger-dark)' : 'var(--success-dark)';
+        vtEl.style.color = valTestOverlap > 0 ? 'var(--danger-dark)' : 'var(--success-dark)';
 
         // 2. Exam Papers Inventory
         const ds = data.dataset || {};

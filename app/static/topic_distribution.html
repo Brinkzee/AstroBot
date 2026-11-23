@@ -213,7 +213,7 @@
               <td>${tierBadge}</td>
               <td><strong>${item.count}</strong></td>
               <td>${item.percentage}%</td>
-              <td>${item.question_percentage || '-'}%</td>
+              <td>${item.question_percentage ?? 0}%</td>
               <td>
                 ${isTop3 ? '<span class="badge badge-top3">⭐ 知识库优先补充重点</span>' : '<span style="color:var(--text-muted);font-size:12px;">常规维护</span>'}
               </td>

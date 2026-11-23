@@ -819,8 +819,14 @@
             <button class="filter-btn" data-status="已解决">已解决</button>
             <button class="filter-btn" data-status="无需解决">无需解决</button>
           </div>
-          <div style="font-size: 13px; color: var(--text-muted);" id="pagination-info">
-            共 0 条记录
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="font-size: 13px; color: var(--text-muted);" id="pagination-info">
+              共 0 条记录
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button type="button" class="btn-secondary btn-small" id="btn-cases-prev" disabled>上一页</button>
+              <button type="button" class="btn-secondary btn-small" id="btn-cases-next" disabled>下一页</button>
+            </div>
           </div>
         </div>
 
@@ -908,29 +914,59 @@
     let currentMetric = "mrr";
     let activeStatusFilter = "";
     let currentPage = 1;
+    let totalCasesPages = 1;
     let activeJobId = null;
     let jobPollTimer = null;
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
 
     // 打开/关闭 Modal
     function openModal(id) {
       document.getElementById(id).classList.add("active");
     }
     function closeModal(id) {
+      if (id === "console-modal" && jobPollTimer) {
+        clearInterval(jobPollTimer);
+        jobPollTimer = null;
+      }
       document.getElementById(id).classList.remove("active");
     }
 
     // 1. 获取最新报告
     async function fetchReportData() {
+      const emptyCard = document.getElementById("empty-state-card");
+      const emptyTitle = emptyCard ? emptyCard.querySelector(".empty-title") : null;
+      const emptyDesc = emptyCard ? emptyCard.querySelector(".empty-desc") : null;
       try {
         const res = await fetch("/api/rag-eval/report");
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const errMsg = err.detail || `HTTP ${res.status}`;
+          console.error("Failed to load report data:", errMsg);
+          if (emptyCard) emptyCard.style.display = "flex";
+          if (emptyTitle) emptyTitle.textContent = `评测报告加载失败 (${errMsg})`;
+          if (emptyDesc) emptyDesc.textContent = "服务端返回异常，请稍后刷新重试或检查后端日志。";
+          document.getElementById("workbench-content").style.display = "none";
+          return;
+        }
         const data = await res.json();
         if (!data.present) {
-          document.getElementById("empty-state-card").style.display = "flex";
+          if (emptyCard) emptyCard.style.display = "flex";
+          if (emptyTitle) emptyTitle.textContent = "尚未生成评测报告产物";
+          if (emptyDesc) emptyDesc.textContent = data.message || "系统中尚未检测到 reports/ch04_evaluation_report.md。请点击下方按钮运行预置白名单评估作业。";
           document.getElementById("workbench-content").style.display = "none";
           return;
         }
 
-        document.getElementById("empty-state-card").style.display = "none";
+        if (emptyCard) emptyCard.style.display = "none";
         document.getElementById("workbench-content").style.display = "block";
         currentReport = data;
         renderReportMeta(data.meta);
@@ -940,6 +976,10 @@
         renderSummaryTable(data.full_table);
       } catch (err) {
         console.error("Failed to load report data:", err);
+        if (emptyCard) emptyCard.style.display = "flex";
+        if (emptyTitle) emptyTitle.textContent = "评测报告加载失败";
+        if (emptyDesc) emptyDesc.textContent = `网络或服务异常: ${err.message}`;
+        document.getElementById("workbench-content").style.display = "none";
       }
     }
 
@@ -950,7 +990,7 @@
       document.getElementById("meta-embed-model").textContent = meta.embedding_model || "-";
       document.getElementById("meta-rerank-model").textContent = meta.reranker_model || "-";
       document.getElementById("meta-judge-model").textContent = meta.judge_model || "-";
-      document.getElementById("meta-eval-time").textContent = meta.evaluation_time || "-";
+      document.getElementById("meta-eval-time").textContent = meta.evaluated_at || meta.evaluation_time || "-";
     }
 
     function renderKPIs(kpis) {
@@ -1015,7 +1055,7 @@
           const color = stratColors[strat] || "#3b82f6";
 
           svg += `<rect x="${barX}" y="${barY}" width="${barWidth}" height="${barH}" rx="3" fill="${color}">
-                    <title>${strat} (${bucketLabels[bIdx]}): ${val.toFixed(3)}</title>
+                    <title>${escapeHtml(strat)} (${bucketLabels[bIdx]}): ${val.toFixed(3)}</title>
                   </rect>`;
         });
 
@@ -1042,9 +1082,9 @@
         return;
       }
 
-      const ansCov = (generation.answer_coverage && generation.answer_coverage.hybrid_rerank) || 0.98;
-      const refRate = generation.out_of_scope_refusal_rate || 1.0;
-      const faith = (generation.faithfulness && generation.faithfulness.hybrid_rerank) || 0.98;
+      const ansCov = Number(generation.answer_coverage?.hybrid_rerank ?? 0);
+      const refRate = Number(generation.out_of_scope_refusal_rate ?? 0);
+      const faith = Number(generation.faithfulness?.hybrid_rerank ?? 0);
 
       container.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-around; gap:16px; padding:10px 0;">
@@ -1107,7 +1147,7 @@
         const badge = isBest ? '<span class="badge-pill badge-green" style="margin-left:6px;">👑 总体最佳</span>' : '';
         return `
           <tr ${cls}>
-            <td><code>${r.strategy}</code>${badge}</td>
+            <td><code>${escapeHtml(r.strategy)}</code>${badge}</td>
             <td>${Number(r.A_policy).toFixed(3)}</td>
             <td>${Number(r.B_model).toFixed(3)}</td>
             <td>${Number(r.C_colloquial).toFixed(3)}</td>
@@ -1122,14 +1162,19 @@
 
     // 5. 获取并渲染编造个案台账
     async function fetchCasesData() {
+      const prevBtn = document.getElementById("btn-cases-prev");
+      const nextBtn = document.getElementById("btn-cases-next");
       try {
-        let url = `/api/rag-eval/faith-cases?page=${currentPage}&page_size=20`;
+        const pageSize = 20;
+        let url = `/api/rag-eval/faith-cases?page=${currentPage}&page_size=${pageSize}`;
         if (activeStatusFilter) url += `&status=${encodeURIComponent(activeStatusFilter)}`;
 
         const res = await fetch(url);
         if (!res.ok) {
           console.warn("Failed to fetch faith cases:", res.status);
           document.getElementById("pagination-info").textContent = "数据库离线或未连接";
+          if (prevBtn) prevBtn.disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           renderCasesList([], "⚠️ 数据库未连接或离线，编造个案台账暂无法加载（如需查看台账请确保 MySQL 运行中）");
           return;
         }
@@ -1149,17 +1194,26 @@
         if (data.warning) {
           console.warn(data.warning);
           document.getElementById("pagination-info").textContent = "数据库离线或未连接";
+          if (prevBtn) prevBtn.disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           renderCasesList([], "⚠️ " + data.warning);
           return;
         }
 
-        const curPage = data.page || 1;
+        const curPage = data.page || currentPage || 1;
+        const respPageSize = data.page_size || pageSize;
         const totalCount = data.total || 0;
-        document.getElementById("pagination-info").textContent = `第 ${curPage} 页，共 ${totalCount} 条`;
+        totalCasesPages = Math.max(1, Math.ceil(totalCount / respPageSize));
+        currentPage = curPage;
+        document.getElementById("pagination-info").textContent = `第 ${curPage} / ${totalCasesPages} 页，共 ${totalCount} 条`;
+        if (prevBtn) prevBtn.disabled = curPage <= 1;
+        if (nextBtn) nextBtn.disabled = curPage >= totalCasesPages;
         renderCasesList(data.items);
       } catch (err) {
         console.error("Failed to fetch faith cases:", err);
         document.getElementById("pagination-info").textContent = "网络或服务异常";
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
         renderCasesList([], "⚠️ 网络或服务异常，编造个案台账加载失败: " + err.message);
       }
     }
@@ -1168,7 +1222,7 @@
       const container = document.getElementById("cases-container");
       if (!items || items.length === 0) {
         const msg = customEmptyMsg || '当前筛选条件下没有编造个案记录';
-        container.innerHTML = `<div style="text-align:center; padding:30px; color:#94a3b8;">${msg}</div>`;
+        container.innerHTML = `<div style="text-align:center; padding:30px; color:#94a3b8;">${escapeHtml(msg)}</div>`;
         return;
       }
 
@@ -1183,21 +1237,22 @@
         const citationsHtml = (c.citations || []).map(cit => {
           const isCited = citedSet.has(cit.n);
           const citedClass = isCited ? 'cited' : '';
-          const citedTag = isCited ? '<span class="badge-pill badge-blue" style="float:right;">[已引用 ' + cit.n + ']</span>' : '';
+          const citN = escapeHtml(cit.n);
+          const citedTag = isCited ? `<span class="badge-pill badge-blue" style="float:right;">[已引用 ${citN}]</span>` : '';
           return `
             <div class="citation-card ${citedClass}">
               <div style="font-weight:600; color:#1e293b; margin-bottom:4px;">
-                【证据 [${cit.n}]】 ${cit.section_path || '标准条款'} ${citedTag}
+                【证据 [${citN}]】 ${escapeHtml(cit.section_path || '标准条款')} ${citedTag}
               </div>
-              <div style="color:#475569;"><strong>问:</strong> ${cit.question}</div>
-              <div style="color:#475569;"><strong>答:</strong> ${cit.answer}</div>
+              <div style="color:#475569;"><strong>问:</strong> ${escapeHtml(cit.question)}</div>
+              <div style="color:#475569;"><strong>答:</strong> ${escapeHtml(cit.answer)}</div>
             </div>
           `;
         }).join("");
 
         const resolutionNote = c.resolution ? `
           <div class="case-block" style="background:#f0fdf4; border-left:3px solid var(--success); color:#166534;">
-            <strong>处置说明:</strong> ${c.resolution} <span style="font-size:12px; color:#15803d; margin-left:8px;">(${c.resolved_at || ''})</span>
+            <strong>处置说明:</strong> ${escapeHtml(c.resolution)} <span style="font-size:12px; color:#15803d; margin-left:8px;">(${escapeHtml(c.resolved_at || '')})</span>
           </div>
         ` : '';
 
@@ -1205,27 +1260,27 @@
           <div class="case-item">
             <div class="case-header">
               <div class="case-title">
-                <span>题号: <strong>${c.eval_id}</strong></span>
-                <span class="badge-pill badge-purple">${c.bucket}</span>
-                <code>${c.strategy}</code>
+                <span>题号: <strong>${escapeHtml(c.eval_id)}</strong></span>
+                <span class="badge-pill badge-purple">${escapeHtml(c.bucket)}</span>
+                <code>${escapeHtml(c.strategy)}</code>
                 ${recurrentBadge}
                 ${statusBadge}
-                <span style="font-size:12px; color:#64748b;">(累计判出 ${c.seen_count} 次)</span>
+                <span style="font-size:12px; color:#64748b;">(累计判出 ${Number(c.seen_count || 0)} 次)</span>
               </div>
               <div class="case-badges">
-                <span style="font-size:12px; color:#64748b;">裁判: ${c.judge_model || 'deepseek-flash'}</span>
+                <span style="font-size:12px; color:#64748b;">裁判: ${escapeHtml(c.judge_model || 'deepseek-flash')}</span>
               </div>
             </div>
 
             <div class="case-body">
-              <div><strong>用户问题:</strong> ${c.query}</div>
-              <div class="case-block"><strong>模型答案:</strong> ${c.answer}</div>
-              <div class="case-block danger"><strong>裁判判定编造理由:</strong> ${c.reason}</div>
+              <div><strong>用户问题:</strong> ${escapeHtml(c.query)}</div>
+              <div class="case-block"><strong>模型答案:</strong> ${escapeHtml(c.answer)}</div>
+              <div class="case-block danger"><strong>裁判判定编造理由:</strong> ${escapeHtml(c.reason)}</div>
               ${resolutionNote}
 
               <div class="citation-drawer">
                 <div class="citation-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'flex' : 'none'">
-                  <span>🔍 查看关联 Top-K 证据快照 (${(c.citations || []).length} 条，${c.cited_indices.length} 条被引)</span>
+                  <span>🔍 查看关联 Top-K 证据快照 (${(c.citations || []).length} 条，${(c.cited_indices || []).length} 条被引)</span>
                   <span>▼</span>
                 </div>
                 <div class="citation-list" style="display:none;">
@@ -1234,7 +1289,7 @@
               </div>
 
               <div class="action-bar">
-                <button class="btn-secondary" onclick="openResolveModal(${c.id})">⚖️ 标记处置说明</button>
+                <button class="btn-secondary" onclick="openResolveModal(${Number(c.id)})">⚖️ 标记处置说明</button>
               </div>
             </div>
           </div>
@@ -1265,12 +1320,12 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status, resolution })
         });
-        const result = await res.json();
+        const result = await res.json().catch(() => ({}));
         if (res.ok) {
           closeModal("resolve-modal");
           fetchCasesData();
         } else {
-          alert(result.detail || "处置提交失败");
+          alert(result.detail || `处置提交失败 (HTTP ${res.status})`);
         }
       } catch (err) {
         alert("网络异常: " + err.message);
@@ -1279,6 +1334,11 @@
 
     // 启动作业与轮询日志
     async function startJob(jobName) {
+      const badge = document.getElementById("job-status-badge");
+      if (badge) {
+        badge.textContent = "Running";
+        badge.className = "badge-pill badge-blue";
+      }
       try {
         closeModal("run-confirm-modal");
         openModal("console-modal");
@@ -1290,9 +1350,13 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ job_name: jobName })
         });
-        const job = await res.json();
+        const job = await res.json().catch(() => ({}));
         if (!res.ok) {
-          consoleEl.textContent += `[Error] 启动失败: ${job.detail}\n`;
+          consoleEl.textContent += `[Error] 启动失败: ${job.detail || `HTTP ${res.status}`}\n`;
+          if (badge) {
+            badge.textContent = "FAILED";
+            badge.className = "badge-pill badge-red";
+          }
           return;
         }
 
@@ -1301,36 +1365,84 @@
         pollJobLogs(activeJobId);
       } catch (err) {
         document.getElementById("console-output").textContent += `[Exception] ${err.message}\n`;
+        if (badge) {
+          badge.textContent = "ERROR";
+          badge.className = "badge-pill badge-red";
+        }
       }
     }
 
     function pollJobLogs(jobId) {
-      if (jobPollTimer) clearInterval(jobPollTimer);
+      if (jobPollTimer) {
+        clearInterval(jobPollTimer);
+        jobPollTimer = null;
+      }
+      let consecutiveErrors = 0;
+      let isPolling = false;
+      const stopPoll = (label, cls) => {
+        if (jobPollTimer) {
+          clearInterval(jobPollTimer);
+          jobPollTimer = null;
+        }
+        const badge = document.getElementById("job-status-badge");
+        if (badge) {
+          badge.textContent = label;
+          badge.className = cls;
+        }
+      };
+
       jobPollTimer = setInterval(async () => {
+        if (isPolling) return;
+        isPolling = true;
         try {
           const res = await fetch(`/api/jobs/${jobId}/logs`);
-          const data = await res.json();
-          if (res.ok) {
-            const consoleEl = document.getElementById("console-output");
-            consoleEl.textContent = data.logs.join("\n");
-            consoleEl.scrollTop = consoleEl.scrollHeight;
+          if (!res.ok) {
+            consecutiveErrors++;
+            if (res.status === 404 || consecutiveErrors >= 3) {
+              document.getElementById("console-output").textContent += `\n[Error] 日志轮询中断 (HTTP ${res.status})\n`;
+              stopPoll("ERROR", "badge-pill badge-red");
+            }
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          consecutiveErrors = 0;
+          const consoleEl = document.getElementById("console-output");
+          consoleEl.textContent = (data.logs || []).join("\n");
+          consoleEl.scrollTop = consoleEl.scrollHeight;
+
+          let status = data.status;
+          if (!status) {
+            const statusRes = await fetch(`/api/jobs/${jobId}`);
+            if (!statusRes.ok) {
+              consecutiveErrors++;
+              if (statusRes.status === 404 || consecutiveErrors >= 3) {
+                stopPoll("ERROR", "badge-pill badge-red");
+              }
+              return;
+            }
+            const statusData = await statusRes.json().catch(() => ({}));
+            status = statusData.status;
           }
 
-          const statusRes = await fetch(`/api/jobs/${jobId}`);
-          const statusData = await statusRes.json();
-          if (statusRes.ok) {
+          if (status) {
             const badge = document.getElementById("job-status-badge");
-            badge.textContent = statusData.status.toUpperCase();
-            if (statusData.status === "completed") {
-              badge.className = "badge-pill badge-green";
-              clearInterval(jobPollTimer);
-            } else if (statusData.status === "failed") {
-              badge.className = "badge-pill badge-red";
-              clearInterval(jobPollTimer);
+            if (badge) badge.textContent = status.toUpperCase();
+            if (status === "completed") {
+              stopPoll("COMPLETED", "badge-pill badge-green");
+            } else if (status === "failed") {
+              stopPoll("FAILED", "badge-pill badge-red");
+            } else if (status === "stopped") {
+              stopPoll("STOPPED", "badge-pill badge-orange");
             }
           }
         } catch (e) {
+          consecutiveErrors++;
           console.error("Poll error:", e);
+          if (consecutiveErrors >= 3) {
+            stopPoll("ERROR", "badge-pill badge-red");
+          }
+        } finally {
+          isPolling = false;
         }
       }, 1000);
     }
@@ -1339,6 +1451,18 @@
     document.getElementById("btn-open-run-modal").addEventListener("click", () => openModal("run-confirm-modal"));
     document.getElementById("btn-empty-run").addEventListener("click", () => openModal("run-confirm-modal"));
     document.getElementById("btn-start-job").addEventListener("click", () => startJob("eval-rag"));
+    document.getElementById("btn-cases-prev").addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        fetchCasesData();
+      }
+    });
+    document.getElementById("btn-cases-next").addEventListener("click", () => {
+      if (currentPage < totalCasesPages) {
+        currentPage++;
+        fetchCasesData();
+      }
+    });
 
     // 检索图表指标切换 Tabs
     document.getElementById("retrieval-tabs").addEventListener("click", (e) => {

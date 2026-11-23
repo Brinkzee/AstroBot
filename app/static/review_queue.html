@@ -89,9 +89,9 @@
     <div class="action-bar">
       <div class="tabs" id="status-tabs">
         <div class="tab active" data-status="all">全部</div>
-        <div class="tab" data-status="pending">待审核</div>
-        <div class="tab" data-status="approved">已核准</div>
-        <div class="tab" data-status="rejected">已驳回</div>
+        <div class="tab" data-status="待审">待审核</div>
+        <div class="tab" data-status="通过">已核准</div>
+        <div class="tab" data-status="驳回">已驳回</div>
       </div>
       <button class="btn-primary" onclick="runJob('flywheel-pipeline')">⚡ 一键运行飞轮批处理 (flywheel-pipeline)</button>
     </div>
@@ -158,69 +158,145 @@
 
   <script>
     let queueData = [];
+    let detailCache = {};
     let currentFilter = 'all';
     let currentApproveId = null;
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function formatDateTime(val) {
+      if (!val) return '-';
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return String(val);
+      return d.toLocaleString();
+    }
+
+    function normalizeReviewStatus(row) {
+      const s = row.review_status || row.status || '待审';
+      if (s === '通过' || s === 'approved') return 'approved';
+      if (s === '驳回' || s === 'rejected') return 'rejected';
+      return 'pending';
+    }
+
     async function loadQueue() {
+      const tbody = document.getElementById('queue-tbody');
       try {
-        const res = await fetch('/api/review-queue?status=' + (currentFilter === 'all' ? '' : currentFilter));
-        if (res.ok) {
-          queueData = await res.json();
-          renderTable();
+        const url = currentFilter === 'all'
+          ? '/api/review-queue'
+          : '/api/review-queue?status=' + encodeURIComponent(currentFilter);
+        const res = await fetch(url);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${res.status}`);
         }
-      } catch (e) { console.error("Failed to load queue", e); }
+        const data = await res.json();
+        queueData = Array.isArray(data) ? data : (data.items || []);
+        detailCache = {};
+        renderTable();
+      } catch (e) {
+        console.error("Failed to load queue", e);
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+        }
+      }
+    }
+
+    function renderDetailHtml(detail) {
+      const rawQueries = detail.raw_queries || [];
+      const allChunks = [];
+      rawQueries.forEach(q => {
+        if (Array.isArray(q.retrieved_chunks)) {
+          q.retrieved_chunks.forEach(c => allChunks.push(c));
+        }
+      });
+      if (allChunks.length === 0 && Array.isArray(detail.retrieved_chunks)) {
+        detail.retrieved_chunks.forEach(c => allChunks.push(c));
+      }
+
+      const rawQueriesHtml = rawQueries.length > 0
+        ? rawQueries.map(q => {
+            const ts = formatDateTime(q.created_at || q.timestamp);
+            return `<li>${escapeHtml(q.raw_question)} <span style="color:#94a3b8;font-size:12px;">(${escapeHtml(ts)})</span></li>`;
+          }).join('')
+        : '<li style="color:var(--text-muted);">暂无原始提问记录</li>';
+
+      const chunksHtml = allChunks.length > 0
+        ? allChunks.map(c => {
+            const scoreStr = Number(c.score ?? 0).toFixed(4);
+            const chunkText = c.text || c.chunk || c.content || '';
+            return `
+              <div style="border-left:3px solid var(--primary); padding-left:10px; margin-bottom:8px;">
+                <div style="color:var(--text-muted); font-size:12px; margin-bottom:4px;">Score: ${scoreStr}</div>
+                <div style="color:#334155;">${escapeHtml(chunkText)}</div>
+              </div>
+            `;
+          }).join('')
+        : '<div style="color:var(--text-muted);">无片段</div>';
+
+      return `
+        <div style="margin-bottom:16px;">
+          <strong>AI 建议回答:</strong>
+          <div style="background:#f1f5f9; padding:10px; border-radius:6px; margin-top:8px; font-size:13.5px;">${escapeHtml(detail.ai_suggested_answer || '无建议')}</div>
+        </div>
+        <div style="margin-bottom:16px;">
+          <strong>原始用户提问 (${rawQueries.length}):</strong>
+          <ul style="margin-top:8px; padding-left:20px; font-size:13px; color:#475569;">
+            ${rawQueriesHtml}
+          </ul>
+        </div>
+        <div>
+          <strong>当时检索到的知识片段快照:</strong>
+          <div style="margin-top:8px; font-size:13px;">
+            ${chunksHtml}
+          </div>
+        </div>
+      `;
     }
 
     function renderTable() {
       const tbody = document.getElementById('queue-tbody');
       let html = '';
-      if (queueData.length === 0) {
+      if (!queueData || queueData.length === 0) {
         html = `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted);">暂无记录</td></tr>`;
       } else {
-        queueData.sort((a,b) => b.occurrence_count - a.occurrence_count).forEach(row => {
+        [...queueData].sort((a, b) => (b.occurrence_count || 0) - (a.occurrence_count || 0)).forEach(row => {
+          const rowId = Number(row.id);
+          const normStatus = normalizeReviewStatus(row);
           let badgeClass = 'badge-pending';
           let statusText = '待审核';
-          if (row.status === 'approved') { badgeClass = 'badge-approved'; statusText = '已核准'; }
-          if (row.status === 'rejected') { badgeClass = 'badge-rejected'; statusText = '已驳回'; }
+          if (normStatus === 'approved') { badgeClass = 'badge-approved'; statusText = '已核准'; }
+          if (normStatus === 'rejected') { badgeClass = 'badge-rejected'; statusText = '已驳回'; }
 
           html += `
-            <tr class="expandable" onclick="toggleDetail('${row.id}')">
-              <td>${row.id.substring(0,8)}...</td>
-              <td style="font-weight:500;">${row.normalized_question}</td>
-              <td><span class="badge badge-count">🔥 ${row.occurrence_count} 次</span></td>
+            <tr class="expandable" onclick="toggleDetail(${rowId})">
+              <td>#${rowId}</td>
+              <td style="font-weight:500;">${escapeHtml(row.normalized_question)}</td>
+              <td><span class="badge badge-count">🔥 ${Number(row.occurrence_count || 0)} 次</span></td>
               <td><span class="badge ${badgeClass}">${statusText}</span></td>
-              <td>${new Date(row.created_at).toLocaleString()}</td>
+              <td>${escapeHtml(formatDateTime(row.created_at))}</td>
               <td onclick="event.stopPropagation()">
-                ${row.status === 'pending' ? `
-                  <button class="btn-primary btn-success btn-small" onclick="openApproveModal('${row.id}')">通过</button>
-                  <button class="btn-primary btn-danger btn-small" onclick="rejectItem('${row.id}')">驳回</button>
+                ${normStatus === 'pending' ? `
+                  <button class="btn-primary btn-success btn-small" onclick="openApproveModal(${rowId})">通过</button>
+                  <button class="btn-primary btn-danger btn-small" onclick="rejectItem(${rowId})">驳回</button>
                 ` : `<span style="color:var(--text-muted); font-size:12px;">已处理</span>`}
               </td>
             </tr>
-            <tr class="detail-row" id="detail-${row.id}">
+            <tr class="detail-row" id="detail-${rowId}">
               <td colspan="6">
-                <div class="detail-content">
-                  <div style="margin-bottom:16px;">
+                <div class="detail-content" id="detail-content-${rowId}">
+                  <div style="margin-bottom:12px;">
                     <strong>AI 建议回答:</strong>
-                    <div style="background:#f1f5f9; padding:10px; border-radius:6px; margin-top:8px; font-size:13.5px;">${row.ai_suggested_answer || '无建议'}</div>
+                    <div style="background:#f1f5f9; padding:10px; border-radius:6px; margin-top:8px; font-size:13.5px;">${escapeHtml(row.ai_suggested_answer || '无建议')}</div>
                   </div>
-                  <div style="margin-bottom:16px;">
-                    <strong>原始用户提问 (${row.raw_queries?.length || 0}):</strong>
-                    <ul style="margin-top:8px; padding-left:20px; font-size:13px; color:#475569;">
-                      ${(row.raw_queries || []).map(q => `<li>${q.raw_question} <span style="color:#94a3b8;font-size:12px;">(${new Date(q.timestamp).toLocaleString()})</span></li>`).join('')}
-                    </ul>
-                  </div>
-                  <div>
-                    <strong>当时检索到的知识片段快照:</strong>
-                    <div style="margin-top:8px; font-size:13px;">
-                      ${(row.retrieved_chunks || []).map(c => `
-                        <div style="border-left:3px solid var(--primary); padding-left:10px; margin-bottom:8px;">
-                          <div style="color:var(--text-muted); font-size:12px; margin-bottom:4px;">Score: ${c.score.toFixed(4)}</div>
-                          <div style="color:#334155;">${c.text}</div>
-                        </div>
-                      `).join('') || '<div style="color:var(--text-muted);">无片段</div>'}
-                    </div>
-                  </div>
+                  <div style="color:var(--text-muted); font-size:13px;">点击展开加载原始提问 (${Number(row.raw_questions_count || 0)} 条) 与检索片段快照...</div>
                 </div>
               </td>
             </tr>
@@ -230,16 +306,43 @@
       tbody.innerHTML = html;
     }
 
-    function toggleDetail(id) {
-      const el = document.getElementById(`detail-${id}`);
-      if (el) el.classList.toggle('active');
+    async function toggleDetail(id) {
+      const numericId = Number(id);
+      const el = document.getElementById(`detail-${numericId}`);
+      if (!el) return;
+      const isActive = el.classList.toggle('active');
+      if (!isActive || detailCache[numericId]) return;
+
+      const contentEl = document.getElementById(`detail-content-${numericId}`);
+      if (contentEl) {
+        contentEl.innerHTML = '<div style="color:var(--text-muted); font-size:13px;">正在加载详情...</div>';
+      }
+
+      try {
+        const res = await fetch(`/api/review-queue/${numericId}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        const detail = await res.json();
+        detailCache[numericId] = detail;
+        if (contentEl) {
+          contentEl.innerHTML = renderDetailHtml(detail);
+        }
+      } catch (e) {
+        console.error("Failed to load review queue detail", e);
+        if (contentEl) {
+          contentEl.innerHTML = `<div style="color:var(--danger); font-size:13px;">加载详情失败: ${escapeHtml(e.message)}</div>`;
+        }
+      }
     }
 
     function openApproveModal(id) {
-      const item = queueData.find(x => x.id === id);
+      const numericId = Number(id);
+      const item = queueData.find(x => Number(x.id) === numericId);
       if (!item) return;
-      currentApproveId = id;
-      document.getElementById('approve-question').value = item.normalized_question;
+      currentApproveId = numericId;
+      document.getElementById('approve-question').value = item.normalized_question || '';
       document.getElementById('approve-answer').value = item.ai_suggested_answer || '';
       document.getElementById('approve-modal').classList.add('active');
     }
@@ -251,7 +354,7 @@
 
     async function submitApprove() {
       const ans = document.getElementById('approve-answer').value;
-      if (!currentApproveId) return;
+      if (currentApproveId === null || currentApproveId === undefined) return;
       try {
         const res = await fetch(`/api/review-queue/${currentApproveId}/approve`, {
           method: 'POST',
@@ -263,16 +366,18 @@
           closeApproveModal();
           loadQueue();
         } else {
-          showToast('核准失败');
+          const err = await res.json().catch(() => ({}));
+          showToast('核准失败: ' + (err.detail || `HTTP ${res.status}`));
         }
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error(e); showToast('核准请求异常'); }
     }
 
     async function rejectItem(id) {
+      const numericId = Number(id);
       const reason = prompt("请输入驳回原因 (可选):");
       if (reason === null) return; // cancelled
       try {
-        const res = await fetch(`/api/review-queue/${id}/reject`, {
+        const res = await fetch(`/api/review-queue/${numericId}/reject`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ reason: reason })
@@ -281,9 +386,10 @@
           showToast('已驳回');
           loadQueue();
         } else {
-          showToast('操作失败');
+          const err = await res.json().catch(() => ({}));
+          showToast('操作失败: ' + (err.detail || `HTTP ${res.status}`));
         }
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error(e); showToast('驳回请求异常'); }
     }
 
     function showToast(msg) {
@@ -310,13 +416,34 @@
       const logs = document.getElementById('job-modal-logs');
       const closeBtn = document.getElementById('job-modal-close');
       const title = document.getElementById('job-modal-title');
-      
+      const statusEl = document.getElementById('job-modal-status');
+
       modal.classList.add('active');
       closeBtn.disabled = true;
       closeBtn.innerText = '等待完成';
+      if (statusEl) {
+        statusEl.innerText = 'Running';
+        statusEl.className = 'badge badge-pending';
+      }
       logs.innerText = `[${jobName}] Starting job...\n`;
       title.innerText = `Job: ${jobName}`;
-      
+
+      const stopPolling = (statusText, btnText, badgeClass, errMsg = '') => {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        if (errMsg) {
+          logs.innerText += `\nError: ${errMsg}`;
+        }
+        closeBtn.disabled = false;
+        closeBtn.innerText = btnText;
+        if (statusEl) {
+          statusEl.innerText = statusText;
+          if (badgeClass) statusEl.className = 'badge ' + badgeClass;
+        }
+      };
+
       try {
         const res = await fetch('/api/jobs/start', {
           method: 'POST',
@@ -329,16 +456,27 @@
         }
         const data = await res.json();
         const jobId = data.job_id;
-        
+
         if (pollTimer) clearInterval(pollTimer);
+        let consecutiveErrors = 0;
+        let isPolling = false;
         pollTimer = setInterval(async () => {
+          if (isPolling) return;
+          isPolling = true;
           try {
             const logRes = await fetch(`/api/jobs/${jobId}/logs`);
-            if (!logRes.ok) return;
+            if (!logRes.ok) {
+              consecutiveErrors++;
+              if (logRes.status === 404 || consecutiveErrors >= 3) {
+                stopPolling('Error', '关闭', 'badge-rejected', `日志查询失败 (HTTP ${logRes.status})`);
+              }
+              return;
+            }
+            consecutiveErrors = 0;
             const logData = await logRes.json();
             logs.innerText = (logData.logs || []).join('\n');
             logs.scrollTop = logs.scrollHeight;
-            
+
             let status = logData.status;
             if (!status) {
               const statusRes = await fetch(`/api/jobs/${jobId}`);
@@ -348,24 +486,25 @@
               }
             }
 
-            if (status === 'completed' || status === 'failed') {
-              clearInterval(pollTimer);
-              pollTimer = null;
-              closeBtn.disabled = false;
-              closeBtn.innerText = status === 'completed' ? '完成' : '失败 (关闭)';
-              const statusEl = document.getElementById('job-modal-status');
-              if (statusEl) statusEl.innerText = status === 'completed' ? 'Done' : 'Failed';
+            if (status === 'completed') {
+              stopPolling('Done', '完成', 'badge-approved');
+            } else if (status === 'failed') {
+              stopPolling('Failed', '失败 (关闭)', 'badge-rejected');
+            } else if (status === 'stopped') {
+              stopPolling('Stopped', '已停止 (关闭)', 'badge-pending');
             }
           } catch(e) {
+            consecutiveErrors++;
             console.error("Job polling error", e);
+            if (consecutiveErrors >= 3) {
+              stopPolling('Error', '关闭', 'badge-rejected', e.message);
+            }
+          } finally {
+            isPolling = false;
           }
         }, 1000);
       } catch(e) {
-        logs.innerText += `\nError: ${e.message}`;
-        closeBtn.disabled = false;
-        closeBtn.innerText = '关闭';
-        const statusEl = document.getElementById('job-modal-status');
-        if (statusEl) statusEl.innerText = 'Error';
+        stopPolling('Error', '关闭', 'badge-rejected', e.message);
       }
     }
 

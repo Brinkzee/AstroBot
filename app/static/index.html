@@ -1603,6 +1603,11 @@
     let isStreaming = false;
     let currentRefundOrderId = null;
     let activeRefundBtn = null;
+    let activeStreamController = null;
+    let activeStreamer = null;
+    let streamGeneration = 0;
+    let sessionLoadSeq = 0;
+    let activeSessionController = null;
 
     const messagesContainer = document.getElementById('messages-container');
     const userInput = document.getElementById('user-input');
@@ -1626,7 +1631,27 @@
       </div>
     `;
 
+    function abortActiveStream() {
+      streamGeneration++;
+      if (activeStreamController) {
+        try { activeStreamController.abort(); } catch (e) {}
+        activeStreamController = null;
+      }
+      if (activeStreamer) {
+        activeStreamer.cancel();
+        activeStreamer = null;
+      }
+      isStreaming = false;
+      btnSend.disabled = false;
+    }
+
     function createNewChat() {
+      abortActiveStream();
+      sessionLoadSeq++;
+      if (activeSessionController) {
+        try { activeSessionController.abort(); } catch (e) {}
+        activeSessionController = null;
+      }
       currentConversationId = null;
       currentRefundOrderId = null;
       activeRefundBtn = null;
@@ -1739,6 +1764,13 @@
 
     async function selectSession(conversationId) {
       if (isStreaming) return;
+      const mySeq = ++sessionLoadSeq;
+      if (activeSessionController) {
+        try { activeSessionController.abort(); } catch (e) {}
+      }
+      const controller = new AbortController();
+      activeSessionController = controller;
+
       currentConversationId = conversationId;
       sessionDisplay.innerText = '会话: #' + conversationId;
 
@@ -1752,18 +1784,24 @@
 
       messagesContainer.innerHTML = `
         <div class="msg-row system-hint">
-          <div class="system-msg">正在加载会话 #${conversationId} 历史消息...</div>
+          <div class="system-msg">正在加载会话 #${escapeHtml(conversationId)} 历史消息...</div>
         </div>
       `;
 
       try {
-        const res = await fetch(`/api/conversations/${conversationId}/messages`);
+        const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+          signal: controller.signal
+        });
+        if (mySeq !== sessionLoadSeq) return;
         if (!res.ok) {
           throw new Error('HTTP ' + res.status);
         }
         const messages = await res.json();
+        if (mySeq !== sessionLoadSeq) return;
         renderConversationMessages(messages);
       } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        if (mySeq !== sessionLoadSeq) return;
         console.warn('获取会话历史消息失败:', err);
         messagesContainer.innerHTML = `
           <div class="msg-row system-hint">
@@ -1771,7 +1809,12 @@
           </div>
         `;
       } finally {
-        userInput.focus();
+        if (activeSessionController === controller) {
+          activeSessionController = null;
+        }
+        if (mySeq === sessionLoadSeq) {
+          userInput.focus();
+        }
       }
     }
 
@@ -1819,8 +1862,14 @@
             toolBadgesHtml = `<div class="tool-badge-container">${badges}</div>`;
           }
 
-          const textHtml = content ? `<div class="text-body">${renderContentWithCitations(content)}</div>` : '';
+          const hasCitations = Array.isArray(m.citations) && m.citations.length > 0;
+          const renderedText = hasCitations ? renderContentWithCitations(content) : escapeHtml(content);
+          const textHtml = content ? `<div class="text-body">${renderedText}</div>` : '';
           row.innerHTML = `<div class="avatar" style="width:36px; height:36px; font-size:18px;">🌟</div><div class="msg-content">${toolBadgesHtml}${textHtml}</div>`;
+          if (hasCitations) {
+            const msgContentEl = row.querySelector('.msg-content');
+            if (msgContentEl) msgContentEl._citations = m.citations;
+          }
           messagesContainer.appendChild(row);
 
         } else if (m.role === 'tool') {
@@ -1951,10 +2000,22 @@
       let displayedIndex = 0;
       let timer = null;
       let isCompleted = false;
+      let isFinished = false;
+      let isCancelled = false;
       const baseDelay = options.delay || 18; // 基础步进间隔 ms
 
+      function finishOnce(finalText) {
+        if (isFinished || isCancelled) return;
+        isFinished = true;
+        targetEl.innerHTML = renderContentWithCitations(finalText);
+        if (options.onComplete) {
+          options.onComplete(targetText);
+        }
+        scrollToBottom();
+      }
+
       function tick() {
-        if (!targetEl) return;
+        if (!targetEl || isCancelled) return;
 
         if (displayedIndex < targetText.length) {
           // 动态自适应调速：根据滞后字符量动态调整单次步进长度，兼顾平滑打字感与大段文本响应速度
@@ -1981,18 +2042,14 @@
           timer = null;
           if (isCompleted) {
             // 所有字符全部输出完成，移除光标，渲染最终状态
-            targetEl.innerHTML = renderContentWithCitations(targetText || options.fallbackText || '');
-            if (options.onComplete) {
-              options.onComplete(targetText);
-            }
-            scrollToBottom();
+            finishOnce(targetText || options.fallbackText || '');
           }
         }
       }
 
       return {
         append(chunk) {
-          if (!chunk) return;
+          if (!chunk || isCancelled) return;
           // 首包去除开头的换行符，防止模型响应自带 \n\n 撑开巨大空隙
           if (targetText.length === 0) {
             chunk = chunk.replace(/^[\r\n]+/, '');
@@ -2004,14 +2061,11 @@
           }
         },
         complete(fallbackText = '') {
+          if (isCancelled || isFinished) return;
           isCompleted = true;
           options.fallbackText = fallbackText;
           if (!timer && displayedIndex >= targetText.length) {
-            targetEl.innerHTML = renderContentWithCitations(targetText || fallbackText);
-            if (options.onComplete) {
-              options.onComplete(targetText);
-            }
-            scrollToBottom();
+            finishOnce(targetText || fallbackText);
           }
         },
         flush() {
@@ -2019,12 +2073,18 @@
             clearTimeout(timer);
             timer = null;
           }
+          if (isCancelled || isFinished) return;
           displayedIndex = targetText.length;
-          targetEl.innerHTML = renderContentWithCitations(targetText || options.fallbackText || '');
-          if (options.onComplete) {
-            options.onComplete(targetText);
+          finishOnce(targetText || options.fallbackText || '');
+        },
+        cancel() {
+          isCancelled = true;
+          isCompleted = true;
+          isFinished = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
           }
-          scrollToBottom();
         },
         getText() {
           return targetText;
@@ -2032,31 +2092,54 @@
       };
     }
 
+    function extractOrderIdFromText(text) {
+      if (!text) return null;
+      const explicitMatch = text.match(/订单[号编号:：\s#]*([A-Za-z0-9_-]{3,})/);
+      if (explicitMatch) {
+        return explicitMatch[1];
+      }
+      const fallbackMatch = text.match(/\b(100\d+)\b/);
+      return fallbackMatch ? fallbackMatch[1] : null;
+    }
+
     async function sendMessage() {
       const text = userInput.value.trim();
       if (!text || isStreaming) return;
 
-      // 提取提问中可能包含的订单号 (如 退款订单: 1001 或 订单1001)
-      const orderMatch = text.match(/\b(100[1-9])\b/);
-      if (orderMatch) {
-        currentRefundOrderId = orderMatch[1];
+      // 提取提问中可能包含的订单号 (支持 订单号 ORD-2026001、订单 1001 等多种格式)
+      const detectedOrderId = extractOrderIdFromText(text);
+      if (detectedOrderId) {
+        currentRefundOrderId = detectedOrderId;
       }
 
       appendUserMessage(text);
       userInput.value = '';
       userInput.style.height = 'auto';
 
+      const myGen = ++streamGeneration;
+      const controller = new AbortController();
+      activeStreamController = controller;
+
       isStreaming = true;
       btnSend.disabled = true;
 
       const botContentEl = createBotPlaceholder();
+      botContentEl.dataset.userQuery = text;
       const toolContainer = botContentEl.querySelector('.tool-badge-container');
       const textBody = botContentEl.querySelector('.text-body');
 
       let hasReceivedFirstToken = false;
+      let hasStructuredCard = false;
+      let hasError = false;
+      let streamDone = false;
+      let finishedCalled = false;
       let streamer = null;
 
       const finishStreaming = () => {
+        if (finishedCalled || myGen !== streamGeneration) return;
+        finishedCalled = true;
+        if (activeStreamController === controller) activeStreamController = null;
+        if (activeStreamer === streamer) activeStreamer = null;
         isStreaming = false;
         btnSend.disabled = false;
         userInput.focus();
@@ -2066,8 +2149,9 @@
       streamer = createTokenStreamer(textBody, {
         delay: 18,
         onComplete: (fullText) => {
+          if (myGen !== streamGeneration) return;
           // 为 Bot 回复挂载左下角满意度反馈 (👍/👎 点亮锁定)
-          if (fullText && !botContentEl.querySelector('.feedback-bar')) {
+          if (fullText && !hasError && !botContentEl.querySelector('.feedback-bar')) {
             const fbBar = document.createElement('div');
             fbBar.className = 'feedback-bar';
             fbBar.innerHTML = `
@@ -2081,6 +2165,88 @@
           finishStreaming();
         }
       });
+      activeStreamer = streamer;
+
+      const handleSsePart = (part) => {
+        if (myGen !== streamGeneration || streamDone || hasError) return;
+        const trimmed = part.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) return;
+
+        const dataStr = trimmed.replace(/^data:\s*/, '');
+        if (dataStr === '[DONE]') {
+          streamDone = true;
+          return;
+        }
+
+        try {
+          const data = JSON.parse(dataStr);
+
+          // 记录会话 ID
+          if (data.conversation_id) {
+            const isNewConv = currentConversationId !== data.conversation_id;
+            currentConversationId = data.conversation_id;
+            sessionDisplay.innerText = '会话: #' + currentConversationId;
+            if (isNewConv) {
+              loadSessions(currentConversationId);
+            }
+          }
+
+          // 事件分流处理
+          if (data.event_type === 'order_selector') {
+            hasStructuredCard = true;
+            if (!hasReceivedFirstToken) textBody.innerHTML = '';
+            renderOrderSelectorCards(botContentEl, data.orders || []);
+          } else if (data.event_type === 'ticket_preview') {
+            hasStructuredCard = true;
+            if (!hasReceivedFirstToken) textBody.innerHTML = '';
+            renderTicketPreviewCard(botContentEl, data);
+          } else if (data.event_type === 'citations') {
+            botContentEl._citations = data.citations || [];
+            console.log('Received citations snapshot:', botContentEl._citations);
+          } else if (data.event_type === 'actions') {
+            renderActionButtons(botContentEl, data.actions || []);
+          } else if (data.event_type === 'tool_start') {
+            toolContainer.style.display = 'block';
+            const label = data.tool_label || data.tool_name;
+            toolContainer.innerHTML = `
+              <div class="tool-badge loading">
+                <div class="tool-spinner"></div>
+                <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
+              </div>
+            `;
+            scrollToBottom();
+          } else if (data.event_type === 'tool_end') {
+            toolContainer.style.display = 'block';
+            const statusIcon = data.success ? '📦' : '⚠️';
+            const statusText = data.success ? '调用成功' : '调用异常';
+            const badgeClass = data.success ? 'completed' : 'failed';
+            toolContainer.innerHTML = `
+              <div class="tool-badge ${badgeClass}">
+                <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
+                <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
+              </div>
+            `;
+            scrollToBottom();
+          } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
+            const chunk = data.content || '';
+            if (chunk) {
+              if (!hasReceivedFirstToken) {
+                hasReceivedFirstToken = true;
+                textBody.innerHTML = ''; // 移除 loading 三个点
+              }
+              streamer.append(chunk);
+            }
+          } else if (data.event_type === 'error' || data.error) {
+            const errMsg = data.error || '未知异常';
+            hasError = true;
+            if (streamer) streamer.cancel();
+            textBody.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(errMsg)}</span>`;
+            scrollToBottom();
+          }
+        } catch (err) {
+          console.warn('解析 SSE 帧失败:', err, dataStr);
+        }
+      };
 
       try {
         const payload = {
@@ -2095,8 +2261,11 @@
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: controller.signal
         });
+
+        if (myGen !== streamGeneration) return;
 
         if (!response.ok) {
           throw new Error('网络请求异常: ' + response.statusText);
@@ -2106,94 +2275,48 @@
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
 
-        while (true) {
+        while (!streamDone && !hasError) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (myGen !== streamGeneration) {
+            try { await reader.cancel(); } catch (e) {}
+            return;
+          }
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              for (const part of buffer.split('\n\n')) {
+                handleSsePart(part);
+              }
+            }
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
           buffer = parts.pop(); // 保留未闭合块
 
           for (const part of parts) {
-            const trimmed = part.trim();
-            if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-            const dataStr = trimmed.replace(/^data:\s*/, '');
-            if (dataStr === '[DONE]') {
-              break;
-            }
-
-            try {
-              const data = JSON.parse(dataStr);
-
-              // 记录会话 ID
-              if (data.conversation_id) {
-                const isNewConv = currentConversationId !== data.conversation_id;
-                currentConversationId = data.conversation_id;
-                sessionDisplay.innerText = '会话: #' + currentConversationId;
-                if (isNewConv) {
-                  loadSessions(currentConversationId);
-                }
-              }
-
-              // 事件分流处理
-              if (data.event_type === 'order_selector') {
-                renderOrderSelectorCards(botContentEl, data.orders || []);
-              } else if (data.event_type === 'ticket_preview') {
-                renderTicketPreviewCard(botContentEl, data);
-              } else if (data.event_type === 'citations') {
-                botContentEl._citations = data.citations || [];
-                console.log('Received citations snapshot:', botContentEl._citations);
-              } else if (data.event_type === 'actions') {
-                renderActionButtons(botContentEl, data.actions || []);
-              } else if (data.event_type === 'tool_start') {
-                toolContainer.style.display = 'block';
-                const label = data.tool_label || data.tool_name;
-                toolContainer.innerHTML = `
-                  <div class="tool-badge loading">
-                    <div class="tool-spinner"></div>
-                    <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
-                  </div>
-                `;
-                scrollToBottom();
-              } else if (data.event_type === 'tool_end') {
-                toolContainer.style.display = 'block';
-                const statusIcon = data.success ? '📦' : '⚠️';
-                const statusText = data.success ? '调用成功' : '调用异常';
-                const badgeClass = data.success ? 'completed' : 'failed';
-                toolContainer.innerHTML = `
-                  <div class="tool-badge ${badgeClass}">
-                    <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
-                    <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
-                  </div>
-                `;
-                scrollToBottom();
-              } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
-                const chunk = data.content || '';
-                if (chunk) {
-                  if (!hasReceivedFirstToken) {
-                    hasReceivedFirstToken = true;
-                    textBody.innerHTML = ''; // 移除 loading 三个点
-                  }
-                  streamer.append(chunk);
-                }
-              } else if (data.event_type === 'error' || data.error) {
-                const errMsg = data.error || '未知异常';
-                if (streamer) streamer.flush();
-                textBody.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(errMsg)}</span>`;
-                scrollToBottom();
-              }
-            } catch (err) {
-              console.warn('解析 SSE 帧失败:', err, dataStr);
-            }
+            handleSsePart(part);
+            if (streamDone || hasError || myGen !== streamGeneration) break;
           }
         }
 
-        // 网络流结束，通知打字机准备收尾
-        streamer.complete(hasReceivedFirstToken ? '' : '抱歉，未能获取有效回复。');
+        if (myGen !== streamGeneration) return;
+
+        if (hasError) {
+          finishStreaming();
+        } else {
+          // 网络流结束，通知打字机准备收尾
+          const fallbackMsg = (hasReceivedFirstToken || hasStructuredCard) ? '' : '抱歉，未能获取有效回复。';
+          streamer.complete(fallbackMsg);
+        }
 
       } catch (err) {
-        if (streamer) streamer.flush();
+        if ((err && err.name === 'AbortError') || myGen !== streamGeneration) {
+          return;
+        }
+        hasError = true;
+        if (streamer) streamer.cancel();
         textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
         finishStreaming();
       }
@@ -2388,14 +2511,14 @@
           order.status === '待支付' ? 'order-tag-pending' :
             order.status === '已完成' ? 'order-tag-completed' : 'order-tag-default';
         return `
-              <div class="order-card-item" data-order-id="${escapeHtml(order.order_id)}" onclick="selectOrderCard(this, '${escapeHtml(order.order_id)}')">
+              <div class="order-card-item" data-order-id="${escapeHtml(order.order_id)}" onclick="selectOrderCard(this)">
                 <div class="order-card-left">
                   <div class="order-card-header">
                     <span class="order-card-id">#${escapeHtml(order.order_id)}</span>
                     <span class="order-card-tag ${tagClass}">${escapeHtml(order.status || '未知')}</span>
                   </div>
                   <div class="order-card-title">${escapeHtml(order.product_name || '商品')}</div>
-                  <div class="order-card-time">${escapeHtml(order.create_time || '')}</div>
+                  <div class="order-card-time">${escapeHtml(order.order_time || order.create_time || order['下单时间'] || '')}</div>
                 </div>
                 <div class="order-card-right">
                   <span class="order-card-price">${escapeHtml(order.amount || '')}</span>
@@ -2411,6 +2534,7 @@
 
     function selectOrderCard(cardEl, orderId) {
       if (isStreaming) return;
+      const resolvedOrderId = orderId !== undefined ? orderId : (cardEl && cardEl.dataset ? cardEl.dataset.orderId : '');
       const list = cardEl.closest('.order-cards-list');
       if (list) {
         list.querySelectorAll('.order-card-item').forEach(c => {
@@ -2425,17 +2549,24 @@
       const btn = cardEl.querySelector('.btn-select-order');
       if (btn) btn.innerText = '✓ 已选';
 
-      currentRefundOrderId = orderId;
+      currentRefundOrderId = resolvedOrderId;
 
       // 自动回填输入框并无缝发送，驱动工作流继续推进
-      userInput.value = `退款订单: ${orderId}`;
+      userInput.value = `退款订单: ${resolvedOrderId}`;
       sendMessage();
     }
 
     function openRefundModal(btn) {
       activeRefundBtn = btn;
       const orderInput = document.getElementById('refund-modal-order-id');
-      orderInput.value = currentRefundOrderId || '1001';
+      if (currentRefundOrderId) {
+        orderInput.value = currentRefundOrderId;
+        orderInput.readOnly = true;
+      } else {
+        orderInput.value = '';
+        orderInput.readOnly = false;
+        orderInput.placeholder = '请输入订单号 (如 1001)';
+      }
       document.getElementById('refund-modal-notes').value = '';
       document.getElementById('refund-modal-overlay').classList.add('open');
     }
@@ -2453,10 +2584,15 @@
     }
 
     async function submitRefundModal() {
-      const orderId = document.getElementById('refund-modal-order-id').value.trim() || (currentRefundOrderId || '1001');
+      const orderId = document.getElementById('refund-modal-order-id').value.trim() || (currentRefundOrderId || '');
+      if (!orderId) {
+        alert('请填写关联退款订单号');
+        return;
+      }
       const reason = document.getElementById('refund-modal-reason').value;
       const notes = document.getElementById('refund-modal-notes').value.trim();
       const submitBtn = document.getElementById('btn-refund-submit');
+      const targetRefundBtn = activeRefundBtn;
 
       submitBtn.disabled = true;
       submitBtn.innerText = '提交中...';
@@ -2483,10 +2619,10 @@
         const data = await res.json();
         closeRefundModal();
         appendSystemMessage(`您的退款申请已提交，工单号:【${data.ticket_no}】，专员将在 24 小时内为您审核。`);
-        if (activeRefundBtn) {
-          activeRefundBtn.disabled = true;
-          activeRefundBtn.classList.add('btn-disabled');
-          activeRefundBtn.innerHTML = '<span>✅</span><span>退款已申请</span>';
+        if (targetRefundBtn) {
+          targetRefundBtn.disabled = true;
+          targetRefundBtn.classList.add('btn-disabled');
+          targetRefundBtn.innerHTML = '<span>✅</span><span>退款已申请</span>';
         }
       } catch (err) {
         alert('提交退款工单失败: ' + err.message);
@@ -2496,22 +2632,35 @@
       }
     }
 
-    function handleFeedback(btn, type) {
+    async function handleFeedback(btn, type) {
       const bar = btn.closest('.feedback-bar');
       if (!bar) return;
       const buttons = bar.querySelectorAll('.btn-fb-thumb');
       const tip = bar.querySelector('.fb-tip');
 
-      // 点亮对应按钮
       if (type === 'up') {
         btn.classList.add('active-up');
         tip.innerText = '已反馈 (满意) 👍';
-      } else {
-        btn.classList.add('active-down');
-        tip.innerText = '已反馈 (待改进) 👎';
+        buttons.forEach(b => { b.disabled = true; });
+        console.log('Satisfaction feedback recorded:', {
+          type,
+          conversation_id: currentConversationId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
 
-        // 发送飞轮反馈
-        fetch('/api/chat/feedback', {
+      if (currentConversationId == null) {
+        tip.innerText = '暂无有效会话，无法提交反馈';
+        return;
+      }
+
+      const msgContent = btn.closest('.msg-content');
+      const userQuery = (msgContent && msgContent.dataset && msgContent.dataset.userQuery) || '';
+      buttons.forEach(b => { b.disabled = true; });
+
+      try {
+        const res = await fetch('/api/chat/feedback', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -2519,22 +2668,25 @@
           body: JSON.stringify({
             conversation_id: currentConversationId,
             feedback_type: 'down',
-            query: lastUserMessageText,
+            query: userQuery,
             reason: '用户对回答不满意(点踩)'
           })
-        }).catch(err => console.error('Error submitting feedback:', err));
+        });
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        btn.classList.add('active-down');
+        tip.innerText = '已反馈 (待改进) 👎';
+        console.log('Satisfaction feedback recorded:', {
+          type,
+          conversation_id: currentConversationId,
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Error submitting feedback:', err);
+        buttons.forEach(b => { b.disabled = false; });
+        tip.innerText = '反馈提交失败，请重试';
       }
-
-      // 一次性锁定所有按钮
-      buttons.forEach(b => {
-        b.disabled = true;
-      });
-
-      console.log('Satisfaction feedback recorded:', {
-        type,
-        conversation_id: currentConversationId,
-        timestamp: new Date().toISOString()
-      });
     }
 
     /* ==========================================================================
@@ -2599,10 +2751,14 @@
         statusEl.style.display = 'inline-block';
       }
 
-      await resumeChatWorkflow(convId, action);
+      await resumeChatWorkflow(convId, action, cardEl);
     }
 
-    async function resumeChatWorkflow(convId, action) {
+    async function resumeChatWorkflow(convId, action, cardEl = null) {
+      const myGen = ++streamGeneration;
+      const controller = new AbortController();
+      activeStreamController = controller;
+
       isStreaming = true;
       btnSend.disabled = true;
 
@@ -2618,9 +2774,30 @@
       const textBody = botMsgEl.querySelector('.text-body');
 
       let hasReceivedFirstToken = false;
+      let hasError = false;
+      let streamDone = false;
+      let finishedCalled = false;
       let streamer = null;
 
+      const restoreCardButtonsOnError = () => {
+        if (!cardEl) return;
+        const actionsEl = cardEl.querySelector('.ticket-preview-actions');
+        const statusEl = cardEl.querySelector('.ticket-preview-status');
+        if (actionsEl) {
+          actionsEl.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        }
+        if (statusEl) {
+          statusEl.innerText = '✕ 处理失败，请重试';
+          statusEl.className = 'ticket-preview-status ticket-status-cancelled';
+          statusEl.style.display = 'inline-block';
+        }
+      };
+
       const finishStreaming = () => {
+        if (finishedCalled || myGen !== streamGeneration) return;
+        finishedCalled = true;
+        if (activeStreamController === controller) activeStreamController = null;
+        if (activeStreamer === streamer) activeStreamer = null;
         isStreaming = false;
         btnSend.disabled = false;
         userInput.focus();
@@ -2630,17 +2807,81 @@
       streamer = createTokenStreamer(textBody, {
         delay: 18,
         onComplete: () => {
+          if (myGen !== streamGeneration) return;
           scrollToBottom();
           finishStreaming();
         }
       });
+      activeStreamer = streamer;
+
+      const handleResumePart = (part) => {
+        if (myGen !== streamGeneration || streamDone || hasError) return;
+        const trimmed = part.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) return;
+
+        const dataStr = trimmed.replace(/^data:\s*/, '');
+        if (dataStr === '[DONE]') {
+          streamDone = true;
+          return;
+        }
+
+        try {
+          const data = JSON.parse(dataStr);
+          if (data.event_type === 'tool_start') {
+            toolContainer.style.display = 'block';
+            const label = data.tool_label || data.tool_name;
+            toolContainer.innerHTML = `
+              <div class="tool-badge loading">
+                <div class="tool-spinner"></div>
+                <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
+              </div>
+            `;
+            scrollToBottom();
+          } else if (data.event_type === 'tool_end') {
+            toolContainer.style.display = 'block';
+            const statusIcon = data.success ? '📦' : '⚠️';
+            const statusText = data.success ? '调用成功' : '调用异常';
+            const badgeClass = data.success ? 'completed' : 'failed';
+            toolContainer.innerHTML = `
+              <div class="tool-badge ${badgeClass}">
+                <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
+                <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
+              </div>
+            `;
+            scrollToBottom();
+          } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
+            const chunk = data.content || '';
+            if (chunk) {
+              if (!hasReceivedFirstToken) {
+                hasReceivedFirstToken = true;
+                textBody.innerHTML = '';
+              }
+              streamer.append(chunk);
+            }
+          } else if (data.event_type === 'actions') {
+            renderActionButtons(botContentEl, data.actions || []);
+          } else if (data.event_type === 'error' || data.error) {
+            const errMsg = data.error || '未知异常';
+            hasError = true;
+            if (streamer) streamer.cancel();
+            textBody.innerHTML = `<span style="color:#ef4444;">出错了: ${escapeHtml(errMsg)}</span>`;
+            restoreCardButtonsOnError();
+            scrollToBottom();
+          }
+        } catch (err) {
+          console.warn('解析 resume SSE 帧失败:', err, dataStr);
+        }
+      };
 
       try {
         const response = await fetch('/api/chat/resume', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: convId, action: action })
+          body: JSON.stringify({ conversation_id: convId, action: action }),
+          signal: controller.signal
         });
+
+        if (myGen !== streamGeneration) return;
 
         if (!response.ok) {
           throw new Error('恢复工作流失败: ' + response.statusText);
@@ -2650,67 +2891,47 @@
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
 
-        while (true) {
+        while (!streamDone && !hasError) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (myGen !== streamGeneration) {
+            try { await reader.cancel(); } catch (e) {}
+            return;
+          }
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              for (const part of buffer.split('\n\n')) {
+                handleResumePart(part);
+              }
+            }
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
           buffer = parts.pop();
 
           for (const part of parts) {
-            const trimmed = part.trim();
-            if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-            const dataStr = trimmed.replace(/^data:\s*/, '');
-            if (dataStr === '[DONE]') break;
-
-            try {
-              const data = JSON.parse(dataStr);
-              if (data.event_type === 'tool_start') {
-                toolContainer.style.display = 'block';
-                const label = data.tool_label || data.tool_name;
-                toolContainer.innerHTML = `
-                  <div class="tool-badge loading">
-                    <div class="tool-spinner"></div>
-                    <span>⚡ 正在调用工具: <strong>${escapeHtml(label)}</strong> (${escapeHtml(data.tool_name)}) ...</span>
-                  </div>
-                `;
-                scrollToBottom();
-              } else if (data.event_type === 'tool_end') {
-                toolContainer.style.display = 'block';
-                const statusIcon = data.success ? '📦' : '⚠️';
-                const statusText = data.success ? '调用成功' : '调用异常';
-                const badgeClass = data.success ? 'completed' : 'failed';
-                toolContainer.innerHTML = `
-                  <div class="tool-badge ${badgeClass}">
-                    <span>${statusIcon} 已调用工具: <strong>${escapeHtml(data.tool_name)}</strong></span>
-                    <span style="opacity:0.8; font-size:11px;">[${statusText}]</span>
-                  </div>
-                `;
-                scrollToBottom();
-              } else if (data.event_type === 'text' || (!data.event_type && data.content)) {
-                const chunk = data.content || '';
-                if (chunk) {
-                  if (!hasReceivedFirstToken) {
-                    hasReceivedFirstToken = true;
-                    textBody.innerHTML = '';
-                  }
-                  streamer.append(chunk);
-                }
-              } else if (data.event_type === 'actions') {
-                renderActionButtons(botContentEl, data.actions || []);
-              }
-            } catch (err) {
-              console.warn('解析 resume SSE 帧失败:', err, dataStr);
-            }
+            handleResumePart(part);
+            if (streamDone || hasError || myGen !== streamGeneration) break;
           }
         }
 
-        streamer.complete(hasReceivedFirstToken ? '' : '已处理完成。');
+        if (myGen !== streamGeneration) return;
+
+        if (hasError) {
+          finishStreaming();
+        } else {
+          streamer.complete(hasReceivedFirstToken ? '' : '已处理完成。');
+        }
       } catch (err) {
-        if (streamer) streamer.flush();
+        if ((err && err.name === 'AbortError') || myGen !== streamGeneration) {
+          return;
+        }
+        hasError = true;
+        if (streamer) streamer.cancel();
         textBody.innerHTML = `<span style="color:#ef4444;">请求失败: ${escapeHtml(err.message)}</span>`;
+        restoreCardButtonsOnError();
         finishStreaming();
       }
     }
