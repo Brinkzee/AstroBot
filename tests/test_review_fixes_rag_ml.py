@@ -901,12 +901,13 @@ def test_rag20_cost_analytics_math_and_langfuse_v4(tmp_path):
 # RAG-21: LangfuseManager v4 update_current_trace & handler isolation
 # ==============================================================================
 
-def test_rag21_langfuse_manager_v4_trace_update_and_no_shared_handler_mutation():
+def test_rag21_langfuse_manager_v4_trace_update_and_no_shared_handler_mutation(monkeypatch):
     from app.services.observability.langfuse_service import LangfuseManager
 
     fake_client = MagicMock()
-    LangfuseManager._client = fake_client
-    LangfuseManager._handler = None
+    monkeypatch.setattr(LangfuseManager, "_client", fake_client)
+    monkeypatch.setattr(LangfuseManager, "_handler", None)
+    monkeypatch.setattr(LangfuseManager, "_client_config_key", None)
 
     with patch.object(settings, "langfuse_enabled", True), \
          patch.object(settings, "langfuse_public_key", "pk-test"), \
@@ -915,7 +916,6 @@ def test_rag21_langfuse_manager_v4_trace_update_and_no_shared_handler_mutation()
 
     # Must invoke client span/trace update rather than silently discarding propagate_attributes CM
     assert fake_client.update_current_span.called or fake_client.update_current_trace.called
-    LangfuseManager._client = None
 
 
 # ==============================================================================

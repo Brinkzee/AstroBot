@@ -223,7 +223,7 @@ async def test_acceptance_5_flywheel_pipeline_normalize_and_deduplicate(memory_d
                 else:
                     return type('O', (), {'content': "保价流程说明\n\n订单详情中申请退差价。"})()
             if "NONE" in p:
-                return type('O', (), {'content': "YES"})()
+                return type('O', (), {'content': "1"})()
             return type('O', (), {'content': ""})()
 
     mock_llm = MockFlywheelLLM()
