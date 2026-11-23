@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.db.session import AsyncSessionLocal
 from app.models.knowledge import KnowledgeChunk
+from app.services.rag.dual_writer import compose_embedding_text
 from app.services.rag.embedding import BGEEmbeddingClient
 from app.services.rag.milvus_client import MilvusKnowledgeStore
 from scripts.wsl_helper import ensure_mysql_ready
@@ -39,17 +40,8 @@ logger = logging.getLogger("reindex_ch04_knowledge")
 
 
 def compose_chunk_text(category: str, questions: str, answer: str) -> str:
-    """按规范组装包含类目、标准问法与解答的全文索引文本。
-    
-    格式：
-    【类目】{category}
-    【标准问法】{questions}
-    【解答】{answer}
-    """
-    cat = category or ""
-    q = questions or ""
-    a = answer or ""
-    return f"【类目】{cat}\n【标准问法】{q}\n【解答】{a}"
+    """复用 KnowledgeDualWriter 统一规范组装向量化与 BM25 全文索引文本，消除刷库与双写漂移。"""
+    return compose_embedding_text(category or "", questions or "", answer or "")
 
 
 async def reindex_knowledge_chunks(
@@ -104,6 +96,10 @@ async def reindex_knowledge_chunks(
             # 批量获取 Dense 向量
             logger.info(f"正在为批次 [{i + 1} ~ {min(i + batch_size, total)}/{total}] 生成 1024 维 Dense 语义向量...")
             batch_vectors = await embedding_client.aembed_documents(batch_texts)
+            if len(batch_vectors) != len(batch_chunks):
+                raise ValueError(
+                    f"刷库批次向量数 ({len(batch_vectors)}) 与知识块数 ({len(batch_chunks)}) 不匹配"
+                )
 
             # 组装 Milvus Payload records
             records = []
@@ -122,7 +118,11 @@ async def reindex_knowledge_chunks(
                     "next_chunk_id": chunk.next_chunk_id,
                 })
 
-            upserted = store.upsert(records, collection_name=collection_name)
+            upserted = await asyncio.to_thread(store.upsert, records, collection_name=collection_name)
+            for chunk in batch_chunks:
+                chunk.vector_id = str(chunk.id)
+                chunk.vectorize_status = "done"
+            await sess.commit()
             stats["indexed_chunks"] += upserted
             logger.info(f"批次 [{i + 1} ~ {min(i + batch_size, total)}] 写入 Milvus 成功，本批写入 {upserted} 条")
 

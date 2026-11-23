@@ -80,13 +80,16 @@ class RAGControlledGenerator:
             source = LowConfidenceSource.RETRIEVAL_LOW_CONF.value
             result = SelfCheckResult(useful=False, reason=reason, source=source)
             if db is not None:
-                await record_low_confidence(
-                    db=db,
-                    raw_question=raw_query,
-                    source=source,
-                    conversation_id=conversation_id,
-                    reason=reason,
-                )
+                try:
+                    await record_low_confidence(
+                        db=db,
+                        raw_question=raw_query,
+                        source=source,
+                        conversation_id=conversation_id,
+                        reason=reason,
+                    )
+                except Exception as e:
+                    logger.error(f"记录空证据低置信度问题入库失败: {e}")
             return result
 
         # 2. 证据非空，调用 LLM 或确定性 Mock 进行自评
@@ -127,14 +130,28 @@ class RAGControlledGenerator:
 
         # 3. 若判定不足，自动入池落库
         if not useful and db is not None:
-            retrieved_chunks = [
-                {
-                    "text": str(c.get("text") or c.get("content") or "")[:300],
-                    "score": float(c.get("score") or 0.0),
-                    "section": str(c.get("section_path") or c.get("section") or "")
-                }
-                for c in citations[:5]
-            ] if citations else None
+            retrieved_chunks = []
+            for c in citations[:5]:
+                raw_text = (
+                    c.get("text")
+                    or c.get("content")
+                    or c.get("chunk_text")
+                    or f"{c.get('question', '')} {c.get('answer', '')}".strip()
+                )
+                raw_score = c.get("score")
+                if raw_score is None:
+                    raw_score = c.get("rerank_score")
+                if raw_score is None:
+                    raw_score = c.get("distance")
+                try:
+                    score_val = float(raw_score) if raw_score is not None else 0.0
+                except (TypeError, ValueError):
+                    score_val = 0.0
+                retrieved_chunks.append({
+                    "text": str(raw_text)[:300],
+                    "score": score_val,
+                    "section": str(c.get("section_path") or c.get("section") or ""),
+                })
             try:
                 await record_low_confidence(
                     db=db,
@@ -142,7 +159,7 @@ class RAGControlledGenerator:
                     source=source,
                     conversation_id=conversation_id,
                     reason=reason,
-                    retrieved_chunks=retrieved_chunks,
+                    retrieved_chunks=retrieved_chunks or None,
                 )
             except Exception as e:
                 logger.error(f"记录低置信度问题入库失败: {e}")
@@ -211,13 +228,18 @@ class RAGControlledGenerator:
                 )
             )
 
+            yielded_any = False
             try:
                 async for chunk in stream_llm.astream(messages):
                     text = chunk.content if hasattr(chunk, "content") else str(chunk)
                     if text:
+                        yielded_any = True
                         yield text
                 return
             except Exception as e:
+                if yielded_any:
+                    logger.warning(f"流式模型输出中途异常（已输出部分内容，停止追加兜底文本）: {e}")
+                    return
                 logger.warning(f"流式模型调用异常，降级确定性 Mock 生成: {e}")
 
         # 确定性 Mock 生成兜底

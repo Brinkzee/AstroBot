@@ -38,10 +38,11 @@ def test_aggregate_records_sorting_and_math():
     assert items[2]["total_tokens"] == 600
     assert items[2]["total_calls"] == 1
 
-    # Check percentages
-    assert items[0]["cost_percentage"] == pytest.approx(6000 / 10600 * 100)
-    assert items[1]["cost_percentage"] == pytest.approx(4000 / 10600 * 100)
-    assert items[2]["cost_percentage"] == pytest.approx(600 / 10600 * 100)
+    # Check percentages based on estimated_cost_usd ($0.0225, $0.0175, $0.00225; total=$0.04225)
+    total_cost = 0.0225 + 0.0175 + 0.00225
+    assert items[0]["cost_percentage"] == pytest.approx(0.0225 / total_cost * 100)
+    assert items[1]["cost_percentage"] == pytest.approx(0.0175 / total_cost * 100)
+    assert items[2]["cost_percentage"] == pytest.approx(0.00225 / total_cost * 100)
 
     # Check cost (assuming $2.5/1M prompt, $10/1M completion)
     # knowledge: 5000 * 2.5/1M + 1000 * 10.0/1M = 0.0125 + 0.01 = 0.0225

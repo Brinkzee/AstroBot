@@ -15,11 +15,13 @@ import subprocess
 import sys
 import time
 from typing import Any, Dict, Optional
-import urllib.request
 import urllib.error
+from urllib.parse import urlparse
+import urllib.request
 
 import psutil
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PID_FILE = "data/ch10/classifier.pid"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8110
@@ -75,13 +77,25 @@ def is_pid_alive(pid: int) -> bool:
             return False
 
 
-def kill_process_tree(pid: int, timeout: float = 5.0) -> bool:
+def kill_process_tree(
+    pid: int,
+    timeout: float = 5.0,
+    expected_cmdline: Optional[str] = None,
+) -> bool:
     """Safely terminate a process and all its child processes (anti-orphan)."""
     if not is_pid_alive(pid):
         return True
 
     try:
         parent = psutil.Process(pid)
+        if expected_cmdline:
+            try:
+                cmdline_str = " ".join(parent.cmdline() or [])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return False
+            if expected_cmdline not in cmdline_str:
+                return False
+
         children = parent.children(recursive=True)
         procs_to_kill = children + [parent]
 
@@ -102,26 +116,42 @@ def kill_process_tree(pid: int, timeout: float = 5.0) -> bool:
     except psutil.NoSuchProcess:
         return True
     except Exception:
+        if expected_cmdline:
+            return False
         # Platform-specific fallback
         if sys.platform == "win32":
-            subprocess.run(
+            res = subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
+                check=False,
             )
+            return res.returncode == 0
         else:
             try:
                 os.kill(pid, 9)
+                return True
             except OSError:
-                pass
-        return True
+                return False
+
+
+def _normalize_probe_host(host: str) -> str:
+    """Normalize wildcard bind addresses to loopback for Windows-safe HTTP probes."""
+    h = (host or "").strip()
+    if h in ("0.0.0.0", "::", "[::]", ""):
+        return "127.0.0.1"
+    return h
 
 
 def query_healthz(host: str, port: int, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
     """Query /healthz endpoint via HTTP."""
-    url = f"http://{host}:{port}/healthz"
+    probe_host = _normalize_probe_host(host)
+    url = f"http://{probe_host}:{port}/healthz"
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported healthz URL scheme: {parsed.scheme}")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "classifier_service_governance"})
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:  # noqa: S310
             if response.status == 200:
                 body = response.read().decode("utf-8")
                 return json.loads(body)
@@ -214,6 +244,7 @@ def start_service(
 
     proc = subprocess.Popen(
         cmd,
+        cwd=str(PROJECT_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=creationflags,
@@ -246,6 +277,7 @@ def start_service(
 def stop_service(
     pid_file: Path | str = DEFAULT_PID_FILE,
     timeout: float = 5.0,
+    expected_cmdline: Optional[str] = None,
 ) -> bool:
     """Stop the running service and remove PID file."""
     pid_path = Path(pid_file)
@@ -256,7 +288,10 @@ def stop_service(
         return True
 
     print(f"[INFO] Stopping service with PID {pid}...")
-    kill_process_tree(pid, timeout=timeout)
+    killed = kill_process_tree(pid, timeout=timeout, expected_cmdline=expected_cmdline)
+    if not killed and expected_cmdline:
+        print(f"[WARN] PID {pid} does not match expected process '{expected_cmdline}'; refusing to terminate.")
+        return False
     remove_pid(pid_path)
 
     if not is_pid_alive(pid):
@@ -272,10 +307,11 @@ def restart_service(
     port: int = DEFAULT_PORT,
     pid_file: Path | str = DEFAULT_PID_FILE,
     timeout: float = DEFAULT_TIMEOUT,
+    expected_cmdline: Optional[str] = None,
 ) -> bool:
     """Restart the service."""
     print("[INFO] Restarting classifier service...")
-    stop_service(pid_file=pid_file)
+    stop_service(pid_file=pid_file, expected_cmdline=expected_cmdline)
     time.sleep(1.0)
     return start_service(host=host, port=port, pid_file=pid_file, timeout=timeout)
 
@@ -327,7 +363,11 @@ def main():
         )
         sys.exit(0 if ok else 1)
     elif args.command == "stop":
-        ok = stop_service(pid_file=args.pid_file, timeout=args.timeout)
+        ok = stop_service(
+            pid_file=args.pid_file,
+            timeout=args.timeout,
+            expected_cmdline="classifier_service",
+        )
         sys.exit(0 if ok else 1)
     elif args.command == "status":
         status = get_service_status(
@@ -343,6 +383,7 @@ def main():
             port=args.port,
             pid_file=args.pid_file,
             timeout=args.timeout,
+            expected_cmdline="classifier_service",
         )
         sys.exit(0 if ok else 1)
 

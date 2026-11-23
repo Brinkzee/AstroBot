@@ -160,14 +160,14 @@ def compute_pos_weights(
     total_samples = len(records)
     counts = {name: 0 for name in taxonomy}
     for r in records:
-        for lbl in r.get("labels", []):
+        for lbl in set(r.get("labels", [])):
             if lbl in counts:
                 counts[lbl] += 1
 
     weights = []
     for name in taxonomy:
         pos = counts[name]
-        neg = total_samples - pos
+        neg = max(0, total_samples - pos)
         w = (neg / max(pos, 1)) ** power
         w = max(min_weight, min(w, max_weight))
         weights.append(w)
@@ -270,6 +270,8 @@ def find_best_threshold(
     """Scan candidate thresholds to select the optimal threshold based on Micro-F1."""
     if thresholds is None:
         thresholds = [round(0.30 + i * 0.05, 2) for i in range(9)]  # 0.30 to 0.70
+    if not thresholds:
+        raise ValueError("Candidate thresholds list must not be empty")
 
     best_threshold = thresholds[0]
     best_micro_f1 = -1.0
@@ -390,7 +392,7 @@ def train_classifier(
     patience: int = 3,
     device_name: str = "cuda",
     dry_run: bool = False,
-    max_length: int = 64,
+    max_length: int = 128,
     log_interval: int = 15,
     timeout_seconds: Optional[int] = 1800,
 ) -> Dict[str, Any]:
@@ -632,7 +634,7 @@ def main() -> None:
         help="Device to use: 'cuda', 'cpu', or 'auto' (default: cuda)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Quick smoke test 1 step")
-    parser.add_argument("--max-length", type=int, default=64)
+    parser.add_argument("--max-length", type=int, default=128)
     parser.add_argument("--log-interval", type=int, default=15)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
 

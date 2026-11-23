@@ -70,6 +70,12 @@ class AsyncSessionAdapter:
         await self.close()
 
 
+@pytest.fixture(autouse=True)
+def force_offline_mock_embedding(monkeypatch):
+    """确保挖掘管道单元测试离线确定性运行，不依赖外部 HuggingFace 配额。"""
+    monkeypatch.setenv("MOCK_EMBEDDING", "1")
+
+
 @pytest.fixture
 def sqlite_session():
     engine = create_engine("sqlite:///:memory:")
@@ -340,6 +346,17 @@ async def test_ingest_kept_chunks(sqlite_session, temp_milvus_db):
     batch_no = "BATCH_INGEST_001"
 
     try:
+        v_warranty = np.zeros(1024, dtype=np.float32)
+        v_warranty[0] = 1.0
+        v_damage = np.zeros(1024, dtype=np.float32)
+        v_damage[1] = 1.0
+
+        async def det_aembed(texts, batch_size=16):
+            return [v_warranty.tolist() if "保修" in t else v_damage.tolist() for t in texts]
+
+        def det_query(text):
+            return v_warranty.tolist() if "保修" in text else v_damage.tolist()
+
         r1 = QAExtractionStaging(
             batch_no=batch_no,
             source_ref="conv_201",
@@ -364,30 +381,32 @@ async def test_ingest_kept_chunks(sqlite_session, temp_milvus_db):
         sqlite_session.add_all([r1, r2, r3])
         await sqlite_session.commit()
 
-        ingested_count = await miner.ingest_kept_chunks(
-            sqlite_session, dual_writer=writer, batch_no=batch_no
-        )
-        assert ingested_count == 2
+        with patch.object(writer.embedding_client, "aembed_documents", side_effect=det_aembed), \
+             patch.object(writer.embedding_client, "embed_query", side_effect=det_query):
+            ingested_count = await miner.ingest_kept_chunks(
+                sqlite_session, dual_writer=writer, batch_no=batch_no
+            )
+            assert ingested_count == 2
 
-        # 验证 MySQL 权威源写入
-        stmt = select(KnowledgeChunk).where(KnowledgeChunk.content_type == "mined_qa")
-        res = await sqlite_session.execute(stmt)
-        db_chunks = list(res.scalars().all())
-        assert len(db_chunks) == 2
-        for c in db_chunks:
-            assert c.category == "历史问答挖掘"
-            assert c.vectorize_status == "done"
-            assert c.vector_id is not None
-            assert "客服对话挖掘 > conv_" in (c.section_path or "")
+            # 验证 MySQL 权威源写入
+            stmt = select(KnowledgeChunk).where(KnowledgeChunk.content_type == "mined_qa")
+            res = await sqlite_session.execute(stmt)
+            db_chunks = list(res.scalars().all())
+            assert len(db_chunks) == 2
+            for c in db_chunks:
+                assert c.category == "历史问答挖掘"
+                assert c.vectorize_status == "done"
+                assert c.vector_id is not None
+                assert "客服对话挖掘 > conv_" in (c.section_path or "")
 
-        # 验证 Milvus 向量库写入
-        assert writer.store.count() == 2
-        hits = writer.store.search(
-            query_vector=writer.embedding_client.embed_query("保修多长时间？"),
-            top_k=2,
-        )
-        assert len(hits) >= 1
-        assert "保修期是多长时间？" in hits[0]["questions"]
+            # 验证 Milvus 向量库写入
+            assert writer.store.count() == 2
+            hits = writer.store.search(
+                query_vector=writer.embedding_client.embed_query("保修多长时间？"),
+                top_k=2,
+            )
+            assert len(hits) >= 1
+            assert "保修期是多长时间？" in hits[0]["questions"]
     finally:
         writer.store.close()
 

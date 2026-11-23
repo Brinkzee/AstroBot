@@ -21,6 +21,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 # 必须在初始化 logging 及任何标准流输出前强制配置 Windows UTF-8 编码
 if sys.platform == "win32":
@@ -69,7 +70,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default="reports/ch04_evaluation_report.md",
+        default=None,
         help="Markdown 评测报告输出路径（默认 reports/ch04_evaluation_report.md）",
     )
     parser.add_argument(
@@ -100,10 +101,17 @@ async def run_evaluation(args):
         is_mock=args.mock,
     )
 
-    report = await evaluator.run_comparative_eval(
-        strategies=args.strategies,
-        samples_per_bucket=args.sample,
-    )
+    try:
+        report = await evaluator.run_comparative_eval(
+            strategies=args.strategies,
+            samples_per_bucket=args.sample,
+        )
+    finally:
+        if getattr(evaluator, "retriever", None) is not None and hasattr(evaluator.retriever, "close"):
+            try:
+                evaluator.retriever.close()
+            except Exception as close_err:
+                logger.debug(f"关闭评测检索器异常: {close_err}")
 
     # 渲染报告
     md_content = render_markdown_report(report)
@@ -132,8 +140,13 @@ async def run_evaluation(args):
 
     print("=" * 78 + "\n")
 
-    # 写入报告文件
-    output_path = ROOT_DIR / args.output
+    # 写入报告文件（在 pytest 环境下未显式传 --output 时，重定向到临时目录，避免污染版本库跟踪的 reports/）
+    if args.output:
+        output_path = ROOT_DIR / args.output
+    elif os.getenv("PYTEST_CURRENT_TEST"):
+        output_path = Path(tempfile.gettempdir()) / "astrobot_pytest_ch04_evaluation_report.md"
+    else:
+        output_path = ROOT_DIR / "reports/ch04_evaluation_report.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(md_content, encoding="utf-8")
     logger.info(f"评测报告已成功写入: {output_path}")

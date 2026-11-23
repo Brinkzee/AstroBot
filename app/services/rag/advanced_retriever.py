@@ -13,6 +13,7 @@
 """
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import logging
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,7 @@ class AdvancedRetrievalResult:
     citations: List[Dict[str, Any]] = field(default_factory=list)
     strategy: str = "hybrid_rerank"
     query_understanding: Optional[QueryUnderstandingResult] = None
+    ranked_docs: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class AdvancedKnowledgeRetriever:
@@ -62,10 +64,38 @@ class AdvancedKnowledgeRetriever:
         self.reranker_client = reranker_client or BGERerankerClient()
         self.collection_name = collection_name
         self.min_score = min_score
-        self.last_result: Optional[AdvancedRetrievalResult] = None
+        # 按 asyncio 任务/上下文隔离最后一次检索结果，防止单例并发请求间串味
+        self._last_result_var: ContextVar[Optional[AdvancedRetrievalResult]] = ContextVar(
+            f"advanced_retriever_last_result_{id(self)}", default=None
+        )
         logger.info(
             f"AdvancedKnowledgeRetriever 已初始化 (min_score={self.min_score}, collection={self.collection_name})"
         )
+
+    @property
+    def last_result(self) -> Optional[AdvancedRetrievalResult]:
+        return self._last_result_var.get()
+
+    @last_result.setter
+    def last_result(self, value: Optional[AdvancedRetrievalResult]) -> None:
+        self._last_result_var.set(value)
+
+    @staticmethod
+    def _filter_by_min_score(
+        docs: List[Dict[str, Any]], min_score: Optional[float]
+    ) -> List[Dict[str, Any]]:
+        if min_score is None:
+            return docs
+        return [
+            d
+            for d in docs
+            if float(
+                d.get("rerank_score")
+                if d.get("rerank_score") is not None
+                else d.get("distance", 0.0)
+            )
+            >= min_score
+        ]
 
     async def retrieve_with_strategy(
         self,
@@ -94,15 +124,19 @@ class AdvancedKnowledgeRetriever:
                 f"不支持的检索策略: '{strategy}'，可选值为: {list(self.VALID_STRATEGIES)}"
             )
 
-        if not query or not str(query).strip():
-            return AdvancedRetrievalResult(
+        if not query or not str(query).strip() or top_k <= 0:
+            result = AdvancedRetrievalResult(
                 docs=[],
                 citations=[],
                 strategy=strategy,
                 query_understanding=None,
+                ranked_docs=[],
             )
+            self.last_result = result
+            return result
 
         raw_query = str(query).strip()
+        effective_min_score = self.min_score if min_score is None else min_score
 
         # 1. 意图理解与口语改写归一
         qu: QueryUnderstandingResult = await self.query_processor.aprocess(raw_query)
@@ -123,13 +157,14 @@ class AdvancedKnowledgeRetriever:
                 category_filter=category_filter,
                 collection_name=self.collection_name,
             )
-            docs = hits[:top_k]
+            docs = self._filter_by_min_score(hits, effective_min_score)[:top_k]
             citations = build_citation_items(docs)
             result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
+                ranked_docs=list(docs),
             )
             self.last_result = result
             return result
@@ -142,13 +177,14 @@ class AdvancedKnowledgeRetriever:
                 category_filter=category_filter,
                 collection_name=self.collection_name,
             )
-            docs = hits[:top_k]
+            docs = self._filter_by_min_score(hits, effective_min_score)[:top_k]
             citations = build_citation_items(docs)
             result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
+                ranked_docs=list(docs),
             )
             self.last_result = result
             return result
@@ -164,13 +200,14 @@ class AdvancedKnowledgeRetriever:
                 limit=top_k,
                 collection_name=self.collection_name,
             )
-            docs = hits[:top_k]
+            docs = self._filter_by_min_score(hits, effective_min_score)[:top_k]
             citations = build_citation_items(docs)
             result = AdvancedRetrievalResult(
                 docs=docs,
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
+                ranked_docs=list(docs),
             )
             self.last_result = result
             return result
@@ -194,6 +231,7 @@ class AdvancedKnowledgeRetriever:
                     citations=[],
                     strategy=strategy,
                     query_understanding=qu,
+                    ranked_docs=[],
                 )
                 self.last_result = result
                 return result
@@ -206,14 +244,7 @@ class AdvancedKnowledgeRetriever:
             )
 
             # 按最低置信度阈值过滤低分弱相关候选，避免超纲问题被伪证据污染
-            effective_min_score = self.min_score if min_score is None else min_score
-            if effective_min_score is not None:
-                filtered_docs = [
-                    d for d in reranked_docs
-                    if float(d.get("rerank_score") if d.get("rerank_score") is not None else d.get("distance", 0.0)) >= effective_min_score
-                ]
-            else:
-                filtered_docs = reranked_docs
+            filtered_docs = self._filter_by_min_score(reranked_docs, effective_min_score)
 
             if not filtered_docs:
                 result = AdvancedRetrievalResult(
@@ -221,6 +252,7 @@ class AdvancedKnowledgeRetriever:
                     citations=[],
                     strategy=strategy,
                     query_understanding=qu,
+                    ranked_docs=[],
                 )
                 self.last_result = result
                 return result
@@ -236,6 +268,7 @@ class AdvancedKnowledgeRetriever:
                 citations=citations,
                 strategy=strategy,
                 query_understanding=qu,
+                ranked_docs=list(filtered_docs),
             )
             self.last_result = result
             return result

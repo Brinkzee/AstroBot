@@ -96,9 +96,8 @@ async def test_flywheel_pipeline_creates_and_merges(memory_db):
                 else:
                     return type('Obj', (object,), {'content': 'Q3_diff\n\nA3'})()
             if "NONE" in prompt_str:
-                print("MOCK RECEIVED:", prompt_str)
                 if "Q1_same" in prompt_str:
-                    return type('Obj', (object,), {'content': 'YES'})()
+                    return type('Obj', (object,), {'content': '1'})()
                 return type('Obj', (object,), {'content': 'NONE'})()
             return type('Obj', (object,), {'content': ''})()
 

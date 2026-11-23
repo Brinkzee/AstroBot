@@ -67,7 +67,8 @@ async def build_knowledge_base(
         "post_repaired": 0,
     }
 
-    ensure_mysql_ready(verbose=False)
+    if session is None:
+        ensure_mysql_ready(verbose=False)
 
     own_writer = False
     if writer is None:
@@ -114,8 +115,7 @@ async def build_knowledge_base(
 
             for md_file in md_files:
                 logger.info(f"正在处理文档: {md_file.name}")
-                with open(md_file, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = await asyncio.to_thread(md_file.read_text, encoding="utf-8")
 
                 doc_chunks = splitter.split_text(content)
                 if not doc_chunks:

@@ -124,9 +124,9 @@ def verify_onnx_torch_consistency(
     max_diff = float(np.max(abs_diff))
     within_tol = bool(max_diff < tol)
 
-    # Compute probabilities via sigmoid
-    probs_torch = 1.0 / (1.0 + np.exp(-torch_logits_np))
-    probs_onnx = 1.0 / (1.0 + np.exp(-onnx_logits_np))
+    # Compute numerically stable probabilities via sigmoid
+    probs_torch = 1.0 / (1.0 + np.exp(-np.clip(torch_logits_np, -60.0, 60.0)))
+    probs_onnx = 1.0 / (1.0 + np.exp(-np.clip(onnx_logits_np, -60.0, 60.0)))
 
     # Parse threshold
     if isinstance(thresholds, (int, float)):
@@ -167,6 +167,7 @@ def export_onnx(
     tolerance: float = 1e-4,
     opset_version: int = 17,
     sample_queries: Optional[List[str]] = None,
+    max_length: int = 128,
 ) -> Dict[str, Any]:
     """Export fine-tuned PyTorch model to ONNX with dynamic axes and verify consistency."""
     model_path = Path(model_dir)
@@ -272,7 +273,7 @@ def export_onnx(
         sample_queries,
         padding=True,
         truncation=True,
-        max_length=128,
+        max_length=max_length,
         return_tensors="pt",
     )
 
@@ -283,12 +284,25 @@ def export_onnx(
         )
         torch_logits = torch_out.logits.cpu().numpy()
 
-    # ONNX Runtime inference
+    # ONNX Runtime inference (matching lightweight server Tokenizer.from_file path when available)
     session = ort.InferenceSession(str(onnx_model_file), providers=["CPUExecutionProvider"])
-    ort_inputs = {
-        "input_ids": tokenized_samples["input_ids"].numpy(),
-        "attention_mask": tokenized_samples["attention_mask"].numpy(),
-    }
+    tok_json_file = output_path / "tokenizer.json"
+    if tok_json_file.exists():
+        from tokenizers import Tokenizer as FastTokenizer
+
+        fast_tok = FastTokenizer.from_file(str(tok_json_file))
+        fast_tok.enable_truncation(max_length=max_length)
+        fast_tok.enable_padding()
+        fast_encs = fast_tok.encode_batch(sample_queries)
+        ort_inputs = {
+            "input_ids": np.array([e.ids for e in fast_encs], dtype=np.int64),
+            "attention_mask": np.array([e.attention_mask for e in fast_encs], dtype=np.int64),
+        }
+    else:
+        ort_inputs = {
+            "input_ids": tokenized_samples["input_ids"].numpy(),
+            "attention_mask": tokenized_samples["attention_mask"].numpy(),
+        }
     ort_outputs = session.run(["logits"], ort_inputs)
     onnx_logits = ort_outputs[0]
 

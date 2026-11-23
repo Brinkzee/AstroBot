@@ -311,10 +311,10 @@ def test_milvus_search_backward_compatibility(temp_bm25_milvus_path):
 
 
 def test_compose_chunk_text():
-    """测试问答文本规范组装函数。"""
+    """测试问答文本规范组装函数（与 KnowledgeDualWriter.compose_embedding_text 统一）。"""
     from scripts.reindex_ch04_knowledge import compose_chunk_text
     text = compose_chunk_text("售后规则", "退货时效？", "7天无理由退货。")
-    assert text == "【类目】售后规则\n【标准问法】退货时效？\n【解答】7天无理由退货。"
+    assert text == "分类：售后规则\n问题：退货时效？\n内容：7天无理由退货。"
 
 
 @pytest.mark.asyncio

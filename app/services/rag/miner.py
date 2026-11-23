@@ -62,6 +62,9 @@ class DialogueKnowledgeMiner:
         返回：
             List[Tuple[batch_no, List[conversation_dict]]]
         """
+        if batch_size <= 0:
+            raise ValueError(f"batch_size 必须为正整数，当前值: {batch_size}")
+
         stmt = (
             select(Message)
             .where(
@@ -91,8 +94,13 @@ class DialogueKnowledgeMiner:
         for conv_id, msg_list in conv_groups.items():
             lines = []
             for m in msg_list:
+                if not m.content:
+                    continue
+                content_clean = m.content.strip()
+                if not content_clean:
+                    continue
                 role_label = "用户" if m.role == "user" else "客服"
-                lines.append(f"{role_label}: {m.content.strip()}")
+                lines.append(f"{role_label}: {content_clean}")
             dialogue_text = "\n".join(lines).strip()
             if not dialogue_text:
                 continue
@@ -191,13 +199,16 @@ class DialogueKnowledgeMiner:
         for b_no, convs in batches:
             active_batch_no = batch_no or b_no
             for conv in convs:
-                staged = await self.extract_and_stage(
-                    session=session,
-                    dialogue_text=conv["dialogue_text"],
-                    source_ref=conv["source_ref"],
-                    batch_no=active_batch_no,
-                )
-                total_staged += len(staged)
+                try:
+                    staged = await self.extract_and_stage(
+                        session=session,
+                        dialogue_text=conv["dialogue_text"],
+                        source_ref=conv["source_ref"],
+                        batch_no=active_batch_no,
+                    )
+                    total_staged += len(staged)
+                except Exception as e:
+                    logger.warning(f"会话 {conv.get('source_ref')} 抽取失败，已跳过: {e}")
         return total_staged
 
     async def deduplicate_staging(
@@ -349,5 +360,8 @@ class DialogueKnowledgeMiner:
             chunks.append(chunk)
 
         saved = await dual_writer.write_chunks(session, chunks)
-        logger.info(f"成功将 {len(saved)} 条挖掘问答双写落库至知识库与向量库")
+        for item in kept_items:
+            item.status = "ingested"
+        await session.commit()
+        logger.info(f"成功将 {len(saved)} 条挖掘问答双写落库至知识库与向量库，并标记暂存记录为 ingested")
         return len(saved)

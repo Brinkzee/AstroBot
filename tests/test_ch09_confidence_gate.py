@@ -48,21 +48,43 @@ def test_confidence_gate_pass_branch():
         assert res == "pass"
         assert state["evidence_confidence"] >= 0.40
 
-def test_calibrate_confidence_gate_script():
-    # Write a dummy eval_ch04.jsonl if it doesn't exist
-    os.makedirs("tests/data", exist_ok=True)
-    if not os.path.exists("tests/data/eval_ch04.jsonl"):
-        with open("tests/data/eval_ch04.jsonl", "w", encoding="utf-8") as f:
-            f.write(json.dumps({"question": "Q1", "answer": "A1"}) + "\n")
-            f.write(json.dumps({"question": "Q2", "answer": "A2"}) + "\n")
+def test_calibrate_confidence_gate_script(tmp_path):
+    import sys
 
-    # Run the script
-    result = subprocess.run(["python", "scripts/calibrate_confidence_gate.py"], capture_output=True, text=True)
-    assert result.returncode == 0
-    
+    dataset_file = tmp_path / "eval_mini.jsonl"
+    dataset_file.write_text(
+        "\n".join([
+            json.dumps({"id": "P1", "query": "退货政策是什么", "should_refuse": False}, ensure_ascii=False),
+            json.dumps({"id": "N1", "query": "你们卖活体猫吗", "should_refuse": True}, ensure_ascii=False),
+        ]),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "confidence_calibration.json"
+    milvus_db = tmp_path / "milvus_calib.db"
+
+    # Run the script in isolated offline mode writing strictly to tmp_path
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_confidence_gate.py",
+            "--dataset",
+            str(dataset_file),
+            "--output",
+            str(report_path),
+            "--milvus-uri",
+            str(milvus_db),
+            "--offline",
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
     # Check output report
-    report_path = "reports/confidence_calibration.json"
-    assert os.path.exists(report_path)
+    assert report_path.exists()
     with open(report_path, "r", encoding="utf-8") as f:
         data = json.load(f)
         assert "calibrated_at" in data

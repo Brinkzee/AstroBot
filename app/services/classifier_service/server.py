@@ -5,10 +5,12 @@ Strict lightweight runtime: ZERO dependencies on PyTorch or HuggingFace Transfor
 Uses onnxruntime, tokenizers, numpy, fastapi, and uvicorn.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
@@ -24,6 +26,8 @@ DEFAULT_MODEL_PATH = "data/ch10/onnx/model.onnx"
 DEFAULT_TOKENIZER_PATH = "data/ch10/onnx/tokenizer.json"
 DEFAULT_THRESHOLD_PATH = "data/ch10/onnx/threshold.json"
 DEFAULT_THRESHOLD_VALUE = 0.45
+DEFAULT_MAX_LENGTH = 128
+MAX_POSITION_EMBEDDINGS = 512
 
 
 class ClassifierInferenceEngine:
@@ -35,6 +39,7 @@ class ClassifierInferenceEngine:
         tokenizer_path: Optional[Union[str, Path]] = None,
         threshold_path: Optional[Union[str, Path]] = None,
         taxonomy: Optional[List[str]] = None,
+        max_length: Optional[int] = None,
     ):
         self.model_path = Path(model_path or os.getenv("ONNX_MODEL_PATH", DEFAULT_MODEL_PATH))
         self.tokenizer_path = Path(
@@ -44,36 +49,57 @@ class ClassifierInferenceEngine:
             threshold_path or os.getenv("THRESHOLD_PATH", DEFAULT_THRESHOLD_PATH)
         )
         self.taxonomy: List[str] = taxonomy or list(TAXONOMY_17)
+        resolved_max_len = (
+            max_length
+            if max_length is not None
+            else int(os.getenv("CLASSIFIER_MAX_LENGTH", str(DEFAULT_MAX_LENGTH)))
+        )
+        self.max_length: int = max(1, min(int(resolved_max_len), MAX_POSITION_EMBEDDINGS))
 
         self.tokenizer: Optional[Tokenizer] = None
         self.session: Optional[ort.InferenceSession] = None
         self.threshold_info: Any = DEFAULT_THRESHOLD_VALUE
         self.per_class_thresholds: Dict[str, float] = {}
         self.model_loaded: bool = False
+        self._load_lock = threading.Lock()
 
     def load(self) -> None:
-        """Load tokenizer, ONNX runtime session, and threshold configuration."""
-        if not self.tokenizer_path.exists():
-            raise FileNotFoundError(f"Tokenizer file not found: {self.tokenizer_path}")
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"ONNX model file not found: {self.model_path}")
+        """Load tokenizer, ONNX runtime session, and threshold configuration (thread-safe)."""
+        if self.model_loaded:
+            return
+        with self._load_lock:
+            if self.model_loaded:
+                return
+            if not self.tokenizer_path.exists():
+                raise FileNotFoundError(f"Tokenizer file not found: {self.tokenizer_path}")
+            if not self.model_path.exists():
+                raise FileNotFoundError(f"ONNX model file not found: {self.model_path}")
 
-        # Load Tokenizer
-        self.tokenizer = Tokenizer.from_file(str(self.tokenizer_path))
-        self.tokenizer.enable_padding()
+            # Load Tokenizer and always enforce truncation <= 512 to prevent ONNX position-embedding OOB
+            tokenizer = Tokenizer.from_file(str(self.tokenizer_path))
+            existing_trunc = tokenizer.truncation
+            if existing_trunc and isinstance(existing_trunc, dict):
+                baked_len = int(existing_trunc.get("max_length") or self.max_length)
+                effective_max_len = max(1, min(baked_len, MAX_POSITION_EMBEDDINGS))
+            else:
+                effective_max_len = self.max_length
+            tokenizer.enable_truncation(max_length=effective_max_len)
+            tokenizer.enable_padding()
 
-        # Load ONNX Session
-        sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.session = ort.InferenceSession(
-            str(self.model_path),
-            sess_options=sess_options,
-            providers=["CPUExecutionProvider"],
-        )
+            # Load ONNX Session
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            session = ort.InferenceSession(
+                str(self.model_path),
+                sess_options=sess_options,
+                providers=["CPUExecutionProvider"],
+            )
 
-        # Load Threshold
-        self._load_threshold()
-        self.model_loaded = True
+            self.tokenizer = tokenizer
+            self.session = session
+            # Load Threshold
+            self._load_threshold()
+            self.model_loaded = True
 
     def _load_threshold(self) -> None:
         """Parse threshold from threshold.json, float, or dict."""
@@ -134,8 +160,9 @@ class ClassifierInferenceEngine:
         )
         logits = outputs[0]  # shape: (batch_size, 17)
 
-        # Compute Sigmoid probabilities
-        probs = 1.0 / (1.0 + np.exp(-logits))
+        # Compute numerically stable Sigmoid probabilities
+        clipped_logits = np.clip(logits, -60.0, 60.0)
+        probs = 1.0 / (1.0 + np.exp(-clipped_logits))
 
         results = []
         for i, text in enumerate(texts):
@@ -218,7 +245,7 @@ async def healthz():
     """Health check endpoint."""
     if not engine.model_loaded:
         try:
-            engine.load()
+            await asyncio.to_thread(engine.load)
         except Exception as e:
             return {
                 "status": "error",
@@ -243,7 +270,7 @@ async def healthz():
 async def classify(request: ClassifyRequest):
     """Classify user queries into multi-label topic categories."""
     try:
-        results = engine.classify(request.texts)
+        results = await asyncio.to_thread(engine.classify, request.texts)
         return ClassifyResponse(results=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -63,17 +63,21 @@ def _load_eval_items(dataset_path: str, sample: Optional[int] = None) -> List[Di
 async def _build_default_retriever(
     min_score: float = 0.1,
     offline: bool = False,
+    milvus_uri: Optional[str] = None,
 ) -> Tuple[Any, List[str]]:
     """构造真实 AdvancedKnowledgeRetriever，并在外部 API 配额失效时快速探针降级，避免批量重试阻塞。"""
     from app.services.rag.advanced_retriever import AdvancedKnowledgeRetriever
     from app.services.rag.embedding import BGEEmbeddingClient
+    from app.services.rag.milvus_client import MilvusKnowledgeStore
     from app.services.rag.query_processor import QueryProcessor
     from app.services.rag.reranker import BGERerankerClient
 
     degraded: List[str] = []
+    store = MilvusKnowledgeStore(uri=milvus_uri) if milvus_uri is not None else None
 
     if offline or os.getenv("CALIBRATE_OFFLINE") == "1":
         retriever = AdvancedKnowledgeRetriever(
+            store=store,
             min_score=min_score,
             query_processor=QueryProcessor(mock=True),
             embedding_client=BGEEmbeddingClient(mock=True),
@@ -110,7 +114,7 @@ async def _build_default_retriever(
     if not reranker.is_mock and getattr(reranker, "client", None) is not None:
         try:
             await asyncio.to_thread(
-                reranker._call_hf_rerank_batch,
+                reranker._call_hf_api,
                 "退货政策",
                 ["7天无理由退货政策"],
             )
@@ -121,6 +125,7 @@ async def _build_default_retriever(
             degraded.append("reranker_client")
 
     retriever = AdvancedKnowledgeRetriever(
+        store=store,
         min_score=min_score,
         query_processor=qp,
         embedding_client=emb,
@@ -151,6 +156,14 @@ async def _retrieve_docs_for_query(
     raise ValueError("retriever 必须实现 retrieve_with_strategy 或 retrieve 方法")
 
 
+def _write_json_report(output_path: str, report: Dict[str, Any]) -> None:
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=4, ensure_ascii=False)
+
+
 async def run_calibration_async(
     dataset_path: str = "tests/data/eval_ch04.jsonl",
     output_path: str = "reports/confidence_calibration.json",
@@ -159,33 +172,44 @@ async def run_calibration_async(
     min_score: float = 0.1,
     sample: Optional[int] = None,
     offline: bool = False,
+    milvus_uri: Optional[str] = None,
 ) -> Dict[str, Any]:
-    eval_items = _load_eval_items(dataset_path, sample=sample)
+    eval_items = await asyncio.to_thread(_load_eval_items, dataset_path, sample)
     if not eval_items:
         raise ValueError(f"评估集为空，无法执行置信度阈值校准: {dataset_path}")
 
     degraded_components: List[str] = []
     active_retriever = retriever
+    own_retriever = False
     if active_retriever is None:
         active_retriever, degraded_components = await _build_default_retriever(
             min_score=min_score,
             offline=offline,
+            milvus_uri=milvus_uri,
         )
+        own_retriever = True
 
     samples: List[Dict[str, Any]] = []
-    for item in eval_items:
-        docs = await _retrieve_docs_for_query(
-            active_retriever,
-            query=item["query"],
-            strategy=strategy,
-            min_score=min_score,
-        )
-        conf = compute_evidence_confidence(docs)
-        samples.append({
-            "id": item["id"],
-            "is_positive": item["is_positive"],
-            "confidence": conf,
-        })
+    try:
+        for item in eval_items:
+            docs = await _retrieve_docs_for_query(
+                active_retriever,
+                query=item["query"],
+                strategy=strategy,
+                min_score=min_score,
+            )
+            conf = compute_evidence_confidence(docs)
+            samples.append({
+                "id": item["id"],
+                "is_positive": item["is_positive"],
+                "confidence": conf,
+            })
+    finally:
+        if own_retriever and active_retriever is not None and hasattr(active_retriever, "close"):
+            try:
+                active_retriever.close()
+            except Exception as close_err:
+                logger.debug(f"关闭校准检索器异常: {close_err}")
 
     positive_count = sum(1 for s in samples if s["is_positive"])
     negative_count = len(samples) - positive_count
@@ -273,11 +297,7 @@ async def run_calibration_async(
         "grid_scan": grid_scan,
     }
 
-    out_dir = os.path.dirname(output_path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=4, ensure_ascii=False)
+    await asyncio.to_thread(_write_json_report, output_path, report)
 
     print(
         f"Calibration finished on {len(samples)} real samples "
@@ -296,6 +316,7 @@ def run_calibration(
     min_score: float = 0.1,
     sample: Optional[int] = None,
     offline: bool = False,
+    milvus_uri: Optional[str] = None,
 ) -> Dict[str, Any]:
     return asyncio.run(
         run_calibration_async(
@@ -306,6 +327,7 @@ def run_calibration(
             min_score=min_score,
             sample=sample,
             offline=offline,
+            milvus_uri=milvus_uri,
         )
     )
 
@@ -318,6 +340,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=0.1, help="检索最低过滤分数")
     parser.add_argument("--sample", type=int, default=None, help="正负样本各采样条数（默认 None 跑全量）")
     parser.add_argument("--offline", action="store_true", help="显式跳过外部 API 探针，直接使用本地 Milvus + 本地降级打分")
+    parser.add_argument("--milvus-uri", type=str, default=None, help="可选的自定义 Milvus-Lite 本地路径或服务 URI")
     return parser.parse_args()
 
 
@@ -330,4 +353,5 @@ if __name__ == "__main__":
         min_score=args.min_score,
         sample=args.sample,
         offline=args.offline,
+        milvus_uri=args.milvus_uri,
     )
