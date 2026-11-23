@@ -19,7 +19,7 @@ CREATE TABLE knowledge_chunks (
   prev_chunk_id    BIGINT UNSIGNED NULL                    COMMENT '前一块指针,元数据',
   next_chunk_id    BIGINT UNSIGNED NULL                    COMMENT '后一块指针,元数据',
   vector_id        VARCHAR(64)     NULL                    COMMENT 'Milvus 集合 knowledge 里的主键,写入后回填',
-  vectorize_status ENUM('pending','done') NOT NULL DEFAULT 'pending' COMMENT '待向量化 / 已向量化,双写幂等靠它',
+  vectorize_status ENUM('pending','done','failed') NOT NULL DEFAULT 'pending' COMMENT '待向量化 / 已向量化 / 向量化失败,双写幂等靠它',
   created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),

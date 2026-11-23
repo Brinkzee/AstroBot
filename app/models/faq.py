@@ -27,6 +27,7 @@ class FAQ(Base):
     category: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
+        index=True,
         comment="分类",
     )
     created_at: Mapped[datetime] = mapped_column(

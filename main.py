@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.api.routes import router
+from app.config import settings
 
 app = FastAPI(
     title="AstroBot - 电商智能客服系统",
@@ -11,10 +12,12 @@ app = FastAPI(
     version="0.1.0"
 )
 
+_cors_origins = list(settings.cors_origins or ["http://127.0.0.1:8000", "http://localhost:8000"])
+_cors_wildcard = "*" in _cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"] if _cors_wildcard else _cors_origins,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -56,7 +59,7 @@ def get_kb_page():
     return FileResponse(kb_file)
 
 @app.get("/rag-eval")
-@app.get("/rag_eval")
+@app.get("/rag_eval", include_in_schema=False)
 def get_rag_eval_page():
     eval_file = os.path.join(static_dir, "rag_eval.html")
     return FileResponse(eval_file)
@@ -107,4 +110,4 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host=settings.app_host, port=8000, reload=True)

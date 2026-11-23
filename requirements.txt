@@ -23,3 +23,7 @@ onnx>=1.16.0
 onnxruntime>=1.17.0
 tokenizers>=0.19.0
 scikit-learn>=1.4.0
+pymilvus>=2.4.0
+aiosqlite>=0.20.0
+huggingface-hub>=0.23.0
+jieba>=0.42.1

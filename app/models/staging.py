@@ -1,8 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import BigInteger, Integer, String, Text, DateTime, func
 from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class QAExtractionStaging(Base):
@@ -49,7 +53,7 @@ class QAExtractionStaging(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=_utcnow_naive,
         server_default=func.now(),
         nullable=False,
         comment="抽取写入时间",

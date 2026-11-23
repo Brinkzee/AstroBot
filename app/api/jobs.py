@@ -9,9 +9,10 @@
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.core.auth import verify_admin_token
 from app.core.jobs import (
     JobRegistry,
     JobAlreadyRunningError,
@@ -30,9 +31,9 @@ class JobStartRequest(BaseModel):
     job_name: str = Field(..., description="白名单作业名称，如 classify-pool, train-ch10")
 
 
-@router.post("")
-@router.post("/")
-@router.post("/start")
+@router.post("", dependencies=[Depends(verify_admin_token)])
+@router.post("/", dependencies=[Depends(verify_admin_token)])
+@router.post("/start", dependencies=[Depends(verify_admin_token)])
 async def api_start_job(request: JobStartRequest):
     """启动安全白名单作业"""
     try:
@@ -83,7 +84,7 @@ async def api_get_job_logs(
     return logs_info
 
 
-@router.post("/{job_id}/stop")
+@router.post("/{job_id}/stop", dependencies=[Depends(verify_admin_token)])
 async def api_stop_job(job_id: str):
     """安全停止正在运行的作业并递归清理进程树"""
     try:

@@ -4,13 +4,19 @@ services:
     container_name: astro_bot_mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
       MYSQL_DATABASE: astro_bot
     command: >
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
-      - ./sql/ch02-ddl.sql:/docker-entrypoint-initdb.d/ch02-ddl.sql
+      - ./sql/ch02-ddl.sql:/docker-entrypoint-initdb.d/01-ch02-ddl.sql
+      - ./sql/ch03-ddl.sql:/docker-entrypoint-initdb.d/02-ch03-ddl.sql
+      - ./sql/ch04_ddl.sql:/docker-entrypoint-initdb.d/03-ch04-ddl.sql
+      - ./sql/ch07-ddl.sql:/docker-entrypoint-initdb.d/04-ch07-ddl.sql
+      - ./sql/ch08-ddl.sql:/docker-entrypoint-initdb.d/05-ch08-ddl.sql
+      - ./sql/ch09-ddl.sql:/docker-entrypoint-initdb.d/06-ch09-ddl.sql
+      - ./sql/ch10-ddl.sql:/docker-entrypoint-initdb.d/07-ch10-ddl.sql

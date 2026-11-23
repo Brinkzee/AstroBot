@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import Field, AliasChoices
+from typing import Any, List, Optional
+from pydantic import Field, AliasChoices, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -76,6 +76,24 @@ class Settings(BaseSettings):
     )
     langfuse_enabled: bool = Field(default=True, description="Whether Langfuse tracing is enabled")
     evidence_confidence_threshold: float = Field(default=0.35, description="置信度闸门判定阈值，由评估集网格搜索校准推荐")
+    app_host: str = Field(default="127.0.0.1", description="FastAPI 默认监听地址")
+    cors_origins: List[str] = Field(
+        default_factory=lambda: ["http://127.0.0.1:8000", "http://localhost:8000"],
+        description="允许的 CORS Origin 列表；支持 JSON 数组或逗号分隔字符串",
+    )
+    admin_api_token: str = Field(
+        default="",
+        description="管理及写操作端点可选鉴权令牌；为空时不强制校验（本地开发与测试兼容）",
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v: Any) -> List[str]:
+        if v is None:
+            return ["http://127.0.0.1:8000", "http://localhost:8000"]
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return list(v)
 
     @property
     def MCP_LOGISTICS_SERVER_URL(self) -> str:

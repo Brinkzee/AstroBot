@@ -22,6 +22,7 @@ class Message(Base):
         BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
         ForeignKey("conversations.id"),
         nullable=False,
+        index=True,
         comment="所属会话",
     )
     role: Mapped[str] = mapped_column(

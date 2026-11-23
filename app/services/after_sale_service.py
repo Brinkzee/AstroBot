@@ -54,7 +54,7 @@ def extract_after_sale_ticket(
     description: str,
     model: Optional[ChatOpenAI] = None
 ) -> AfterSaleTicket:
-    """使用 with_structured_output 提取电商售后工单"""
+    """使用 with_structured_output 同步提取电商售后工单"""
     if model is None:
         model = get_chat_model(streaming=False, temperature=0.0)
 
@@ -65,6 +65,32 @@ def extract_after_sale_ticket(
     ]
     result = structured_model.invoke(messages)
 
+    if result is None:
+        raise ValueError("模型未返回有效的结构化售后工单")
+    if isinstance(result, dict):
+        result = AfterSaleTicket(**result)
+
+    result.raw_description = description
+    return result
+
+
+async def aextract_after_sale_ticket(
+    description: str,
+    model: Optional[ChatOpenAI] = None
+) -> AfterSaleTicket:
+    """使用 with_structured_output 异步提取电商售后工单（避免阻塞事件循环）"""
+    if model is None:
+        model = get_chat_model(streaming=False, temperature=0.0)
+
+    structured_model = model.with_structured_output(AfterSaleTicket)
+    messages = [
+        ("system", AFTER_SALE_SYSTEM_PROMPT),
+        ("human", description)
+    ]
+    result = await structured_model.ainvoke(messages)
+
+    if result is None:
+        raise ValueError("模型未返回有效的结构化售后工单")
     if isinstance(result, dict):
         result = AfterSaleTicket(**result)
 

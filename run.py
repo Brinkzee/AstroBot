@@ -131,7 +131,7 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     # 2.1 第七章三层会话上下文数据表与字段迁移
     from scripts.init_ch07_db import init_ch07_db
     try:
-        await init_ch07_db()
+        await init_ch07_db(engine_override=engine)
         print("    ↳ 第七章三层会话上下文数据表与字段迁移已就绪 ✅")
     except Exception as e:
         print(f"    ❌ 第七章数据表与字段迁移失败: {e}")
@@ -140,7 +140,7 @@ async def check_storage_readiness(clean_kb: bool = False) -> bool:
     # 2.2 第八章工具调用审计数据表 (tool_audit_logs) 迁移
     from scripts.init_ch08_db import init_ch08_db
     try:
-        await init_ch08_db()
+        await init_ch08_db(engine_override=engine)
         print("    ↳ 第八章工具调用审计数据表 (tool_audit_logs) 迁移已就绪 ✅")
     except Exception as e:
         print(f"    ❌ 第八章数据表与迁移失败: {e}")

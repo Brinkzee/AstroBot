@@ -119,6 +119,55 @@ def parse_ddl_statements(ddl_path: Path | str) -> List[str]:
     return statements
 
 
+def _split_alter_table_clauses(stmt: str) -> List[str]:
+    """将多子句 ALTER TABLE 语句按顶层逗号拆分为独立幂等单子句，避免 MySQL 单个列/索引已存在导致整条语句中止。"""
+    m = re.match(r"^(ALTER\s+TABLE\s+`?\w+`?)\s+(.+)$", stmt.strip(), flags=re.IGNORECASE | re.DOTALL)
+    if not m:
+        return [stmt]
+    header, body = m.group(1), m.group(2)
+    clauses: List[str] = []
+    buf: List[str] = []
+    in_sq = False
+    in_dq = False
+    depth = 0
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch == "\\" and (in_sq or in_dq) and i + 1 < n:
+            buf.append(ch)
+            buf.append(body[i + 1])
+            i += 2
+            continue
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            buf.append(ch)
+        elif ch == '"' and not in_sq:
+            in_dq = not in_dq
+            buf.append(ch)
+        elif not in_sq and not in_dq:
+            if ch == "(":
+                depth += 1
+                buf.append(ch)
+            elif ch == ")":
+                depth = max(0, depth - 1)
+                buf.append(ch)
+            elif ch == "," and depth == 0:
+                part = "".join(buf).strip()
+                if part:
+                    clauses.append(f"{header} {part}")
+                buf = []
+            else:
+                buf.append(ch)
+        else:
+            buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        clauses.append(f"{header} {tail}")
+    return clauses if len(clauses) > 1 else [stmt]
+
+
 async def _execute_stmt(conn, stmt_str: str):
     res = conn.execute(text(stmt_str))
     if inspect.isawaitable(res) or hasattr(res, "__await__"):
@@ -249,27 +298,33 @@ async def init_ch09_db(
                 await _execute_stmt(conn, stmt)
                 executed.append(stmt)
         else:
-            # MySQL 或 MockEngine 执行逻辑
+            # MySQL 或 MockEngine 执行逻辑（多子句 ALTER TABLE 逐项幂等执行）
             for stmt in statements:
-                try:
-                    await _execute_stmt(conn, stmt)
-                    executed.append(stmt)
-                except Exception as e:
-                    err_msg = str(e).lower()
-                    # 容错：表已存在/列已存在/索引已存在/外键已存在报错视为幂等成功
-                    if (
-                        "already exists" in err_msg
-                        or "1050" in err_msg
-                        or "duplicate column name" in err_msg
-                        or "1060" in err_msg
-                        or "duplicate key name" in err_msg
-                        or "1061" in err_msg
-                        or "duplicate foreign key" in err_msg
-                        or "1826" in err_msg
-                    ):
-                        executed.append(stmt)
-                    else:
-                        raise
+                sub_stmts = (
+                    _split_alter_table_clauses(stmt)
+                    if stmt.strip().upper().startswith("ALTER TABLE")
+                    else [stmt]
+                )
+                for sub_stmt in sub_stmts:
+                    try:
+                        await _execute_stmt(conn, sub_stmt)
+                        executed.append(sub_stmt)
+                    except Exception as e:
+                        err_msg = str(e).lower()
+                        # 容错：表已存在/列已存在/索引已存在/外键已存在报错视为幂等成功
+                        if (
+                            "already exists" in err_msg
+                            or "1050" in err_msg
+                            or "duplicate column name" in err_msg
+                            or "1060" in err_msg
+                            or "duplicate key name" in err_msg
+                            or "1061" in err_msg
+                            or "duplicate foreign key" in err_msg
+                            or "1826" in err_msg
+                        ):
+                            executed.append(sub_stmt)
+                        else:
+                            raise
 
     if hasattr(begin_ctx, "__aenter__"):
         async with begin_ctx as conn:

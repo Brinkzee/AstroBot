@@ -1,10 +1,16 @@
 # Start MySQL container for AstroBot
 Write-Host "Starting AstroBot MySQL container..." -ForegroundColor Cyan
 
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$ComposeFile = Join-Path $RepoRoot "docker-compose.yml"
+
 if (Get-Command docker -ErrorAction SilentlyContinue) {
-    docker compose up -d
+    docker compose -f $ComposeFile up -d
 } elseif (Get-Command wsl -ErrorAction SilentlyContinue) {
-    wsl -d Ubuntu docker compose -f /mnt/d/PycharmProjects/AstroBot/docker-compose.yml up -d
+    $drive = $ComposeFile.Substring(0, 1).ToLower()
+    $rest = $ComposeFile.Substring(2) -replace '\\', '/'
+    $wslComposePath = "/mnt/$drive$rest"
+    wsl -d Ubuntu docker compose -f $wslComposePath up -d
 } else {
     Write-Error "Neither docker nor wsl command found on PATH."
     exit 1

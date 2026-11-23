@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import uuid
 from typing import Optional, List, Sequence, Union
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, trim_messages
@@ -25,30 +26,45 @@ def count_tokens_fallback(messages: Union[List[BaseMessage], Sequence[BaseMessag
     return total
 
 class SessionManager:
-    """服务端内存会话管理器，负责会话生命周期维护与滑动窗口 Token 预算裁剪"""
+    """服务端内存会话管理器，负责会话生命周期维护、有界 LRU 淘汰与滑动窗口 Token 预算裁剪"""
 
-    def __init__(self):
-        self._sessions: dict[str, List[BaseMessage]] = {}
+    def __init__(self, max_sessions: int = 1000, max_messages_per_session: int = 200):
+        self._sessions: OrderedDict[str, List[BaseMessage]] = OrderedDict()
+        self._max_sessions = max(1, max_sessions)
+        self._max_messages_per_session = max(1, max_messages_per_session)
+
+    def _touch_or_create(self, session_id: str) -> List[BaseMessage]:
+        if session_id in self._sessions:
+            self._sessions.move_to_end(session_id)
+            return self._sessions[session_id]
+        while len(self._sessions) >= self._max_sessions:
+            self._sessions.popitem(last=False)
+        self._sessions[session_id] = []
+        return self._sessions[session_id]
 
     def get_or_create_session(self, session_id: Optional[str] = None) -> str:
         if not session_id or not session_id.strip():
             session_id = str(uuid.uuid4())
-        if session_id not in self._sessions:
-            self._sessions[session_id] = []
+        self._touch_or_create(session_id)
         return session_id
 
     def get_history(self, session_id: str) -> List[BaseMessage]:
-        return list(self._sessions.get(session_id, []))
+        if session_id in self._sessions:
+            self._sessions.move_to_end(session_id)
+            return list(self._sessions[session_id])
+        return []
 
     def add_user_message(self, session_id: str, content: str):
-        if session_id not in self._sessions:
-            self._sessions[session_id] = []
-        self._sessions[session_id].append(HumanMessage(content=content))
+        msgs = self._touch_or_create(session_id)
+        msgs.append(HumanMessage(content=content))
+        if len(msgs) > self._max_messages_per_session:
+            del msgs[:-self._max_messages_per_session]
 
     def add_ai_message(self, session_id: str, content: str):
-        if session_id not in self._sessions:
-            self._sessions[session_id] = []
-        self._sessions[session_id].append(AIMessage(content=content))
+        msgs = self._touch_or_create(session_id)
+        msgs.append(AIMessage(content=content))
+        if len(msgs) > self._max_messages_per_session:
+            del msgs[:-self._max_messages_per_session]
 
     def get_trimmed_history(self, session_id: str, max_tokens: int) -> List[BaseMessage]:
         raw_history = self.get_history(session_id)

@@ -9,9 +9,15 @@ class Base(DeclarativeBase):
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    pool_pre_ping=False,
+    pool_pre_ping=True,
     pool_recycle=300,
 )
+
+# SQLAlchemy 2.0.34 + aiomysql: AsyncAdapt_aiomysql_connection.ping(self, reconnect)
+# requires an explicit boolean argument; enable _send_false_to_ping so pool_pre_ping
+# passes ping(False) instead of crashing with TypeError.
+if getattr(engine.sync_engine.dialect, "driver", None) == "aiomysql":
+    engine.sync_engine.dialect._send_false_to_ping = True
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

@@ -6,12 +6,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.llm import get_chat_model
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.summary import ConversationSummary
 from app.prompts.summarizer import SUMMARY_SYSTEM_PROMPT, format_summary_prompt
+from app.services.context.budget import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -105,18 +107,44 @@ def summarize_dialogue_sync(
     return getattr(resp, "content", str(resp)).strip()
 
 
+def _build_bounded_summary_projection(
+    segments: Sequence[str],
+    max_tokens: Optional[int] = None,
+) -> str:
+    """将最近若干段摘要拼成有界投影，始终至少保留最新一段且不超过 summary_max_tokens。"""
+    clean_segments = [s.strip() for s in segments if s and s.strip()]
+    if not clean_segments:
+        return ""
+    budget = max_tokens if (max_tokens is not None and max_tokens > 0) else (getattr(settings, "summary_max_tokens", 250) or 250)
+    kept_rev: List[str] = []
+    running_tokens = 0
+    for seg in reversed(clean_segments):
+        seg_tokens = estimate_tokens(seg)
+        if kept_rev and running_tokens + seg_tokens > budget:
+            break
+        kept_rev.append(seg)
+        running_tokens += seg_tokens
+    return "\n\n".join(reversed(kept_rev))
+
+
 async def persist_summary_segment(
     session: AsyncSession,
     conv_id: int,
     from_id: int,
     to_id: int,
     content: str,
-) -> ConversationSummary:
+) -> Optional[ConversationSummary]:
     """
-    原子落盘摘要分段并更新 Conversation 全量投影：
-    1. 插入 conversation_summaries 表（seq = max_seq + 1，一段一行只追加）；
-    2. 原子更新 conversations 表（summary_upto_msg_id = to_id，summary 全量投影拼接）。
+    原子落盘摘要分段并更新 Conversation 有界投影：
+    1. 先校验 Conversation 仍存在（防止并发删除产生孤儿摘要行或外键异常）；
+    2. 插入 conversation_summaries 表（seq = max_seq + 1，一段一行只追加）；
+    3. 原子更新 conversations 表（summary_upto_msg_id = to_id，summary 有界投影拼接）。
     """
+    conv = await session.get(Conversation, conv_id)
+    if conv is None:
+        logger.warning(f"[summary skip] conv_id={conv_id} 原因=会话已不存在，放弃写入孤儿摘要")
+        return None
+
     stmt = (
         select(ConversationSummary)
         .where(ConversationSummary.conversation_id == conv_id)
@@ -137,11 +165,9 @@ async def persist_summary_segment(
     )
     session.add(new_summary)
 
-    conv = await session.get(Conversation, conv_id)
-    if conv:
-        conv.summary_upto_msg_id = to_id
-        all_contents = [s.content for s in existing_summaries] + [content]
-        conv.summary = "\n\n".join(all_contents)
+    conv.summary_upto_msg_id = to_id
+    all_contents = [s.content for s in existing_summaries] + [content]
+    conv.summary = _build_bounded_summary_projection(all_contents)
 
     await session.commit()
     await session.refresh(new_summary)
@@ -152,15 +178,17 @@ class SummaryService:
     """
     后台异步分段摘要引擎：
     - 基于 Token 超标阈值判定触发（不依赖消息条数）；
-    - 并发防重锁保护（同一会话单飞）；
-    - 派发非阻塞后台协程任务，独立数据库 Session；
+    - 并发防重锁保护（同一会话单飞）与强引用任务集合防止 GC 回收；
+    - 派发非阻塞后台协程任务，读写分离短会话（绝不在 LLM 外部调用期间持有 DB 连接）；
     - 记录全生命周期结构化日志 ([summary trigger], [summary start], [summary done], [summary skip], [summary fail])。
     """
     _active_tasks: Set[int] = set()
+    _tasks: Set[asyncio.Task] = set()
 
     def __init__(self, session_factory: Optional[Any] = None) -> None:
         self.session_factory = session_factory or AsyncSessionLocal
         self._active_tasks = SummaryService._active_tasks
+        self._tasks = SummaryService._tasks
 
     should_trigger_summary = staticmethod(should_trigger_summary)
     persist_summary_segment = staticmethod(persist_summary_segment)
@@ -186,25 +214,39 @@ class SummaryService:
             return None
 
         self._active_tasks.add(conv_id)
+        try:
+            if layer2_tokens is not None and layer2_budget is not None:
+                logger.info(
+                    f"[summary trigger] conv_id={conv_id} 层2 约 {layer2_tokens} token > 预算 {layer2_budget}, "
+                    f"range=({from_msg_id}..{upto_msg_id})"
+                )
+            else:
+                logger.info(
+                    f"[summary trigger] conv_id={conv_id} range=({from_msg_id}..{upto_msg_id})"
+                )
 
-        if layer2_tokens is not None and layer2_budget is not None:
-            logger.info(
-                f"[summary trigger] conv_id={conv_id} 层2 约 {layer2_tokens} token > 预算 {layer2_budget}, "
-                f"range=({from_msg_id}..{upto_msg_id})"
-            )
-        else:
-            logger.info(
-                f"[summary trigger] conv_id={conv_id} range=({from_msg_id}..{upto_msg_id})"
-            )
-
-        task = asyncio.create_task(
-            self.execute_summary_task(
+            coro = self.execute_summary_task(
                 conv_id=conv_id,
                 from_msg_id=from_msg_id,
                 upto_msg_id=upto_msg_id,
                 model=model,
             )
-        )
+            try:
+                task = asyncio.create_task(coro)
+            except Exception:
+                coro.close()
+                raise
+        except Exception:
+            self._active_tasks.discard(conv_id)
+            raise
+
+        self._tasks.add(task)
+
+        def _on_task_done(done_task: asyncio.Task) -> None:
+            self._tasks.discard(done_task)
+            self._active_tasks.discard(conv_id)
+
+        task.add_done_callback(_on_task_done)
         return task
 
     async def execute_summary_task(
@@ -215,13 +257,18 @@ class SummaryService:
         model: Optional[Any] = None,
     ) -> Optional[ConversationSummary]:
         """
-        执行后台摘要提炼与落盘核心流程。
+        执行后台摘要提炼与落盘核心流程（读写短会话分离，LLM 调用期间不占用 DB 连接）。
         """
         start_time = time.time()
         session_factory = getattr(self, "session_factory", AsyncSessionLocal)
         try:
+            # 阶段 1（短会话只读）：读取已有摘要与待压缩消息区间
             async with session_factory() as session:
-                # 1. 查询已有摘要以确定当前段落序号
+                conv = await session.get(Conversation, conv_id)
+                if conv is None:
+                    logger.warning(f"[summary skip] conv_id={conv_id} 原因=会话不存在")
+                    return None
+
                 stmt_summaries = (
                     select(ConversationSummary)
                     .where(ConversationSummary.conversation_id == conv_id)
@@ -238,7 +285,7 @@ class SummaryService:
                     f"msg_range=({from_msg_id}..{upto_msg_id})"
                 )
 
-                # 2. 查询待压缩历史消息闭区间（若存在前序摘要且 from_msg_id 落入已摘要区间，自动推移避免边界重复）
+                # 查询待压缩历史消息闭区间（若存在前序摘要且 from_msg_id 落入已摘要区间，自动推移避免边界重复）
                 prev_upto = max([s.upto_msg_id for s in existing_summaries], default=0)
                 actual_from_id = from_msg_id
                 if prev_upto > 0 and actual_from_id <= prev_upto:
@@ -262,7 +309,6 @@ class SummaryService:
                     )
                     return None
 
-                # 3. 格式化对话文本并调用 LLM 提炼纯事实梗概
                 dialogue_text = self.format_dialogue_for_summary(messages)
                 existing_summary_text = (
                     "\n\n".join([s.content for s in existing_summaries])
@@ -270,13 +316,15 @@ class SummaryService:
                     else None
                 )
 
-                new_summary_content = await self.summarize_dialogue(
-                    dialogue_text=dialogue_text,
-                    existing_summary=existing_summary_text,
-                    model=model,
-                )
+            # 阶段 2（无 DB 连接占用）：调用 LLM 提炼纯事实梗概
+            new_summary_content = await self.summarize_dialogue(
+                dialogue_text=dialogue_text,
+                existing_summary=existing_summary_text,
+                model=model,
+            )
 
-                # 4. 原子落盘写入 conversation_summaries 并更新 conversations 投影
+            # 阶段 3（短会话写入）：原子落盘写入 conversation_summaries 并更新 conversations 投影
+            async with session_factory() as session:
                 new_summary_obj = await self.persist_summary_segment(
                     session=session,
                     conv_id=conv_id,
@@ -285,12 +333,15 @@ class SummaryService:
                     content=new_summary_content,
                 )
 
-                cost = time.time() - start_time
-                logger.info(
-                    f"[summary done] conv_id={conv_id} 第{new_seq}段完成, "
-                    f"耗时={cost:.2f}s, 覆盖至 msg_id={upto_msg_id}"
-                )
-                return new_summary_obj
+            if new_summary_obj is None:
+                return None
+
+            cost = time.time() - start_time
+            logger.info(
+                f"[summary done] conv_id={conv_id} 第{new_summary_obj.seq}段完成, "
+                f"耗时={cost:.2f}s, 覆盖至 msg_id={upto_msg_id}"
+            )
+            return new_summary_obj
 
         except Exception as e:
             logger.error(f"[summary fail] conv_id={conv_id} 异常={e}", exc_info=True)
