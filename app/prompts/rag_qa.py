@@ -66,12 +66,26 @@ def format_evidence_context(citations: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
-def parse_self_check_response(response_text: str) -> Dict[str, Any]:
+def _parse_bool_flag(val: Any) -> bool:
+    """将 JSON 布尔值或字符串布尔值安全解析为 bool。"""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes")
+    if isinstance(val, (int, float)):
+        return val != 0
+    return False
+
+
+def parse_self_check_response(response_text: Optional[str]) -> Dict[str, Any]:
     """安全解析大模型返回的自检 JSON 判定结果。
     
-    支持自动剥离 ```json 等代码块标签，若解析失败则返回保守的 useful=False。
+    支持自动剥离 ```json 等代码块标签，若解析失败或为空则返回保守的 useful=False。
     """
-    cleaned = response_text.strip()
+    if response_text is None or not str(response_text).strip():
+        return {"useful": False, "reason": "自评结果为空，默认降级为不充分"}
+
+    cleaned = str(response_text).strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
@@ -79,12 +93,19 @@ def parse_self_check_response(response_text: str) -> Dict[str, Any]:
 
     try:
         data = json.loads(cleaned)
-        useful = bool(data.get("useful", False))
-        reason = str(data.get("reason") or ("判定知识证据充分" if useful else "知识证据不足或不匹配"))
+        if not isinstance(data, dict):
+            raise ValueError("Self-check payload is not a JSON object")
+        useful = _parse_bool_flag(data.get("useful", False))
+        raw_reason = data.get("reason")
+        reason = (
+            str(raw_reason).strip()
+            if raw_reason is not None and str(raw_reason).strip()
+            else ("判定知识证据充分" if useful else "知识证据不足或不匹配")
+        )
         return {"useful": useful, "reason": reason}
     except Exception:
-        # 正则匹配 useful 字段
-        match_useful = re.search(r'"useful"\s*:\s*(true|false)', cleaned, re.IGNORECASE)
+        # 正则匹配 useful 字段（兼容带引号的字符串布尔值）
+        match_useful = re.search(r'"useful"\s*:\s*"?(true|false)"?', cleaned, re.IGNORECASE)
         match_reason = re.search(r'"reason"\s*:\s*"([^"]+)"', cleaned)
         if match_useful:
             useful = match_useful.group(1).lower() == "true"

@@ -241,10 +241,16 @@ async def query_faq(keyword: str) -> str:
         _retriever = None
 
     # 2. 优雅保底：若 Milvus 尚未灌库或未命中时，兼容回退原 FAQ 表以保证旧单测与无向量环境的平滑兼容
+    escaped_kw = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     async with AsyncSessionLocal() as session:
         stmt = (
             select(FAQ)
-            .where(or_(FAQ.question.like(f"%{kw}%"), FAQ.answer.like(f"%{kw}%")))
+            .where(
+                or_(
+                    FAQ.question.like(f"%{escaped_kw}%", escape="\\"),
+                    FAQ.answer.like(f"%{escaped_kw}%", escape="\\"),
+                )
+            )
             .limit(3)
         )
         result = await session.execute(stmt)
@@ -286,7 +292,9 @@ async def create_ticket(
             if actual_conv_id is not None:
                 conv = await session.get(Conversation, actual_conv_id)
 
-            if conv is None:
+            if conv is not None:
+                conv.status = "已转人工"
+            else:
                 # 若传入的 conversation_id 为空或在数据库中不存在，自动兜底创建有效会话
                 try:
                     conv = Conversation(
@@ -329,12 +337,4 @@ async def create_ticket(
         )
     except Exception as e:
         logger.exception(f"创建工单异常: {e}")
-        return json.dumps(
-            {
-                "error": f"创建工单失败: {str(e)}",
-                "ticket_no": ticket_no,
-                "status": "创建失败",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        raise RuntimeError("创建工单失败：数据库写入异常，请稍后重试或联系人工客服") from e

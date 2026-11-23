@@ -25,6 +25,29 @@ def is_port_open(host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.2
         return False
 
 
+def is_local_host(host: str) -> bool:
+    """判断目标主机地址是否为本机地址。"""
+    normalized = str(host or "").strip().lower()
+    return normalized in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _terminate_process(proc: subprocess.Popen) -> None:
+    """安全终止单个子进程并回收退出状态，防止僵尸进程与句柄竞争。"""
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 class MCPServerManager:
     """管理外部 MCP Server 独立子进程生命周期的管理器。"""
 
@@ -88,7 +111,8 @@ class MCPServerManager:
             host = srv["host"]
             port = srv["port"]
             script_path = PROJECT_ROOT / srv["script"]
-            log_path = PROJECT_ROOT / srv["log_file"]
+            raw_log_path = Path(srv["log_file"])
+            log_path = raw_log_path if raw_log_path.is_absolute() else (PROJECT_ROOT / raw_log_path)
 
             # 1. 端口已被监听，直接复用外部已启动实例
             if is_port_open(host, port, timeout=0.2):
@@ -97,26 +121,46 @@ class MCPServerManager:
                 status[name] = True
                 continue
 
+            # 1.5 非本机地址不尝试拉起本地子进程
+            if not is_local_host(host):
+                if verbose:
+                    print(f"  ⚠️ {label} ({host}:{port}) 为远端地址且当前不可达，跳过本地子进程拉起")
+                status[name] = False
+                continue
+
             # 2. 端口未被监听，自动拉起独立子进程
             if verbose:
                 print(f"  ▶ 正在自动拉起 {label} (端口: {port})...")
 
+            # 若此前已记录同名旧进程，先清理防止泄漏孤儿进程
+            existing_proc = self.processes.pop(name, None)
+            if existing_proc is not None:
+                _terminate_process(existing_proc)
+
             try:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
-                f_log = open(log_path, "a", encoding="utf-8")
-                self.log_files.append(f_log)
 
                 creation_flags = 0
                 if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW"):
                     creation_flags |= subprocess.CREATE_NO_WINDOW
 
-                proc = subprocess.Popen(
-                    [sys.executable, str(script_path)],
-                    stdout=f_log,
-                    stderr=subprocess.STDOUT,
-                    creationflags=creation_flags,
-                    cwd=str(PROJECT_ROOT),
-                )
+                cmd = [
+                    sys.executable,
+                    str(script_path),
+                    "--host",
+                    str(host),
+                    "--port",
+                    str(port),
+                ]
+                with open(log_path, "a", encoding="utf-8") as f_log:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=f_log,
+                        stderr=subprocess.STDOUT,
+                        creationflags=creation_flags,
+                        cwd=str(PROJECT_ROOT),
+                    )
                 self.processes[name] = proc
 
                 # 3. 轮询等待端口就绪
@@ -125,6 +169,7 @@ class MCPServerManager:
                 while time.time() - start_time < wait_timeout:
                     if proc.poll() is not None:
                         # 进程提前异常退出
+                        self.processes.pop(name, None)
                         break
                     if is_port_open(host, port, timeout=0.1):
                         ready = True
@@ -148,16 +193,8 @@ class MCPServerManager:
 
     def stop_all(self):
         """级联停止并清理所有由本管理器启动的子进程与日志句柄。"""
-        for name, proc in list(self.processes.items()):
-            try:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=1.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-            except Exception:
-                pass
+        for _name, proc in list(self.processes.items()):
+            _terminate_process(proc)
         self.processes.clear()
 
         for f in self.log_files:

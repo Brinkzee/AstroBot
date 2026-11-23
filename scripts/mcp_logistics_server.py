@@ -3,8 +3,9 @@
 提供基于 Streamable HTTP 协议的物流状态及轨迹查询工具。
 """
 
+import argparse
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence
 from mcp.server.fastmcp import FastMCP
 
 # 预置模拟物流数据（与内置业务数据保持一致）
@@ -88,6 +89,15 @@ def create_logistics_server(
     return server
 
 
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """解析物流 MCP Server 启动命令行参数。"""
+    parser = argparse.ArgumentParser(description="Logistics MCP Server")
+    parser.add_argument("--host", default="127.0.0.1", help="监听主机地址")
+    parser.add_argument("--port", type=int, default=8001, help="监听端口号")
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    server = create_logistics_server()
+    args = parse_args()
+    server = create_logistics_server(host=args.host, port=args.port)
     server.run(transport="streamable-http")

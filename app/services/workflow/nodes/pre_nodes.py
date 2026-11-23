@@ -160,6 +160,14 @@ def coreference_resolution_node(
         summary_line = summary.strip().splitlines()[0].strip() if (summary and summary.strip()) else ""
         history_text = _format_conversation_history(state.get("messages") or [], query)
 
+    # 若存在 Layer 3 前情摘要，拼入 history_text 以便指代消解能够回溯归档事实
+    summary_text = summary.strip() if (summary and summary.strip()) else ""
+    if summary_text:
+        if history_text:
+            history_text = f"【前情摘要】\n{summary_text}\n\n{history_text}"
+        else:
+            history_text = f"【前情摘要】\n{summary_text}"
+
     # 每轮必打：在任何分流和透传分支之前输出 [history_ctx] 到 log/app.log
     log_history_context(
         conv_id=conv_id,

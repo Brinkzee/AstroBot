@@ -118,8 +118,10 @@ async def test_main_agent_missing_param_asking():
     mock_tool.ainvoke.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_main_agent_max_steps_guard():
+async def test_main_agent_max_steps_guard(monkeypatch):
     """测试最大 5 步硬截断与最终总结兜底机制"""
+    from app.services.workflow.nodes import agent_node
+    monkeypatch.setattr(agent_node, "MAX_STEPS", 5)
     mock_model = MagicMock()
     tool_resp = AIMessage(
         content="",

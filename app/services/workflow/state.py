@@ -15,6 +15,7 @@ class AgentWorkflowState(TypedDict):
     order_data: Optional[Dict[str, Any]]
     suggested_orders: Optional[List[Dict[str, Any]]]
     retrieved_docs: List[Dict[str, Any]]
+    evidence_confidence: Optional[float]
     confidence_passed: Optional[bool]
     messages: Annotated[List[BaseMessage], add_messages]
     response_text: str
@@ -49,6 +50,7 @@ def create_initial_state(
         "order_data": None,
         "suggested_orders": None,
         "retrieved_docs": [],
+        "evidence_confidence": None,
         "confidence_passed": None,
         "messages": [HumanMessage(content=clean_query)],
         "response_text": "",

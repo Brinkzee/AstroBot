@@ -110,7 +110,8 @@ def parse_query_understanding_output(text: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return {}
 
-    standard_query = str(data.get("standard_query", "")).strip()
+    raw_sq = data.get("standard_query")
+    standard_query = str(raw_sq).strip() if raw_sq is not None else ""
     raw_keywords = data.get("expanded_keywords", [])
 
     expanded_keywords: List[str] = []

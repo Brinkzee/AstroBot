@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, Optional, Set, Tuple
 import httpx
@@ -137,26 +138,64 @@ def _is_query_missed(raw_output: Any, output_str: str) -> bool:
             if any(k in err_msg for k in ("未找到", "不存在", "查无", "无相关", "未查询到")):
                 return True
 
-    missed_keywords = (
+    # 格式化 FAQ/多句业务政策说明不应因正文包含“不在保修期/暂无/不存在”等条件词被误判为查询落空
+    is_formatted_faq = ("问：" in text and "答：" in text)
+    if is_formatted_faq:
+        return False
+
+    strong_missed_keywords = (
         "未找到",
         "未查到",
         "查无",
-        "不存在",
         "无相关",
-        "暂无",
         "没有找到",
-        "不在保修期",
         "无退货记录",
-        "无记录",
         "未查询到",
         "空结果",
         "not found",
     )
-    for kw in missed_keywords:
-        if kw in text:
+    lower_text = text.lower()
+    for kw in strong_missed_keywords:
+        if kw in lower_text:
             return True
 
+    soft_missed_keywords = (
+        "不存在",
+        "暂无",
+        "不在保修期",
+        "无记录",
+    )
+    policy_guidance_markers = ("可享受", "付费维修", "可以", "支持", "请联系", "请等待", "建议")
+    if len(text) <= 80 and not any(m in text for m in policy_guidance_markers):
+        for kw in soft_missed_keywords:
+            if kw in text:
+                return True
+
     return False
+
+
+def _sanitize_error_text(text: str) -> str:
+    """脱敏异常文本中的数据库连接串、凭据密钥与原始 SQL 语句，防止泄露至工具输出或审计日志。"""
+    if not text:
+        return ""
+    sanitized = str(text)
+    # 1. 脱敏 URL/DSN 凭据，如 mysql+aiomysql://user:password@host
+    sanitized = re.sub(
+        r"([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)([^@\s/]+)(@)",
+        r"\1***\3",
+        sanitized,
+    )
+    # 2. 脱敏 SQLAlchemy [SQL: ...] / [parameters: ...] 块
+    sanitized = re.sub(r"\[(?:SQL|parameters):[^\]]*\]", "[SQL REDACTED]", sanitized)
+    # 3. 脱敏键值型敏感凭据
+    sanitized = re.sub(
+        r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\s*([:=])\s*([^\s,;'\"]+)",
+        r"\1\2***",
+        sanitized,
+    )
+    # 4. 脱敏 sk- 风格 API Key
+    sanitized = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-***", sanitized)
+    return sanitized
 
 
 def _is_write_tool(tool: Any, tool_name: str, **kwargs: Any) -> bool:
@@ -169,9 +208,11 @@ def _is_write_tool(tool: Any, tool_name: str, **kwargs: Any) -> bool:
         return True
     if getattr(tool, "write", False) is True:
         return True
-    if getattr(tool, "tool_type", "").upper() == "WRITE":
+    tool_type = getattr(tool, "tool_type", None)
+    if isinstance(tool_type, str) and tool_type.upper() == "WRITE":
         return True
-    if getattr(tool, "metadata", None) and getattr(tool, "metadata", {}).get("is_write") is True:
+    meta = getattr(tool, "metadata", None)
+    if isinstance(meta, dict) and meta.get("is_write") is True:
         return True
     tags = getattr(tool, "tags", None) or []
     if "write" in tags:
@@ -224,15 +265,16 @@ def _build_failure_response(
     raw_error: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """构造标准化的工具执行失败响应结构，适配异常优雅回灌给模型"""
+    safe_detail = _sanitize_error_text(error_detail)
     if output_override is not None:
-        output_str = output_override
+        output_str = _sanitize_error_text(output_override)
     elif status == "校验拦下":
-        output_str = f"工具 [{tool_name}] 调用失败: 参数校验未通过: {error_detail}，请结合此情况向用户做解释或追问补充必要信息"
+        output_str = f"工具 [{tool_name}] 调用失败: 参数校验未通过: {safe_detail}，请结合此情况向用户做解释或追问补充必要信息"
     elif status == "权限拒绝":
-        output_str = f"工具 [{tool_name}] 调用失败: 权限校验拒绝: {error_detail}，请结合此情况向用户做解释并提供帮助"
+        output_str = f"工具 [{tool_name}] 调用失败: 权限校验拒绝: {safe_detail}，请结合此情况向用户做解释并提供帮助"
     else:
-        err_msg = str(raw_error) if raw_error is not None else error_detail
-        output_str = f"执行异常: {err_msg}。工具 [{tool_name}] 调用失败: {error_detail}，请结合此情况向用户做解释并提供帮助"
+        err_msg = _sanitize_error_text(str(raw_error)) if raw_error is not None else safe_detail
+        output_str = f"执行异常: {err_msg}。工具 [{tool_name}] 调用失败: {safe_detail}，请结合此情况向用户做解释并提供帮助"
 
     return {
         "success": False,
@@ -240,7 +282,7 @@ def _build_failure_response(
         "tool_name": tool_name,
         "tool_call_id": tool_call_id,
         "status": status,
-        "error": error_detail,
+        "error": safe_detail,
         "error_type": error_type,
         "retry_count": retry_count,
         "duration_ms": duration_ms,
@@ -368,7 +410,7 @@ class ToolExecutor:
             args: Dict[str, Any] = {}
         elif isinstance(raw_args, str):
             try:
-                args = json.loads(raw_args)
+                parsed_args = json.loads(raw_args)
             except Exception as e:
                 error_detail = f"参数 JSON 反序列化失败: {e}"
                 logger.warning(f"Tool [{tool_name}] args JSON parse error: {e}")
@@ -388,6 +430,25 @@ class ToolExecutor:
                     retry_count=0,
                     duration_ms=duration_ms,
                 )
+            if not isinstance(parsed_args, dict):
+                error_detail = f"参数类型错误: JSON 参数必须为对象(dict)，实际为 {type(parsed_args).__name__}"
+                duration_ms = int((time.perf_counter() - start_time) * 1000)
+                await _record_audit(
+                    audit_status="校验拦下",
+                    audit_error=error_detail,
+                    audit_duration=duration_ms,
+                    audit_arguments={"raw": raw_args},
+                )
+                return _build_failure_response(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    error_detail=error_detail,
+                    status="校验拦下",
+                    error_type="INVALID_ARGS",
+                    retry_count=0,
+                    duration_ms=duration_ms,
+                )
+            args = parsed_args
         elif isinstance(raw_args, dict):
             args = raw_args
         else:
@@ -589,9 +650,9 @@ class ToolExecutor:
                 output_str = _format_output(raw_output)
                 is_missed = _is_query_missed(raw_output, output_str)
 
-                # 查询落空（业务空结果）标记为成功且 error_type="QUERY_MISSED"，严禁重试
+                # 查询落空（业务空结果）标记为成功且 error_type="QUERY_MISSED"；如实保留本轮已发生的网络重试次数
                 error_type = "QUERY_MISSED" if is_missed else None
-                retry_cnt = 0 if is_missed else actual_retries
+                retry_cnt = actual_retries
 
                 await _record_audit(
                     audit_status="成功",
@@ -642,7 +703,7 @@ class ToolExecutor:
             error_detail = f"执行超时 (超过 {self.timeout} 秒)"
             status = "超时"
         elif last_error is not None:
-            error_detail = f"{type(last_error).__name__}: {last_error}"
+            error_detail = _sanitize_error_text(f"{type(last_error).__name__}: {last_error}")
             status = "失败"
         else:
             error_detail = "未知执行错误"

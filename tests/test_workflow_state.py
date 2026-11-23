@@ -15,6 +15,7 @@ def test_create_initial_state_defaults():
     assert state["order_data"] is None
     assert state["suggested_orders"] is None
     assert state["retrieved_docs"] == []
+    assert state["evidence_confidence"] is None
     assert state["confidence_passed"] is None
     assert state["suggested_actions"] == []
     assert state["token_usage"] == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -45,6 +46,7 @@ def test_agent_workflow_state_keys():
         "order_data",
         "suggested_orders",
         "retrieved_docs",
+        "evidence_confidence",
         "confidence_passed",
         "messages",
         "response_text",

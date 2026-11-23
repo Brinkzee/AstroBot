@@ -45,14 +45,22 @@ class AuditLogger:
             duration_ms: 耗时毫秒
         """
         try:
-            # 1. 摘要与错误安全截断
-            if result_summary is not None and len(result_summary) > 500:
-                result_summary = result_summary[:500]
+            # 1. 字段长度安全截断与枚举规整（对齐 tool_audit_logs 表列定义）
+            safe_tool_name = str(tool_name or "unknown_tool")[:128]
+            safe_tool_call_id = str(tool_call_id)[:64] if tool_call_id is not None else None
+            safe_mcp_server = str(mcp_server)[:64] if mcp_server is not None else None
 
-            if error_message is not None and len(error_message) > 512:
-                error_message = error_message[:512]
+            normalized_source = str(tool_source or "builtin").strip().lower()
+            if normalized_source not in ("builtin", "mcp"):
+                normalized_source = "builtin"
 
-            # 2. 参数 JSON 结构安全规整
+            if result_summary is not None:
+                result_summary = str(result_summary)[:500]
+
+            if error_message is not None:
+                error_message = str(error_message)[:512]
+
+            # 2. 参数 JSON 结构安全规整（兼容 datetime/Decimal/UUID/set 等非原始类型）
             parsed_arguments = arguments
             if isinstance(arguments, str):
                 try:
@@ -60,14 +68,22 @@ class AuditLogger:
                 except Exception:
                     parsed_arguments = {"raw": arguments}
 
+            if parsed_arguments is not None:
+                try:
+                    parsed_arguments = json.loads(
+                        json.dumps(parsed_arguments, default=str, ensure_ascii=False)
+                    )
+                except Exception:
+                    parsed_arguments = {"raw": str(parsed_arguments)}
+
             # 3. 独立事务落盘
             async with self.session_factory() as session:
                 log_entry = ToolAuditLog(
                     conversation_id=conversation_id,
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    tool_source=tool_source,
-                    mcp_server=mcp_server,
+                    tool_call_id=safe_tool_call_id,
+                    tool_name=safe_tool_name,
+                    tool_source=normalized_source,
+                    mcp_server=safe_mcp_server,
                     arguments=parsed_arguments,
                     result_summary=result_summary,
                     status=status,

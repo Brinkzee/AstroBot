@@ -1,7 +1,8 @@
 import logging
 from typing import Any, Dict, List, Optional
+from app.config import settings
 from app.services.workflow.state import AgentWorkflowState
-from app.services.workflow.nodes.gate import extract_doc_score
+from app.services.workflow.nodes.gate import compute_evidence_confidence, extract_doc_score
 from app.tools.business_tools import get_retriever
 
 logger = logging.getLogger(__name__)
@@ -12,13 +13,17 @@ CONFIDENCE_SCORE_THRESHOLD = 0.35
 
 
 def _extract_retrieval_items(res: Any) -> List[Any]:
-    """从检索返回对象中兼容提取文档列表（优先 docs，兼容旧版 hits 或直接 list）。"""
+    """从检索返回对象中兼容提取文档列表（优先非空 docs，兼容旧版 hits 或直接 list）。"""
     if isinstance(res, (list, tuple)):
         return list(res)
     raw_docs = getattr(res, "docs", None)
-    if isinstance(raw_docs, (list, tuple)):
+    if isinstance(raw_docs, (list, tuple)) and raw_docs:
         return list(raw_docs)
     raw_hits = getattr(res, "hits", None)
+    if isinstance(raw_hits, (list, tuple)) and raw_hits:
+        return list(raw_hits)
+    if isinstance(raw_docs, (list, tuple)):
+        return list(raw_docs)
     if isinstance(raw_hits, (list, tuple)):
         return list(raw_hits)
     return []
@@ -87,8 +92,13 @@ async def knowledge_retrieval_node(
     except Exception as e:
         logger.warning(f"知识检索节点异常: {e}")
 
+    score = compute_evidence_confidence(retrieved_docs)
+    threshold = getattr(settings, "evidence_confidence_threshold", 0.40)
+
     return {
         "retrieved_docs": retrieved_docs,
+        "evidence_confidence": score,
+        "confidence_passed": score >= threshold,
     }
 
 
