@@ -73,7 +73,13 @@ def compute_retrieval_metrics(
         hit_rank = 0
         for rank, doc in enumerate(retrieved_docs, start=1):
             sp = doc.get("section_path") or ""
-            full_text = f"{sp} {doc.get('question', '')} {doc.get('category', '')}"
+            raw_qs = doc.get("questions")
+            if isinstance(raw_qs, list):
+                qs_str = " ".join(str(q) for q in raw_qs)
+            else:
+                qs_str = str(raw_qs or "")
+            q_str = str(doc.get("question") or "")
+            full_text = f"{sp} {q_str} {qs_str} {doc.get('category', '')}"
             if any(term in full_text for term in group):
                 hit_rank = rank
                 break
@@ -315,11 +321,13 @@ class RAGEvaluator:
 
         # 1. 检索召回
         docs: List[Dict[str, Any]] = []
+        ranked_docs: List[Dict[str, Any]] = []
         citations: List[Dict[str, Any]] = []
 
         if (self.is_mock or self.retriever is None) and not hasattr(self.retriever, "retrieve_with_strategy_mocked"):
             # 确定性 Mock 检索数据
             docs, citations = self._mock_retrieval(sample, strategy)
+            ranked_docs = docs
         else:
             try:
                 retrieval_res: AdvancedRetrievalResult = (
@@ -330,10 +338,11 @@ class RAGEvaluator:
                     )
                 )
                 docs = retrieval_res.docs
+                ranked_docs = getattr(retrieval_res, "ranked_docs", None) or docs
                 citations = retrieval_res.citations
             except Exception as e:
-                logger.warning(f"检索执行异常，使用确定性降级: {e}")
-                docs, citations = self._mock_retrieval(sample, strategy)
+                logger.error(f"真实检索执行异常 (eval_id={eval_id}, strategy={strategy}): {e}")
+                docs, ranked_docs, citations = [], [], []
 
         # 2. 处理拒答类样本 (D_absent)
         if should_refuse:
@@ -356,9 +365,9 @@ class RAGEvaluator:
                 "faith_case_logged": False,
             }
 
-        # 3. 处理正常可作答样本：检索指标计算
+        # 3. 处理正常可作答样本：基于重排前相关性排序 (ranked_docs) 计算检索指标
         metrics = compute_retrieval_metrics(
-            retrieved_docs=docs,
+            retrieved_docs=ranked_docs,
             expect_section=sample.get("expect_section", []),
             expect_sections_all=sample.get("expect_sections_all"),
         )
@@ -369,8 +378,9 @@ class RAGEvaluator:
             answer_chunks.append(chunk)
         answer = "".join(answer_chunks).strip()
 
-        # 5. 忠实度评估
-        faith_res = evaluate_faithfulness(
+        # 5. 忠实度评估（卸载至线程池避免同步 LLM 裁判阻塞事件循环）
+        faith_res = await asyncio.to_thread(
+            evaluate_faithfulness,
             query=query,
             answer=answer,
             citations=citations,
@@ -830,10 +840,12 @@ def serialize_report_to_dict(
         "out_of_scope_refusal_rate": refusal_rate,
     }
 
-    # 6. 完整数据汇总表
+    # 6. 完整数据汇总表（与 generation.answer_coverage 保持严格统一口径）
     full_table = []
+    gen_ans_cov = generation_data.get("answer_coverage", {}) if generation_data else {}
     for s in strategies:
         m_dict = retrieval_mrr.get(s, {})
+        row_ans_cov = gen_ans_cov.get(s, evidence_cov.get(s, {}).get("overall", 0.0))
         full_table.append({
             "strategy": s,
             "A_policy": m_dict.get("A_policy", 0.0),
@@ -842,7 +854,7 @@ def serialize_report_to_dict(
             "E_multi": m_dict.get("E_multi", 0.0),
             "overall_mrr": m_dict.get("overall", 0.0),
             "evidence_coverage": evidence_cov.get(s, {}).get("overall", 0.0),
-            "answer_coverage": round(m_dict.get("overall", 0.0) * 0.98, 3),
+            "answer_coverage": row_ans_cov,
             "is_best": (s == best_mrr_strategy),
         })
 
@@ -1053,12 +1065,18 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
     lines = md_content.replace("\r\n", "\n").split("\n")
     sections: Dict[str, List[str]] = {}
     current_sec = ""
+    separator_re = re.compile(r"^\|[\s:\-\|]+\|$")
     for line in lines:
         s_line = line.strip()
         if s_line.startswith("#"):
             current_sec = s_line
             sections[current_sec] = []
-        elif current_sec and s_line.startswith("|") and not s_line.startswith("| 策略") and not s_line.startswith("|:---") and not s_line.startswith("| :---"):
+        elif (
+            current_sec
+            and s_line.startswith("|")
+            and not s_line.startswith("| 策略")
+            and not separator_re.match(s_line)
+        ):
             sections[current_sec].append(s_line)
 
     def _parse_rows_to_dict(rows: List[str]) -> Dict[str, Dict[str, float]]:
@@ -1128,6 +1146,7 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
     if gen_rows:
         faith_dict = {}
         ans_cov_dict = {}
+        refusal_by_strat: Dict[str, float] = {}
         for row in gen_rows:
             parts = [p.strip() for p in row.split("|")[1:-1]]
             if len(parts) >= 3:
@@ -1138,11 +1157,16 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
                     f_val = 1.0
                 try:
                     r_val = float(parts[2].replace("*", "").strip())
-                    refusal_rate = r_val
+                    refusal_by_strat[strat] = r_val
                 except ValueError:
                     pass
                 faith_dict[strat] = f_val
                 ans_cov_dict[strat] = round(min(1.0, f_val * 0.95 + 0.05), 3)
+
+        if "hybrid_rerank" in refusal_by_strat:
+            refusal_rate = refusal_by_strat["hybrid_rerank"]
+        elif refusal_by_strat:
+            refusal_rate = next(iter(refusal_by_strat.values()))
 
         ans_coverage = ans_cov_dict.get("hybrid_rerank", 0.98)
 
@@ -1183,10 +1207,12 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
         "out_of_scope_refusal_rate": refusal_rate,
     }
 
-    # 完整数据汇总表
+    # 完整数据汇总表（与 generation.answer_coverage 保持统一口径）
     full_table = []
+    parsed_gen_ans_cov = generation_data.get("answer_coverage", {}) if generation_data else {}
     for s in mrr_data.keys():
         m_dict = mrr_data.get(s, {})
+        row_ans_cov = parsed_gen_ans_cov.get(s, evidence_cov.get(s, {}).get("overall", 0.0))
         full_table.append({
             "strategy": s,
             "A_policy": m_dict.get("A_policy", 0.0),
@@ -1195,7 +1221,7 @@ def parse_evaluation_report_md(md_content: str) -> Dict[str, Any]:
             "E_multi": m_dict.get("E_multi", 0.0),
             "overall_mrr": m_dict.get("overall", 0.0),
             "evidence_coverage": evidence_cov.get(s, {}).get("overall", 0.0),
-            "answer_coverage": round(m_dict.get("overall", 0.0) * 0.98, 3),
+            "answer_coverage": row_ans_cov,
             "is_best": (s == best_mrr_strategy),
         })
 

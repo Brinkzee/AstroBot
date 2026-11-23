@@ -54,6 +54,12 @@ class AsyncSessionAdapter:
         await self.close()
 
 
+@pytest.fixture(autouse=True)
+def force_offline_mock_embedding(monkeypatch):
+    """确保断点续跑单测离线确定性运行，不依赖外部 HuggingFace 配额。"""
+    monkeypatch.setenv("MOCK_EMBEDDING", "1")
+
+
 @pytest.fixture
 def sqlite_session():
     engine = create_engine("sqlite:///:memory:")

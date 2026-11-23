@@ -155,8 +155,8 @@ def verify_error_accounting_balance(
         + 2 * categorized["displaced_count"]
     )
 
-    if total_fp_fn is not None:
-        assert total_penalty == total_fp_fn, (
+    if total_fp_fn is not None and total_penalty != total_fp_fn:
+        raise ValueError(
             f"Error accounting mathematical imbalance: "
             f"penalty ({total_penalty} = {categorized['under_tag_count']} + "
             f"{categorized['over_tag_count']} + 2*{categorized['displaced_count']}) "
@@ -312,11 +312,31 @@ def generate_error_markdown(categorized: Dict[str, Any], total_fp_fn: int) -> st
     return "\n".join(lines)
 
 
+def _resolve_threshold(
+    threshold_input: Union[float, int, Dict[str, Any], List[float], np.ndarray],
+    taxonomy: List[str] = TAXONOMY_17,
+    default: float = 0.45,
+) -> Union[float, np.ndarray]:
+    """统一解析标量或按类目字典格式的判定阈值。"""
+    if isinstance(threshold_input, (int, float)):
+        return float(threshold_input)
+    if isinstance(threshold_input, dict):
+        if "threshold" in threshold_input and isinstance(threshold_input["threshold"], (int, float)):
+            return float(threshold_input["threshold"])
+        return np.array(
+            [float(threshold_input.get(cat, default)) for cat in taxonomy],
+            dtype=np.float32,
+        )
+    if isinstance(threshold_input, (list, np.ndarray)):
+        return np.asarray(threshold_input, dtype=np.float32)
+    return float(default)
+
+
 def evaluate_dataset(
     model: torch.nn.Module,
     tokenizer: Any,
     records: List[Dict[str, Any]],
-    threshold: float,
+    threshold: Union[float, Dict[str, Any], np.ndarray],
     device: torch.device,
     batch_size: int = 16,
     max_length: int = 128,
@@ -344,7 +364,8 @@ def evaluate_dataset(
 
     y_true = np.vstack(all_targets) if all_targets else np.empty((0, len(taxonomy)))
     y_probs = np.vstack(all_probs) if all_probs else np.empty((0, len(taxonomy)))
-    y_pred = (y_probs >= threshold).astype(int)
+    resolved_thresh = _resolve_threshold(threshold, taxonomy=taxonomy)
+    y_pred = (y_probs >= resolved_thresh).astype(int)
 
     # 1. Per-class metrics and confusion matrices
     confusion_matrices = compute_confusion_matrices(y_true, y_pred, taxonomy=taxonomy)
@@ -387,14 +408,20 @@ def evaluate_dataset(
     # 2. Tiered redlines evaluation
     tiered_results = check_tiered_redlines(per_class_f1, taxonomy=taxonomy)
 
-    # 3. Predict labels for error samples extraction
+    # 3. Predict labels for error samples extraction (filter ground truth against taxonomy to stay consistent with y_true)
+    taxonomy_set = set(taxonomy)
     samples_with_preds = []
     for i, rec in enumerate(records):
         pred_label_indices = np.where(y_pred[i] == 1)[0]
         pred_labels = [taxonomy[idx] for idx in pred_label_indices if idx < len(taxonomy)]
+        raw_true = rec.get("labels", [])
+        filtered_true = [lbl for lbl in raw_true if lbl in taxonomy_set]
+        if len(filtered_true) != len(raw_true):
+            unknown = [lbl for lbl in raw_true if lbl not in taxonomy_set]
+            logger.warning(f"Sample {i} contains out-of-taxonomy labels ignored in evaluation: {unknown}")
         samples_with_preds.append({
             "text": rec.get("text", ""),
-            "true_labels": rec.get("labels", []),
+            "true_labels": filtered_true,
             "pred_labels": pred_labels,
         })
 
@@ -422,6 +449,12 @@ def evaluate_dataset(
             "confusion_matrix": confusion_matrices[cat],
         })
 
+    serialized_thresh: Any = (
+        round(float(resolved_thresh), 2)
+        if isinstance(resolved_thresh, (int, float))
+        else {cat: round(float(resolved_thresh[i]), 4) for i, cat in enumerate(taxonomy)}
+    )
+
     return {
         "summary": {
             "macro_f1": round(macro_f1, 4),
@@ -433,7 +466,7 @@ def evaluate_dataset(
             "total_samples": len(records),
             "total_error_samples": categorized["total_error_samples"],
         },
-        "threshold": round(float(threshold), 2),
+        "threshold": serialized_thresh,
         "per_class": per_class_records,
         "confusion_matrices": confusion_matrices,
         "error_accounting": {
@@ -467,17 +500,17 @@ def evaluate_classifier(
         device = torch.device(device_name)
     logger.info(f"Using device: {device}")
 
-    # 2. Threshold
+    # 2. Threshold (supports scalar {"threshold": float} or per-class dict)
     threshold_path = Path(threshold_file)
     if threshold_path.exists():
         with open(threshold_path, "r", encoding="utf-8") as f:
             thresh_data = json.load(f)
-        threshold = float(thresh_data.get("threshold", 0.45))
-        candidate_scores = thresh_data.get("candidate_scores", {})
+        threshold = _resolve_threshold(thresh_data, taxonomy=TAXONOMY_17, default=0.45)
+        candidate_scores = thresh_data.get("candidate_scores", {}) if isinstance(thresh_data, dict) else {}
     else:
         threshold = 0.45
         candidate_scores = {}
-    logger.info(f"Loaded decision threshold: {threshold:.2f} from {threshold_file}")
+    logger.info(f"Loaded decision threshold from {threshold_file}: {threshold}")
 
     # 3. Model & Tokenizer
     logger.info(f"Loading model and tokenizer from: {model_dir}")

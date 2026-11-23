@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -25,18 +26,21 @@ logger = logging.getLogger(__name__)
 class BGERerankerClient:
     """BAAI/bge-reranker-v2-m3 交叉编码 (Cross-Encoder) 重排客户端。"""
 
-    # 类级别断路熔断标记，进程内所有实例共享，杜绝连续阻塞
+    # 类级别断路熔断标记（使用单调时钟 + 线程锁），进程内共享，杜绝连续阻塞
+    _circuit_lock: threading.Lock = threading.Lock()
     _circuit_broken_until: float = 0.0
 
     @classmethod
     def reset_circuit_breaker(cls) -> None:
         """重置熔断器状态，供自测与单测使用。"""
-        cls._circuit_broken_until = 0.0
+        with cls._circuit_lock:
+            cls._circuit_broken_until = 0.0
 
     @classmethod
     def is_circuit_broken(cls) -> bool:
         """检查当前熔断保护是否生效中。"""
-        return time.time() < cls._circuit_broken_until
+        with cls._circuit_lock:
+            return time.monotonic() < cls._circuit_broken_until
 
     def __init__(
         self,
@@ -193,6 +197,9 @@ class BGERerankerClient:
 
     def _call_hf_api(self, query: str, doc_texts: List[str]) -> List[float]:
         """调用 HuggingFace Inference Router 执行批量 text-classification 推理。"""
+        if self.client is None:
+            raise RuntimeError("HuggingFace InferenceClient 未初始化")
+
         from huggingface_hub.inference._providers import get_provider_helper
 
         helper = get_provider_helper(None, task="text-classification", model=self.model)
@@ -259,21 +266,19 @@ class BGERerankerClient:
             return [self._compute_mock_score(query, text) for text in doc_texts]
 
         # 检查断路器熔断状态（若处于熔断期，直接走 Mock 保证毫秒级响应）
-        now = time.time()
-        if now < BGERerankerClient._circuit_broken_until:
+        if BGERerankerClient.is_circuit_broken():
             logger.debug("BGE-Reranker: 熔断保护生效中，直接使用 Mock 语义打分")
             return [self._compute_mock_score(query, text) for text in doc_texts]
 
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
+        if effective_batch_size <= 0:
+            raise ValueError(f"batch_size 必须为正整数，当前值: {effective_batch_size}")
+
         all_scores: List[float] = []
-        circuit_tripped = False
 
         # 分批请求 HuggingFace Router 端点（单批 batch_size 避免单请求超载 504 / 超时）
         for i in range(0, len(doc_texts), effective_batch_size):
             batch = doc_texts[i : i + effective_batch_size]
-            if circuit_tripped:
-                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
-                continue
 
             batch_scores = None
             last_err = None
@@ -297,13 +302,16 @@ class BGERerankerClient:
             if batch_scores is not None and len(batch_scores) == len(batch):
                 all_scores.extend(batch_scores)
             else:
-                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断，本批及后续全部优雅降级
+                # 批次调用异常（如 ReadTimeout / 504），触发断路熔断，并对全量候选统一改用 Mock 打分，
+                # 避免同一查询中混排 Cross-Encoder 分数与词汇重叠 Mock 分数。
                 logger.warning(
-                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 {self.circuit_breaker_seconds:.1f}s 并平滑降级为 Mock 语义打分"
+                    f"BGE-Reranker 调用异常 ({last_err})，自动熔断 {self.circuit_breaker_seconds:.1f}s 并全量降级为 Mock 语义打分"
                 )
-                BGERerankerClient._circuit_broken_until = time.time() + self.circuit_breaker_seconds
-                circuit_tripped = True
-                all_scores.extend([self._compute_mock_score(query, text) for text in batch])
+                with BGERerankerClient._circuit_lock:
+                    BGERerankerClient._circuit_broken_until = (
+                        time.monotonic() + self.circuit_breaker_seconds
+                    )
+                return [self._compute_mock_score(query, text) for text in doc_texts]
 
         return all_scores
 
@@ -312,7 +320,7 @@ class BGERerankerClient:
         query: str,
         candidates: List[Dict[str, Any]],
         top_k: int = 10,
-        max_candidates: int = 15,
+        max_candidates: int = 50,
     ) -> List[Dict[str, Any]]:
         """同步执行候选列表重排与打分。
 
@@ -320,17 +328,17 @@ class BGERerankerClient:
             query: 用户提问
             candidates: 待重排的文档字典列表
             top_k: 截断保留的最大条目数，默认 10
-            max_candidates: 参与 Cross-Encoder 精排的最大候选数（其余作为保底）
+            max_candidates: 参与 Cross-Encoder 精排的最大候选数（默认 50，与粗排 top_k_per_route 对齐）
 
         Returns:
             按 rerank_score 降序排列的 Top-K 候选列表
         """
-        if not candidates:
+        if not candidates or top_k <= 0:
             return []
 
-        # 截取前 max_candidates 条送入 Cross-Encoder，兼顾召回效果与端点负载
-        target_cands = candidates[:max_candidates]
-        tail_cands = candidates[max_candidates:]
+        effective_max = max(max_candidates, top_k)
+        target_cands = candidates[:effective_max]
+        tail_cands = candidates[effective_max:]
 
         doc_texts = [self._extract_doc_text(c) for c in target_cands]
         scores = self._rerank_with_retry(query, doc_texts, batch_size=self.batch_size)
@@ -358,9 +366,12 @@ class BGERerankerClient:
         query: str,
         candidates: List[Dict[str, Any]],
         top_k: int = 10,
+        max_candidates: int = 50,
     ) -> List[Dict[str, Any]]:
         """异步执行候选列表重排与打分。"""
-        return await asyncio.to_thread(self.rerank_sync, query, candidates, top_k)
+        return await asyncio.to_thread(
+            self.rerank_sync, query, candidates, top_k, max_candidates
+        )
 
     def close(self) -> None:
         """关闭底层 HTTP 客户端以释放连接池与 socket 句柄。"""

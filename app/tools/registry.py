@@ -139,49 +139,82 @@ class ToolRegistry:
     async def get_all_tools(self) -> List[BaseTool]:
         """动态发现并获取所有可用工具（内置工具 + MCP 动态工具）
 
-        具备容灾与优雅降级能力：若 MCP Server 异常断开或超时，记录警告并返回内置工具，保障系统稳定运行。
+        具备并发发现、外层超时保护及单 Server 故障隔离容灾能力：
+        若单个 MCP Server 瞬时失败，保留该 Server 已缓存工具且不影响其它健康 Server 与内置工具。
         """
+        prev_cache: Dict[str, BaseTool] = dict(self._mcp_tools_cache)
         mcp_discovered: Dict[str, BaseTool] = {}
+        timeout_sec = float(getattr(settings, "MCP_CLIENT_TIMEOUT", 5.0))
 
-        if self.mcp_client is not None:
-            connections = getattr(self.mcp_client, "connections", None)
+        mcp_client = self.mcp_client
+        if mcp_client is not None:
+            connections = getattr(mcp_client, "connections", None)
             if isinstance(connections, dict) and connections:
-                # 优先按 Server 独立粒度拉取工具，实现单 Server 故障隔离
-                for server_name in list(connections.keys()):
+                server_names = list(connections.keys())
+
+                async def _fetch_single_server(server_name: str):
                     try:
-                        server_tools = await self.mcp_client.get_tools(
-                            server_name=server_name
+                        server_tools = await asyncio.wait_for(
+                            mcp_client.get_tools(server_name=server_name),
+                            timeout=timeout_sec,
                         )
-                        for t in server_tools:
-                            s_name = (
-                                server_name or TOOL_NAME_TO_SERVER.get(t.name, "unknown")
-                            )
-                            annotate_tool(t, tool_source="mcp", mcp_server=s_name)
-                            mcp_discovered[t.name] = t
+                        return server_name, "ok", list(server_tools or [])
                     except TypeError:
-                        # 兼容 mock 或不支持 server_name 关键字参数的客户端
-                        try:
-                            all_tools = await self.mcp_client.get_tools()
-                            for t in all_tools:
-                                s_name = (
-                                    getattr(t, "mcp_server", None)
-                                    or TOOL_NAME_TO_SERVER.get(t.name, "unknown")
-                                )
-                                annotate_tool(t, tool_source="mcp", mcp_server=s_name)
-                                mcp_discovered[t.name] = t
-                            break
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to fetch tools from MCP client: {e}"
-                            )
-                            break
+                        return server_name, "type_error", []
                     except Exception as e:
                         logger.warning(
                             f"Failed to fetch tools from MCP server '{server_name}': {e}"
                         )
+                        return server_name, "error", []
+
+                results = await asyncio.gather(
+                    *(_fetch_single_server(s) for s in server_names)
+                )
+
+                needs_fallback_all = any(status == "type_error" for _, status, _ in results)
+                if needs_fallback_all:
+                    try:
+                        all_tools = await asyncio.wait_for(
+                            mcp_client.get_tools(),
+                            timeout=timeout_sec,
+                        )
+                        for t in all_tools:
+                            s_name = (
+                                getattr(t, "mcp_server", None)
+                                or TOOL_NAME_TO_SERVER.get(t.name, "unknown")
+                            )
+                            annotate_tool(t, tool_source="mcp", mcp_server=s_name)
+                            mcp_discovered[t.name] = t
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to fetch tools from MCP client: {e}"
+                        )
+                        mcp_discovered.update(prev_cache)
+                else:
+                    for server_name, status, server_tools in results:
+                        if status == "ok":
+                            for t in server_tools:
+                                s_name = (
+                                    server_name or TOOL_NAME_TO_SERVER.get(t.name, "unknown")
+                                )
+                                annotate_tool(t, tool_source="mcp", mcp_server=s_name)
+                                mcp_discovered[t.name] = t
+                        else:
+                            # 瞬时失败时保留该 Server 已有缓存，避免击穿并发在途请求
+                            for cached_name, cached_tool in prev_cache.items():
+                                cached_srv = (
+                                    getattr(cached_tool, "mcp_server", None)
+                                    or (getattr(cached_tool, "metadata", {}) or {}).get("mcp_server")
+                                    or TOOL_NAME_TO_SERVER.get(cached_name)
+                                )
+                                if cached_srv == server_name:
+                                    mcp_discovered[cached_name] = cached_tool
             else:
                 try:
-                    all_tools = await self.mcp_client.get_tools()
+                    all_tools = await asyncio.wait_for(
+                        mcp_client.get_tools(),
+                        timeout=timeout_sec,
+                    )
                     for t in all_tools:
                         s_name = (
                             getattr(t, "mcp_server", None)
@@ -191,8 +224,9 @@ class ToolRegistry:
                         mcp_discovered[t.name] = t
                 except Exception as e:
                     logger.warning(f"Failed to fetch tools from MCP client: {e}")
+                    mcp_discovered.update(prev_cache)
 
-        # 更新 MCP 工具缓存，支持同步 get_tool 访问
+        # 原子更新 MCP 工具缓存，支持同步 get_tool 访问
         self._mcp_tools_cache = mcp_discovered
 
         # 合并内置与 MCP 工具（内置优先）

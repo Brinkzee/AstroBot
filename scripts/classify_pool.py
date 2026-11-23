@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
@@ -174,6 +175,9 @@ async def _run_classify_pool_core(
     batch_size: int,
     service_url: str,
 ) -> Dict[str, Any]:
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须为正整数，当前值: {batch_size}")
+
     start_time = time.time()
 
     # 1. 捞取未归类数据
@@ -228,15 +232,16 @@ async def _run_classify_pool_core(
 
     for i in range(0, total_unclassified, batch_size):
         batch = unclassified[i : i + batch_size]
-        batch_texts = [row[1] for row in batch]
+        batch_texts = [str(row[1] or "") for row in batch]
         batch_qids = [row[0] for row in batch]
 
         logger.info(f"正在处理批次 [{i + 1} ~ {i + len(batch)} / {total_unclassified}]...")
         call_results = await call_classifier_service(service_url=service_url, texts=batch_texts)
 
-        # 兼容单条结果广播 (如 mock 仅返回单条或测试桩)
-        if len(call_results) == 1 and len(batch_texts) > 1:
-            call_results = [call_results[0]] * len(batch_texts)
+        if len(call_results) != len(batch_texts):
+            raise RuntimeError(
+                f"分类推理服务返回结果数量 ({len(call_results)}) 与请求批次数量 ({len(batch_texts)}) 不匹配，中止写入以防标签错位"
+            )
 
         # 查询本批次中已存在的 question_id (幂等双重保险)
         existing_stmt = select(TopicClassification.question_id).where(
@@ -246,24 +251,46 @@ async def _run_classify_pool_core(
         existing_qids = set(existing_res.scalars().all())
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        pending_inserts: List[Tuple[int, List[str]]] = []
         for (qid, _raw_q), item in zip(batch, call_results):
             if qid in existing_qids:
                 logger.debug(f"问题 ID {qid} 已存在分类记录，跳过插入。")
                 continue
-
-            labels = item.get("labels", [])
-            tc = TopicClassification(
-                question_id=qid,
-                labels=labels,
-                classified_at=now,
+            labels = list(item.get("labels", [])) if isinstance(item, dict) else []
+            pending_inserts.append((qid, labels))
+            db.add(
+                TopicClassification(
+                    question_id=qid,
+                    labels=labels,
+                    classified_at=now,
+                )
             )
-            db.add(tc)
-            processed += 1
 
-            for label in labels:
-                topic_counts[label] = topic_counts.get(label, 0) + 1
-
-        await db.commit()
+        try:
+            await db.commit()
+            for _qid, labels in pending_inserts:
+                processed += 1
+                for label in labels:
+                    topic_counts[label] = topic_counts.get(label, 0) + 1
+        except IntegrityError:
+            # 并发批次触发唯一约束冲突时回滚，逐条幂等写入跳过冲突项
+            await db.rollback()
+            for qid, labels in pending_inserts:
+                try:
+                    db.add(
+                        TopicClassification(
+                            question_id=qid,
+                            labels=labels,
+                            classified_at=now,
+                        )
+                    )
+                    await db.commit()
+                    processed += 1
+                    for label in labels:
+                        topic_counts[label] = topic_counts.get(label, 0) + 1
+                except IntegrityError:
+                    await db.rollback()
+                    logger.debug(f"并发写入冲突，跳过已存在问题 ID {qid}")
 
     elapsed = round(time.time() - start_time, 4)
     print_summary(

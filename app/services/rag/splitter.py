@@ -83,6 +83,8 @@ def split_text_with_sentence_boundary(
     Split text into chunks aligned to sentence boundaries.
     Guarantees no sentence is cut in half at chunk boundaries.
     """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be a positive integer, got {chunk_size}")
     text = text.strip()
     if not text:
         return []
@@ -351,9 +353,7 @@ class MarkdownStructureSplitter:
             if h_q_match:
                 faq_q = h_q_match.group(1).strip()
                 sec_text = "\n".join(sec_lines).strip()
-                a_match = A_REGEX.match(sec_text)
-                if a_match:
-                    sec_text = a_match.group(1).strip()
+                sec_text = re.sub(r"^\s*(?:答|A|a)[：:]\s*", "", sec_text, count=1).strip()
 
                 for part in split_text_with_sentence_boundary(
                     sec_text, self.chunk_size, self.overlap_size

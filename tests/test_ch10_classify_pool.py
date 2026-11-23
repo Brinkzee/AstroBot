@@ -47,7 +47,7 @@ async def test_classify_pool_min_batch_and_force(memory_db: AsyncSession):
     assert len(res.scalars().all()) == 0
 
     # 2. force=True，即使不足 10 条也强制执行处理
-    mock_resp = [{"labels": ["商品信息"], "scores": {"商品信息": 0.95}}]
+    mock_resp = [{"labels": ["商品信息"], "scores": {"商品信息": 0.95}}] * 3
     with patch("scripts.classify_pool.call_classifier_service", new_callable=AsyncMock) as mock_call:
         mock_call.return_value = mock_resp
         result = await run_classify_pool(db=memory_db, min_batch=10, force=True)

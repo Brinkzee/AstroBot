@@ -155,6 +155,22 @@ class QueryProcessor:
 
         return self._fallback_result(query)
 
+    @staticmethod
+    def _run_coroutine_sync(coro: Any) -> Any:
+        """在同步上下文中安全执行协程；仅在检测运行中事件循环时捕获 RuntimeError，不重复运行已失败协程。"""
+        import concurrent.futures
+
+        try:
+            asyncio.get_running_loop()
+            has_running_loop = True
+        except RuntimeError:
+            has_running_loop = False
+
+        if has_running_loop:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result()
+        return asyncio.run(coro)
+
     def process(self, query: Optional[str]) -> QueryUnderstandingResult:
         """同步处理用户查询，与 aprocess 保持完全一致的改写与降级行为。"""
         if not query or not query.strip():
@@ -171,32 +187,12 @@ class QueryProcessor:
                 elif callable(self._llm):
                     resp = self._llm(messages)
                 elif hasattr(self._llm, "ainvoke"):
-                    import concurrent.futures
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            with concurrent.futures.ThreadPoolExecutor() as executor:
-                                resp = executor.submit(
-                                    asyncio.run, self._llm.ainvoke(messages)
-                                ).result()
-                        else:
-                            resp = loop.run_until_complete(self._llm.ainvoke(messages))
-                    except Exception:
-                        resp = asyncio.run(self._llm.ainvoke(messages))
+                    resp = self._run_coroutine_sync(self._llm.ainvoke(messages))
                 else:
                     raise ValueError(f"不支持的同步 LLM 客户端类型: {type(self._llm)}")
 
                 if asyncio.iscoroutine(resp):
-                    import concurrent.futures
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            with concurrent.futures.ThreadPoolExecutor() as executor:
-                                resp = executor.submit(asyncio.run, resp).result()
-                        else:
-                            resp = loop.run_until_complete(resp)
-                    except Exception:
-                        resp = asyncio.run(resp)
+                    resp = self._run_coroutine_sync(resp)
 
                 content = resp.content if hasattr(resp, "content") else str(resp)
                 parsed = parse_query_understanding_output(content)

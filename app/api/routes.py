@@ -1,26 +1,70 @@
+import asyncio
+import inspect
 import json
+import logging
+import re
+import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import verify_admin_token
 from app.schemas.chat import ChatStreamRequest, ChatResumeRequest
 from app.schemas.after_sale import AfterSaleExtractRequest, AfterSaleTicket
 from app.schemas.ticket import TicketCreateRequest, TicketCreateResponse
 from app.schemas.conversation import ConversationItem, ConversationMessageItem
+from app.schemas.kb import (
+    ManualChunkCreateRequest,
+    KBSearchRequest,
+    KBStatsResponse,
+    MaterialItem,
+    ChunkItem,
+    ChunkListResponse,
+    KBSearchResponse,
+    KBSearchHit,
+    DocumentPreviewRequest,
+    DocChunkPreviewItem,
+    DocumentPreviewResponse,
+    ManualDocumentCreateRequest,
+    ManualDocumentCreateResponse,
+)
 from app.models.conversation import Conversation
+from app.models.knowledge import KnowledgeChunk
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.summary import ConversationSummary
 from app.models.tool_audit_log import ToolAuditLog
-from app.models.low_confidence import LowConfidenceQuestion
-from app.services.after_sale_service import extract_after_sale_ticket
+from app.models.low_confidence import LowConfidenceQuestion, record_low_confidence
+from app.services.after_sale_service import (
+    aextract_after_sale_ticket,
+    extract_after_sale_ticket,
+    extract_after_sale_ticket as _orig_extract_after_sale_ticket,
+)
 from app.services.chat_service import ChatService
+from app.services.rag.dual_writer import KnowledgeDualWriter
+from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.retriever import KnowledgeRetriever
+from app.services.rag.splitter import DocChunk, MarkdownSectionSplitter
 from app.tools.business_tools import create_ticket
 from app.db.session import get_db
 from app.api.rag_eval_routes import router as rag_eval_router
+
+logger = logging.getLogger(__name__)
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+KB_DIR = ROOT_DIR / "data" / "kb"
+
+_WINDOWS_RESERVED_STEMS = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+_SAFE_MD_FILENAME_RE = re.compile(r"^[^./\\\x00-\x1f][^/\\\x00-\x1f]*$")
 
 router = APIRouter(prefix="/api")
 router.include_router(rag_eval_router)
@@ -109,7 +153,11 @@ async def chat_resume(
 @router.post("/after-sale/extract", response_model=AfterSaleTicket)
 async def extract_ticket(request: AfterSaleExtractRequest):
     try:
-        ticket = extract_after_sale_ticket(request.description)
+        if extract_after_sale_ticket is _orig_extract_after_sale_ticket:
+            ticket = await aextract_after_sale_ticket(request.description)
+        else:
+            res = await asyncio.to_thread(extract_after_sale_ticket, request.description)
+            ticket = await res if inspect.isawaitable(res) else res
         return ticket
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"提取失败: {str(e)}")
@@ -133,88 +181,148 @@ async def api_create_ticket(request: TicketCreateRequest):
         status=data["status"],
     )
 
-from pydantic import BaseModel, Field
-from app.models.low_confidence import record_low_confidence
-
 class FeedbackRequest(BaseModel):
     conversation_id: int
     message_id: Optional[int] = None
-    feedback_type: str = Field(..., description="赞同/点踩: 'up' 或 'down'")
+    feedback_type: Literal["up", "down"] = Field(..., description="赞同/点踩: 'up' 或 'down'")
     reason: Optional[str] = None
     query: Optional[str] = None
 
+
 @router.post("/chat/feedback")
 async def chat_feedback(request: FeedbackRequest, db: AsyncSession = Depends(get_db)):
+    conv = await db.get(Conversation, request.conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail=f"会话 {request.conversation_id} 不存在")
+
     if request.feedback_type == "down":
-        raw_question = request.query
-        if not raw_question:
-            stmt = select(Message).where(
+        raw_question: Optional[str] = request.query
+        target_ast_msg: Optional[Message] = None
+
+        if request.message_id is not None:
+            ast_stmt = select(Message).where(
                 Message.conversation_id == request.conversation_id,
-                Message.role == "user"
-            ).order_by(Message.id.desc()).limit(1)
+                Message.id == request.message_id,
+            )
+            ast_res = await db.execute(ast_stmt)
+            candidate = ast_res.scalar_one_or_none()
+            if candidate is not None and candidate.role == "assistant":
+                target_ast_msg = candidate
+            if not raw_question:
+                user_stmt = (
+                    select(Message)
+                    .where(
+                        Message.conversation_id == request.conversation_id,
+                        Message.role == "user",
+                        Message.id <= request.message_id,
+                    )
+                    .order_by(Message.id.desc())
+                    .limit(1)
+                )
+                user_res = await db.execute(user_stmt)
+                msg = user_res.scalar()
+                if msg and msg.content:
+                    raw_question = msg.content
+
+        if not raw_question:
+            stmt = (
+                select(Message)
+                .where(
+                    Message.conversation_id == request.conversation_id,
+                    Message.role == "user",
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
             res = await db.execute(stmt)
             msg = res.scalar()
-            raw_question = msg.content if msg else "未知用户问题"
+            raw_question = (msg.content if msg and msg.content else None) or "未知用户问题"
+
+        safe_raw_question: str = raw_question.strip() or "未知用户问题"
 
         retrieved_chunks = None
-        # Attempt to find the retrieval context from the last assistant message
-        stmt_tool = select(Message).where(
-            Message.conversation_id == request.conversation_id,
-            Message.role == "assistant"
-        ).order_by(Message.id.desc()).limit(1)
-        res_tool = await db.execute(stmt_tool)
-        ast_msg = res_tool.scalar()
+        ast_msg = target_ast_msg
+        if ast_msg is None:
+            stmt_tool = (
+                select(Message)
+                .where(
+                    Message.conversation_id == request.conversation_id,
+                    Message.role == "assistant",
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+            res_tool = await db.execute(stmt_tool)
+            ast_msg = res_tool.scalar()
+
         if ast_msg and ast_msg.tool_calls:
             tc = ast_msg.tool_calls
             if isinstance(tc, str):
                 try:
                     tc = json.loads(tc)
-                except (json.JSONDecodeError, Exception) as e:
-                    import logging
-                    logging.warning(f"Failed to parse tool_calls: {e}")
-            if isinstance(tc, list) and len(tc) > 0:
-                tool_name = tc[0].get("name")
-                if tool_name in ("query_faq", "search_knowledge"):
-                    stmt_audit = select(ToolAuditLog).where(
+                except Exception as e:
+                    logger.warning(f"Failed to parse tool_calls: {e}")
+                    tc = []
+            has_kb_tool = False
+            if isinstance(tc, list):
+                for call in tc:
+                    if isinstance(call, dict) and call.get("name") in ("query_faq", "search_knowledge"):
+                        has_kb_tool = True
+                        break
+            if has_kb_tool:
+                stmt_audit = (
+                    select(ToolAuditLog)
+                    .where(
                         ToolAuditLog.conversation_id == request.conversation_id,
-                        ToolAuditLog.tool_name.in_(["query_faq", "search_knowledge"])
-                    ).order_by(ToolAuditLog.id.desc()).limit(1)
-                    res_audit = await db.execute(stmt_audit)
-                    audit_log = res_audit.scalar()
-                    
-                    if audit_log and audit_log.result_summary:
-                        try:
-                            res_data = json.loads(audit_log.result_summary) if isinstance(audit_log.result_summary, str) else audit_log.result_summary
-                            if isinstance(res_data, dict) and "hits" in res_data:
-                                hits = res_data["hits"]
-                            elif isinstance(res_data, list):
-                                hits = res_data
-                            else:
-                                hits = []
+                        ToolAuditLog.tool_name.in_(["query_faq", "search_knowledge"]),
+                    )
+                    .order_by(ToolAuditLog.id.desc())
+                    .limit(1)
+                )
+                res_audit = await db.execute(stmt_audit)
+                audit_log = res_audit.scalar()
 
-                            parsed_chunks = []
-                            for hit in hits:
-                                text = hit.get("text") or hit.get("content") or hit.get("answer") or ""
-                                score = hit.get("score") or hit.get("distance") or 0.0
-                                section = hit.get("section") or hit.get("section_path") or ""
-                                parsed_chunks.append({
-                                    "text": text[:300],
-                                    "score": float(score),
-                                    "section": section
-                                })
-                            if parsed_chunks:
-                                retrieved_chunks = parsed_chunks
-                        except (json.JSONDecodeError, Exception) as e:
-                            import logging
-                            logging.warning(f"Failed to parse tool result for chunks: {e}")
-        
+                if audit_log and audit_log.result_summary:
+                    try:
+                        res_data = (
+                            json.loads(audit_log.result_summary)
+                            if isinstance(audit_log.result_summary, str)
+                            else audit_log.result_summary
+                        )
+                        if isinstance(res_data, dict) and "hits" in res_data:
+                            hits = res_data["hits"]
+                        elif isinstance(res_data, list):
+                            hits = res_data
+                        else:
+                            hits = []
+
+                        parsed_chunks = []
+                        for hit in hits:
+                            if not isinstance(hit, dict):
+                                continue
+                            text = hit.get("text") or hit.get("content") or hit.get("answer") or ""
+                            raw_score = hit.get("score")
+                            if raw_score is None:
+                                raw_score = hit.get("distance")
+                            score = float(raw_score) if raw_score is not None else 0.0
+                            section = hit.get("section") or hit.get("section_path") or ""
+                            parsed_chunks.append({
+                                "text": str(text)[:300],
+                                "score": score,
+                                "section": str(section),
+                            })
+                        if parsed_chunks:
+                            retrieved_chunks = parsed_chunks
+                    except Exception as e:
+                        logger.warning(f"Failed to parse tool result for chunks: {e}")
+
         entry = await record_low_confidence(
             db=db,
-            raw_question=raw_question,
+            raw_question=safe_raw_question,
             source="user_feedback",
             conversation_id=request.conversation_id,
             reason=request.reason or "用户点踩未解决",
-            retrieved_chunks=retrieved_chunks
+            retrieved_chunks=retrieved_chunks,
         )
         return {"status": "success", "message": "Feedback recorded", "entry_id": entry.id}
     return {"status": "success", "message": "Thanks for your feedback"}
@@ -234,36 +342,61 @@ def _format_datetime(dt) -> str:
 @router.get("/conversations", response_model=List[ConversationItem])
 async def list_conversations(
     user_id: str = "default_user",
+    limit: int = Query(50, ge=1, le=200, description="每页返回会话数量"),
+    offset: int = Query(0, ge=0, description="分页偏移量"),
     db: AsyncSession = Depends(get_db),
 ):
-    """查询指定用户的会话列表，按更新时间倒序排列，并附带首问预览与摘要标记"""
+    """查询指定用户的会话列表，按更新时间倒序排列，并附带首问预览与摘要标记（批量查询避免 N+1）"""
     stmt = (
         select(Conversation)
         .where(Conversation.user_id == user_id)
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .offset(offset)
+        .limit(limit)
     )
     res = await db.execute(stmt)
-    conversations = res.scalars().all()
+    conversations = list(res.scalars().all())
+    if not conversations:
+        return []
+
+    conv_ids = [c.id for c in conversations]
+
+    # 批量统计每个会话的消息总条数
+    count_stmt = (
+        select(Message.conversation_id, func.count(Message.id))
+        .where(Message.conversation_id.in_(conv_ids))
+        .group_by(Message.conversation_id)
+    )
+    count_res = await db.execute(count_stmt)
+    msg_count_map = {row[0]: int(row[1]) for row in count_res.all()}
+
+    # 批量提取每个会话的首条 user 提问
+    rn = func.row_number().over(
+        partition_by=Message.conversation_id,
+        order_by=(Message.created_at.asc(), Message.id.asc()),
+    ).label("rn")
+    ranked_subq = (
+        select(
+            Message.conversation_id.label("conversation_id"),
+            Message.content.label("content"),
+            rn,
+        )
+        .where(Message.conversation_id.in_(conv_ids), Message.role == "user")
+        .subquery()
+    )
+    first_msg_stmt = select(ranked_subq.c.conversation_id, ranked_subq.c.content).where(
+        ranked_subq.c.rn == 1
+    )
+    first_msg_res = await db.execute(first_msg_stmt)
+    first_content_map = {row[0]: row[1] for row in first_msg_res.all()}
 
     items: List[ConversationItem] = []
     for conv in conversations:
-        # 统计该会话消息总条数
-        count_stmt = select(func.count(Message.id)).where(Message.conversation_id == conv.id)
-        count_res = await db.execute(count_stmt)
-        msg_count = count_res.scalar() or 0
+        msg_count = msg_count_map.get(conv.id, 0)
+        first_content = first_content_map.get(conv.id)
 
-        # 提取首条 user 提问作为 title 预览
-        first_msg_stmt = (
-            select(Message.content)
-            .where(Message.conversation_id == conv.id, Message.role == "user")
-            .order_by(Message.created_at.asc(), Message.id.asc())
-            .limit(1)
-        )
-        first_msg_res = await db.execute(first_msg_stmt)
-        first_content = first_msg_res.scalar()
-
-        if first_content and first_content.strip():
-            title = first_content.strip()[:25]
+        if first_content and str(first_content).strip():
+            title = str(first_content).strip()[:25]
         else:
             title = "新会话"
 
@@ -293,13 +426,18 @@ async def list_conversations(
 @router.get("/conversations/{id}/messages", response_model=List[ConversationMessageItem])
 async def get_conversation_messages(
     id: int,
+    user_id: Optional[str] = Query(default=None, description="可选用户标识，传入时校验归属权"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     db: AsyncSession = Depends(get_db),
 ):
     """获取指定会话 ID 的全部历史消息，按时间升序排列"""
-    conv_stmt = select(Conversation.id).where(Conversation.id == id)
-    conv_res = await db.execute(conv_stmt)
-    if not conv_res.scalar():
+    conv = await db.get(Conversation, id)
+    if not conv:
         raise HTTPException(status_code=404, detail=f"会话 {id} 不存在")
+
+    effective_user_id = (user_id or x_user_id or "").strip() or None
+    if effective_user_id is not None and conv.user_id != effective_user_id:
+        raise HTTPException(status_code=403, detail="无权访问该会话")
 
     msg_stmt = (
         select(Message)
@@ -337,12 +475,18 @@ async def get_conversation_messages(
 @router.delete("/conversations/{id}")
 async def delete_conversation(
     id: int,
+    user_id: Optional[str] = Query(default=None, description="可选用户标识，传入时校验归属权"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     db: AsyncSession = Depends(get_db),
 ):
     """删除指定会话并原子级联清理或解绑关联数据"""
     conv = await db.get(Conversation, id)
     if not conv:
         raise HTTPException(status_code=404, detail=f"会话 {id} 不存在")
+
+    effective_user_id = (user_id or x_user_id or "").strip() or None
+    if effective_user_id is not None and conv.user_id != effective_user_id:
+        raise HTTPException(status_code=403, detail="无权删除该会话")
 
     # 1. LowConfidenceQuestion: 来源会话解绑（设 conversation_id = None）
     await db.execute(
@@ -379,73 +523,16 @@ async def delete_conversation(
 # ==============================================================================
 # 知识库可视化管理与自测工作台 API 接口 (/api/kb/...)
 # ==============================================================================
-import time
-from datetime import datetime
-from pathlib import Path
-from sqlalchemy import select, func, or_
-from app.models.knowledge import KnowledgeChunk
-from app.schemas.kb import (
-    ManualChunkCreateRequest,
-    KBSearchRequest,
-    KBStatsResponse,
-    MaterialItem,
-    ChunkItem,
-    ChunkListResponse,
-    KBSearchResponse,
-    KBSearchHit,
-    DocumentPreviewRequest,
-    DocChunkPreviewItem,
-    DocumentPreviewResponse,
-    ManualDocumentCreateRequest,
-    ManualDocumentCreateResponse,
-)
-from app.services.rag.dual_writer import KnowledgeDualWriter
-from app.services.rag.milvus_client import MilvusKnowledgeStore
-from app.services.rag.retriever import KnowledgeRetriever
-from app.services.rag.splitter import DocChunk, MarkdownSectionSplitter
 
-
-@router.get("/kb/stats", response_model=KBStatsResponse)
-async def get_kb_stats(db: AsyncSession = Depends(get_db)):
-    """获取知识库整体统计指标 (MySQL 原文 vs Milvus 向量索引)"""
-    total_res = await db.execute(select(func.count(KnowledgeChunk.id)))
-    total_chunks = total_res.scalar() or 0
-
-    done_res = await db.execute(
-        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "done")
-    )
-    done_chunks = done_res.scalar() or 0
-
-    pending_res = await db.execute(
-        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "pending")
-    )
-    pending_chunks = pending_res.scalar() or 0
-
-    failed_res = await db.execute(
-        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "failed")
-    )
-    failed_chunks = failed_res.scalar() or 0
-
+def _count_milvus_knowledge() -> int:
     store = MilvusKnowledgeStore()
     try:
-        milvus_count = store.count("knowledge")
+        return store.count("knowledge")
     finally:
         store.close()
 
-    return KBStatsResponse(
-        total_chunks=total_chunks,
-        done_chunks=done_chunks,
-        pending_chunks=pending_chunks,
-        failed_chunks=failed_chunks,
-        milvus_count=milvus_count,
-        is_aligned=(done_chunks == milvus_count),
-    )
 
-
-@router.get("/kb/materials", response_model=List[MaterialItem])
-async def get_kb_materials():
-    """扫描 data/kb/ 目录下的原材料文档清单及切块估算"""
-    kb_dir = Path("data/kb")
+def _scan_kb_materials(kb_dir: Path) -> List[MaterialItem]:
     materials: List[MaterialItem] = []
     if kb_dir.exists():
         splitter = MarkdownSectionSplitter()
@@ -471,10 +558,63 @@ async def get_kb_materials():
     return materials
 
 
+def _validate_kb_filename(raw_filename: str) -> str:
+    """严格校验知识库文档文件名，杜绝路径穿越、点文件及 Windows 保留设备名。"""
+    raw = (raw_filename or "").strip()
+    if not raw or "/" in raw or "\\" in raw or ".." in raw:
+        raise HTTPException(status_code=400, detail="非法文件名：不允许包含路径分隔符或 '..'")
+    if raw.startswith(".") or not _SAFE_MD_FILENAME_RE.match(raw):
+        raise HTTPException(status_code=400, detail="非法文件名：不允许以 '.' 开头或包含控制字符")
+    clean_name = raw if raw.endswith(".md") else f"{raw}.md"
+    stem = Path(clean_name).stem.strip()
+    if not stem or stem.upper() in _WINDOWS_RESERVED_STEMS:
+        raise HTTPException(status_code=400, detail=f"非法文件名：'{clean_name}' 为保留名称或空名称")
+    return clean_name
+
+
+@router.get("/kb/stats", response_model=KBStatsResponse)
+async def get_kb_stats(db: AsyncSession = Depends(get_db)):
+    """获取知识库整体统计指标 (MySQL 原文 vs Milvus 向量索引)"""
+    total_res = await db.execute(select(func.count(KnowledgeChunk.id)))
+    total_chunks = total_res.scalar() or 0
+
+    done_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "done")
+    )
+    done_chunks = done_res.scalar() or 0
+
+    pending_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "pending")
+    )
+    pending_chunks = pending_res.scalar() or 0
+
+    failed_res = await db.execute(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.vectorize_status == "failed")
+    )
+    failed_chunks = failed_res.scalar() or 0
+
+    milvus_count = await asyncio.to_thread(_count_milvus_knowledge)
+
+    return KBStatsResponse(
+        total_chunks=total_chunks,
+        done_chunks=done_chunks,
+        pending_chunks=pending_chunks,
+        failed_chunks=failed_chunks,
+        milvus_count=milvus_count,
+        is_aligned=(done_chunks == milvus_count),
+    )
+
+
+@router.get("/kb/materials", response_model=List[MaterialItem])
+async def get_kb_materials():
+    """扫描 data/kb/ 目录下的原材料文档清单及切块估算"""
+    return await asyncio.to_thread(_scan_kb_materials, KB_DIR)
+
+
 @router.get("/kb/chunks", response_model=ChunkListResponse)
 async def get_kb_chunks(
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     status: Optional[str] = None,
     category: Optional[str] = None,
     search: Optional[str] = None,
@@ -539,7 +679,7 @@ async def get_kb_chunks(
     )
 
 
-@router.post("/kb/chunks/manual", response_model=ChunkItem)
+@router.post("/kb/chunks/manual", response_model=ChunkItem, dependencies=[Depends(verify_admin_token)])
 async def create_manual_chunk(
     request: ManualChunkCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -595,11 +735,17 @@ async def create_manual_chunk(
             vector_id=chunk.vector_id,
             created_at=created_str,
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"知识录入异常: {str(e)}")
 
 
-@router.post("/kb/repair-pending")
+@router.post("/kb/repair-pending", dependencies=[Depends(verify_admin_token)])
 async def repair_pending_chunks(db: AsyncSession = Depends(get_db)):
     """一键触发断点续跑补齐所有未向量化的 pending 知识块"""
     try:
@@ -617,6 +763,7 @@ async def repair_pending_chunks(db: AsyncSession = Depends(get_db)):
 async def search_knowledge(request: KBSearchRequest):
     """密集语义检索自测沙盒"""
     start_time = time.perf_counter()
+    retriever: Optional[KnowledgeRetriever] = None
     try:
         retriever = KnowledgeRetriever()
         hits = await retriever.retrieve(
@@ -653,6 +800,12 @@ async def search_knowledge(request: KBSearchRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索自测异常: {str(e)}")
+    finally:
+        if retriever is not None:
+            try:
+                retriever.close()
+            except Exception:
+                pass
 
 
 @router.post("/kb/documents/preview", response_model=DocumentPreviewResponse)
@@ -663,7 +816,7 @@ async def preview_document_chunks(request: DocumentPreviewRequest):
 
     try:
         splitter = MarkdownSectionSplitter()
-        doc_chunks = splitter.split_markdown(request.content)
+        doc_chunks = await asyncio.to_thread(splitter.split_markdown, request.content)
 
         default_cat = (request.category or "").strip()
         preview_items: List[DocChunkPreviewItem] = []
@@ -692,7 +845,11 @@ async def preview_document_chunks(request: DocumentPreviewRequest):
         raise HTTPException(status_code=500, detail=f"文档切块预览异常: {str(e)}")
 
 
-@router.post("/kb/documents/manual", response_model=ManualDocumentCreateResponse)
+@router.post(
+    "/kb/documents/manual",
+    response_model=ManualDocumentCreateResponse,
+    dependencies=[Depends(verify_admin_token)],
+)
 async def create_manual_document(
     request: ManualDocumentCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -701,27 +858,19 @@ async def create_manual_document(
     if not request.content or not request.content.strip():
         raise HTTPException(status_code=400, detail="文档正文内容不能为空")
 
-    clean_name = Path(request.filename).name.strip()
-    if not clean_name:
-        clean_name = f"doc_{int(time.time())}.md"
-    elif not clean_name.endswith(".md"):
-        clean_name = f"{clean_name}.md"
+    clean_name = _validate_kb_filename(request.filename)
+    target_path = KB_DIR / clean_name
 
-    # 可选保存原材料文件至 data/kb/
-    file_saved = False
-    if request.save_file:
-        try:
-            kb_dir = Path("data/kb")
-            kb_dir.mkdir(parents=True, exist_ok=True)
-            target_path = kb_dir / clean_name
-            target_path.write_text(request.content, encoding="utf-8")
-            file_saved = True
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"保存原材料文件失败: {str(e)}")
+    # 若需落盘原材料文件，先校验覆盖冲突（不提前写盘，避免失败留下孤立文件）
+    if request.save_file and not request.overwrite and target_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"原材料文件 '{clean_name}' 已存在，如需覆盖请显式设置 overwrite=true",
+        )
 
     try:
         splitter = MarkdownSectionSplitter()
-        doc_chunks = splitter.split_markdown(request.content)
+        doc_chunks = await asyncio.to_thread(splitter.split_markdown, request.content)
         if not doc_chunks:
             raise HTTPException(status_code=400, detail="文档未能切分出有效知识块，请检查内容格式")
 
@@ -736,42 +885,51 @@ async def create_manual_document(
                 saved = await writer.write_chunks(db, doc_chunks)
             finally:
                 writer.close()
-            return ManualDocumentCreateResponse(
-                success=True,
-                total_chunks=len(doc_chunks),
-                saved_chunks=len(saved),
-                vectorize_status="done",
-                file_saved=file_saved,
-                filename=clean_name,
-            )
+            saved_count = len(saved)
+            vec_status = "done"
         else:
-            db_chunks = []
-            for c in doc_chunks:
-                db_chunks.append(
-                    KnowledgeChunk(
-                        category=c.category,
-                        questions=c.questions,
-                        answer=c.answer,
-                        section_path=c.section_path,
-                        content_type=c.content_type or "policy",
-                        is_key_clause=c.is_key_clause,
-                        vectorize_status="pending",
-                        vector_id=None,
-                    )
+            db_chunks = [
+                KnowledgeChunk(
+                    category=c.category,
+                    questions=c.questions,
+                    answer=c.answer,
+                    section_path=c.section_path,
+                    content_type=c.content_type or "policy",
+                    is_key_clause=c.is_key_clause,
+                    vectorize_status="pending",
+                    vector_id=None,
                 )
+                for c in doc_chunks
+            ]
             db.add_all(db_chunks)
             await db.commit()
-            return ManualDocumentCreateResponse(
-                success=True,
-                total_chunks=len(doc_chunks),
-                saved_chunks=len(db_chunks),
-                vectorize_status="pending",
-                file_saved=file_saved,
-                filename=clean_name,
-            )
+            saved_count = len(db_chunks)
+            vec_status = "pending"
+
+        file_saved = False
+        if request.save_file:
+            def _write_doc_file() -> None:
+                KB_DIR.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(request.content, encoding="utf-8")
+
+            await asyncio.to_thread(_write_doc_file)
+            file_saved = True
+
+        return ManualDocumentCreateResponse(
+            success=True,
+            total_chunks=len(doc_chunks),
+            saved_chunks=saved_count,
+            vectorize_status=vec_status,
+            file_saved=file_saved,
+            filename=clean_name,
+        )
     except HTTPException:
         raise
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"完整文档录入异常: {str(e)}")
 
 

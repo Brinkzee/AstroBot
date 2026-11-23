@@ -142,6 +142,37 @@
     let allSamples = [];
     let currentFilter = 'all';
 
+    function safeEscapeHtml(str) {
+      if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function getSampleFlags(s) {
+      const typeStr = String(s.error_type || s.type || '').toLowerCase();
+      const hasUnder = Number(s.under_tag_count || 0) > 0 || typeStr.includes('under') || (Array.isArray(s.under_tags) && s.under_tags.length > 0);
+      const hasOver = Number(s.over_tag_count || 0) > 0 || typeStr.includes('over') || (Array.isArray(s.over_tags) && s.over_tags.length > 0);
+      const hasDisplaced = Number(s.displaced_count || 0) > 0 || typeStr.includes('displaced') || (Array.isArray(s.displaced_tags) && s.displaced_tags.length > 0);
+      return { hasUnder, hasOver, hasDisplaced };
+    }
+
+    function formatErrorTypeLabel(s) {
+      const parts = [];
+      const u = Number(s.under_tag_count || 0);
+      const o = Number(s.over_tag_count || 0);
+      const d = Number(s.displaced_count || 0);
+      if (d > 0) parts.push(`错位(${d})`);
+      if (u > 0) parts.push(`漏打(${u})`);
+      if (o > 0) parts.push(`多打(${o})`);
+      if (parts.length > 0) return parts.join(' + ');
+      return s.error_type || s.type || '综合误差';
+    }
+
     async function loadErrors() {
       try {
         const data = await fetchAcceptanceErrors();
@@ -155,17 +186,17 @@
         document.getElementById('errors-content').style.display = 'block';
 
         const acct = data.error_accounting || {};
-        const under = acct.under_tag_count || 0;
-        const over = acct.over_tag_count || 0;
-        const displaced = acct.displaced_count || 0;
-        const totalPenalty = acct.total_penalty || (under + over + 2 * displaced);
-        const cmSum = acct.confusion_matrix_sum || totalPenalty;
+        const under = acct.under_tag_count ?? 0;
+        const over = acct.over_tag_count ?? 0;
+        const displaced = acct.displaced_count ?? 0;
+        const totalPenalty = acct.total_penalty ?? (under + over + 2 * displaced);
+        const cmSum = acct.confusion_matrix_sum ?? totalPenalty;
         const isBalanced = acct.balanced === true;
 
         document.getElementById('acct-under').innerText = under;
         document.getElementById('acct-over').innerText = over;
         document.getElementById('acct-displaced').innerText = displaced;
-        document.getElementById('acct-total-samples').innerText = data.total_error_samples || (data.error_samples || []).length;
+        document.getElementById('acct-total-samples').innerText = data.total_error_samples ?? (data.error_samples || []).length;
 
         // Balance badge & formula
         const badgeEl = document.getElementById('accounting-balanced-badge');
@@ -198,10 +229,10 @@
       let displacedCount = 0;
 
       allSamples.forEach((s) => {
-        const type = s.error_type || s.type || '';
-        if (type.includes('under') || s.under_tags?.length > 0) underCount++;
-        if (type.includes('over') || s.over_tags?.length > 0) overCount++;
-        if (type.includes('displaced') || s.displaced_tags?.length > 0) displacedCount++;
+        const flags = getSampleFlags(s);
+        if (flags.hasUnder) underCount++;
+        if (flags.hasOver) overCount++;
+        if (flags.hasDisplaced) displacedCount++;
       });
 
       document.getElementById('count-filter-all').innerText = allSamples.length;
@@ -229,11 +260,11 @@
       let filtered = allSamples;
 
       if (currentFilter === 'under') {
-        filtered = allSamples.filter((s) => (s.error_type || '').includes('under') || s.under_tags?.length > 0);
+        filtered = allSamples.filter((s) => getSampleFlags(s).hasUnder);
       } else if (currentFilter === 'over') {
-        filtered = allSamples.filter((s) => (s.error_type || '').includes('over') || s.over_tags?.length > 0);
+        filtered = allSamples.filter((s) => getSampleFlags(s).hasOver);
       } else if (currentFilter === 'displaced') {
-        filtered = allSamples.filter((s) => (s.error_type || '').includes('displaced') || s.displaced_tags?.length > 0);
+        filtered = allSamples.filter((s) => getSampleFlags(s).hasDisplaced);
       }
 
       if (filtered.length === 0) {
@@ -244,25 +275,25 @@
       tbody.innerHTML = filtered.map((s, idx) => {
         const gtLabels = s.ground_truth || s.true_labels || [];
         const predLabels = s.predicted || s.pred_labels || [];
-        const errType = s.error_type || '综合误差';
+        const errType = formatErrorTypeLabel(s);
         const boundaryNote = s.boundary_note || s.note || '近邻摩擦或多诉求弱信号';
 
-        const gtHtml = gtLabels.map((l) => `<span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;">${l}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无标签)</span>';
-        const predHtml = predLabels.map((l) => `<span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">${l}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无预测)</span>';
+        const gtHtml = gtLabels.map((l) => `<span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;">${safeEscapeHtml(l)}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无标签)</span>';
+        const predHtml = predLabels.map((l) => `<span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">${safeEscapeHtml(l)}</span>`).join(' ') || '<span style="color:var(--text-muted);">(无预测)</span>';
 
         return `
           <tr>
             <td>${idx + 1}</td>
             <td style="font-weight:500;max-width:320px;word-break:break-all;">
-              “${s.text}”
+              “${safeEscapeHtml(s.text)}”
             </td>
             <td>${gtHtml}</td>
             <td>${predHtml}</td>
             <td>
-              <span class="badge badge-fail">${errType}</span>
+              <span class="badge badge-fail">${safeEscapeHtml(errType)}</span>
             </td>
             <td style="font-size:12.5px;color:#475569;max-width:300px;">
-              ${boundaryNote}
+              ${safeEscapeHtml(boundaryNote)}
             </td>
           </tr>
         `;

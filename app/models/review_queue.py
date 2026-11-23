@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, timezone
 from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import BigInteger, Integer, String, Text, Enum, DateTime, func
-from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
+from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT, INTEGER as MYSQL_INTEGER
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -46,7 +46,7 @@ class ReviewQueue(Base):
         comment="模型生成的示例答案,备查",
     )
     occurrence_count: Mapped[int] = mapped_column(
-        Integer,
+        Integer().with_variant(MYSQL_INTEGER(unsigned=True), "mysql"),
         nullable=False,
         default=1,
         comment="出现次数,查重命中累加,越高越该优先补",

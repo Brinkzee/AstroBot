@@ -41,11 +41,11 @@ class ChunkItem(BaseModel):
     category: str
     questions: str
     answer: str
-    section_path: Optional[str]
-    content_type: str
+    section_path: Optional[str] = None
+    content_type: Optional[str] = None
     is_key_clause: bool
     vectorize_status: str
-    vector_id: Optional[str]
+    vector_id: Optional[str] = None
     created_at: str
 
 
@@ -104,6 +104,7 @@ class ManualDocumentCreateRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Markdown 文档正文")
     save_file: bool = Field(default=True, description="是否同时保存原材料至 data/kb/ 目录")
     sync_vector: bool = Field(default=True, description="是否立即执行向量化并双写写入 Milvus")
+    overwrite: bool = Field(default=False, description="当目标原材料文件已存在时是否允许覆盖")
 
 
 class ManualDocumentCreateResponse(BaseModel):

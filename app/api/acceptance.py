@@ -13,10 +13,11 @@ Missing artifact files NEVER trigger HTTP 500. They return HTTP 200 with {"prese
 Gates return "missing" instead of "fail" when artifacts are not ready.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from fastapi import APIRouter, Depends, HTTPException
 import httpx
 from pydantic import BaseModel, Field
@@ -42,19 +43,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/acceptance", tags=["acceptance"])
 topics_router = APIRouter(prefix="/api/topics", tags=["topics"])
 
-# Paths
-REPORT_PATH = Path("reports/ch10_evaluation_report.json")
-THRESHOLD_PATH = Path("data/ch10/threshold.json")
-ERROR_SAMPLES_MD = Path("data/ch10/reports/error_samples.md")
-DATASET_DIR = Path("mewhelp-ch10-dataset")
-BEST_MODEL_DIR = Path("data/ch10/best_model")
-ONNX_DIR = Path("data/ch10/onnx")
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Paths anchored to project root
+REPORT_PATH = ROOT_DIR / "reports" / "ch10_evaluation_report.json"
+THRESHOLD_PATH = ROOT_DIR / "data" / "ch10" / "threshold.json"
+ERROR_SAMPLES_MD = ROOT_DIR / "data" / "ch10" / "reports" / "error_samples.md"
+DATASET_DIR = ROOT_DIR / "mewhelp-ch10-dataset"
+BEST_MODEL_DIR = ROOT_DIR / "data" / "ch10" / "best_model"
+ONNX_DIR = ROOT_DIR / "data" / "ch10" / "onnx"
 
 CLASSIFIER_HOST = "127.0.0.1"
 CLASSIFIER_PORT = 8110
 
-# In-memory cache for leakage check
-_LEAKAGE_CACHE: Dict[str, Any] = {"mtimes": None, "result": None}
+# In-memory cache for leakage check keyed by resolved dataset_dir
+_LEAKAGE_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _read_json_sync(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _list_dir_files_sync(dir_path: Path) -> List[Dict[str, Any]]:
+    if not dir_path.exists():
+        return []
+    return [
+        {
+            "name": p.name,
+            "size_bytes": p.stat().st_size,
+            "exists": True,
+        }
+        for p in dir_path.glob("*")
+        if p.is_file()
+    ]
 
 
 def _load_jsonl_texts(path: Path) -> List[str]:
@@ -76,7 +98,7 @@ def _load_jsonl_texts(path: Path) -> List[str]:
 
 
 def get_cached_leakage_check(dataset_dir: Path = DATASET_DIR) -> Optional[Dict[str, Any]]:
-    """Cached computation of dataset zero-leakage check."""
+    """Cached computation of dataset zero-leakage check keyed by resolved directory & mtimes."""
     train_file = dataset_dir / "train.jsonl"
     val_file = dataset_dir / "val.jsonl"
     test_file = dataset_dir / "test.jsonl"
@@ -84,22 +106,23 @@ def get_cached_leakage_check(dataset_dir: Path = DATASET_DIR) -> Optional[Dict[s
     if not (train_file.exists() and val_file.exists() and test_file.exists()):
         return None
 
-    current_mtimes = (
+    cache_key = str(dataset_dir.resolve())
+    current_mtimes: Tuple[float, float, float] = (
         train_file.stat().st_mtime,
         val_file.stat().st_mtime,
         test_file.stat().st_mtime,
     )
 
-    if _LEAKAGE_CACHE["mtimes"] == current_mtimes and _LEAKAGE_CACHE["result"] is not None:
-        return _LEAKAGE_CACHE["result"]
+    cached = _LEAKAGE_CACHE.get(cache_key)
+    if cached and cached.get("mtimes") == current_mtimes and cached.get("result") is not None:
+        return cached["result"]
 
     train_texts = _load_jsonl_texts(train_file)
     val_texts = _load_jsonl_texts(val_file)
     test_texts = _load_jsonl_texts(test_file)
 
     report = check_dataset_leakage(train_texts, val_texts, test_texts)
-    _LEAKAGE_CACHE["mtimes"] = current_mtimes
-    _LEAKAGE_CACHE["result"] = report
+    _LEAKAGE_CACHE[cache_key] = {"mtimes": current_mtimes, "result": report}
     return report
 
 
@@ -214,7 +237,7 @@ async def get_acceptance_overview(db: AsyncSession = Depends(get_db)):
         leakage_status = "missing"
         leakage_detail = "考卷数据集文件未就绪"
     else:
-        leakage_rep = get_cached_leakage_check(DATASET_DIR)
+        leakage_rep = await asyncio.to_thread(get_cached_leakage_check, DATASET_DIR)
         if leakage_rep and leakage_rep.get("passed"):
             leakage_status = "pass"
             leakage_detail = (
@@ -239,8 +262,7 @@ async def get_acceptance_overview(db: AsyncSession = Depends(get_db)):
     eval_report = None
     if REPORT_PATH.exists():
         try:
-            with REPORT_PATH.open("r", encoding="utf-8") as f:
-                eval_report = json.load(f)
+            eval_report = await asyncio.to_thread(_read_json_sync, REPORT_PATH)
         except Exception:
             eval_report = None
 
@@ -305,8 +327,7 @@ async def get_acceptance_overview(db: AsyncSession = Depends(get_db)):
         threshold_detail = "阈值配置文件尚未生成"
     else:
         try:
-            with THRESHOLD_PATH.open("r", encoding="utf-8") as f:
-                thresh_data = json.load(f)
+            thresh_data = await asyncio.to_thread(_read_json_sync, THRESHOLD_PATH)
             t_val = thresh_data.get("threshold")
             c_scores = thresh_data.get("candidate_scores", {})
             if t_val is not None and len(c_scores) >= 9:
@@ -470,8 +491,7 @@ async def get_acceptance_eval():
         }
 
     try:
-        with REPORT_PATH.open("r", encoding="utf-8") as f:
-            report_data = json.load(f)
+        report_data = await asyncio.to_thread(_read_json_sync, REPORT_PATH)
     except Exception as e:
         logger.error(f"读取评测报告失败: {e}")
         return {
@@ -485,10 +505,9 @@ async def get_acceptance_eval():
 
     if not candidate_scores and THRESHOLD_PATH.exists():
         try:
-            with THRESHOLD_PATH.open("r", encoding="utf-8") as f:
-                t_data = json.load(f)
-                threshold_val = t_data.get("threshold", threshold_val)
-                candidate_scores = t_data.get("candidate_scores", {})
+            t_data = await asyncio.to_thread(_read_json_sync, THRESHOLD_PATH)
+            threshold_val = t_data.get("threshold", threshold_val)
+            candidate_scores = t_data.get("candidate_scores", {})
         except Exception:
             pass
 
@@ -521,7 +540,7 @@ async def get_acceptance_data():
             "message": "语料数据集尚未就绪，请点击重跑按钮执行 make data-prep-ch10",
         }
 
-    leakage_rep = get_cached_leakage_check(DATASET_DIR)
+    leakage_rep = await asyncio.to_thread(get_cached_leakage_check, DATASET_DIR)
     if not leakage_rep:
         leakage_rep = {"passed": False, "train_count": 0, "val_count": 0, "test_count": 0}
 
@@ -537,33 +556,21 @@ async def get_acceptance_data():
     # Training artifacts
     model_safetensors = BEST_MODEL_DIR / "model.safetensors"
     model_config = BEST_MODEL_DIR / "config.json"
+    training_files = await asyncio.to_thread(_list_dir_files_sync, BEST_MODEL_DIR)
     training_artifacts = {
         "model_dir": str(BEST_MODEL_DIR),
         "present": model_safetensors.exists() and model_config.exists(),
-        "files": [
-            {
-                "name": p.name,
-                "size_bytes": p.stat().st_size,
-                "exists": True,
-            }
-            for p in BEST_MODEL_DIR.glob("*") if p.is_file()
-        ] if BEST_MODEL_DIR.exists() else [],
+        "files": training_files,
     }
 
     # ONNX artifacts
     onnx_model = ONNX_DIR / "model.onnx"
     onnx_thresh = ONNX_DIR / "threshold.json"
+    onnx_files = await asyncio.to_thread(_list_dir_files_sync, ONNX_DIR)
     onnx_artifacts = {
         "onnx_dir": str(ONNX_DIR),
         "present": onnx_model.exists() and onnx_thresh.exists(),
-        "files": [
-            {
-                "name": p.name,
-                "size_bytes": p.stat().st_size,
-                "exists": True,
-            }
-            for p in ONNX_DIR.glob("*") if p.is_file()
-        ] if ONNX_DIR.exists() else [],
+        "files": onnx_files,
     }
 
     return {
@@ -589,8 +596,7 @@ async def get_acceptance_errors():
         }
 
     try:
-        with REPORT_PATH.open("r", encoding="utf-8") as f:
-            report_data = json.load(f)
+        report_data = await asyncio.to_thread(_read_json_sync, REPORT_PATH)
     except Exception as e:
         logger.error(f"读取错例报告失败: {e}")
         return {
@@ -648,6 +654,7 @@ async def get_topic_distribution(db: AsyncSession = Depends(get_db)):
         classified_count = 0
 
     cat_counts: Dict[str, int] = {cat: 0 for cat in TAXONOMY_17}
+    unknown_label_counts: Dict[str, int] = {}
     total_tags = 0
 
     for labels in labels_list:
@@ -657,8 +664,8 @@ async def get_topic_distribution(db: AsyncSession = Depends(get_db)):
                     cat_counts[lbl] += 1
                     total_tags += 1
                 else:
-                    cat_counts[lbl] = cat_counts.get(lbl, 0) + 1
-                    total_tags += 1
+                    lbl_key = str(lbl)
+                    unknown_label_counts[lbl_key] = unknown_label_counts.get(lbl_key, 0) + 1
 
     # 2. 查询未归类待处理堆积量 (low_confidence_questions 中没有对应 TopicClassification 的记录)
     try:

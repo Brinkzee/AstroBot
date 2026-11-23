@@ -924,22 +924,26 @@
       const tbody = document.getElementById("materials-tbody");
       try {
         const res = await fetch("/api/kb/materials");
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
         const materials = await res.json();
-        if (materials.length === 0) {
+        if (!Array.isArray(materials) || materials.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">暂无材料文件</td></tr>';
           return;
         }
         tbody.innerHTML = materials.map(m => `
           <tr>
-            <td style="font-weight: 600; color: #1e293b;">📄 ${m.filename}</td>
-            <td style="font-family: monospace; font-size: 12px; color: var(--text-muted);">${m.file_path}</td>
-            <td>${(m.file_size_bytes / 1024).toFixed(1)} KB</td>
-            <td>${m.modified_time}</td>
-            <td><span class="stat-badge badge-info">约 ${m.estimated_chunks} 块</span></td>
+            <td style="font-weight: 600; color: #1e293b;">📄 ${escapeHtml(m.filename)}</td>
+            <td style="font-family: monospace; font-size: 12px; color: var(--text-muted);">${escapeHtml(m.file_path)}</td>
+            <td>${(Number(m.file_size_bytes || 0) / 1024).toFixed(1)} KB</td>
+            <td>${escapeHtml(m.modified_time)}</td>
+            <td><span class="stat-badge badge-info">约 ${Number(m.estimated_chunks || 0)} 块</span></td>
           </tr>
         `).join("");
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5" style="color: var(--danger); text-align:center;">加载失败: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="color: var(--danger); text-align:center;">加载失败: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
@@ -961,19 +965,24 @@
 
       try {
         const res = await fetch(`/api/kb/chunks?${params.toString()}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
         const data = await res.json();
-        totalChunkCount = data.total;
+        const items = Array.isArray(data.items) ? data.items : [];
+        totalChunkCount = data.total || 0;
 
-        document.getElementById("chunks-page-info").innerText = `第 ${data.page} 页 / 共 ${Math.ceil(data.total / chunkPageSize) || 1} 页 (总计 ${data.total} 条)`;
+        document.getElementById("chunks-page-info").innerText = `第 ${data.page || currentChunkPage} 页 / 共 ${Math.ceil(totalChunkCount / chunkPageSize) || 1} 页 (总计 ${totalChunkCount} 条)`;
         document.getElementById("btn-prev-page").disabled = currentChunkPage <= 1;
-        document.getElementById("btn-next-page").disabled = currentChunkPage >= Math.ceil(data.total / chunkPageSize);
+        document.getElementById("btn-next-page").disabled = currentChunkPage >= Math.ceil(totalChunkCount / chunkPageSize);
 
-        if (data.items.length === 0) {
+        if (items.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-muted); padding: 30px;">未找到匹配的知识切块</td></tr>';
           return;
         }
 
-        tbody.innerHTML = data.items.map(item => {
+        tbody.innerHTML = items.map(item => {
           let statusBadge = '';
           if (item.vectorize_status === 'done') statusBadge = '<span class="stat-badge badge-success">已向量化</span>';
           else if (item.vectorize_status === 'pending') statusBadge = '<span class="stat-badge badge-warning">Pending</span>';
@@ -981,20 +990,20 @@
 
           return `
             <tr>
-              <td><strong>#${item.id}</strong></td>
-              <td><span class="stat-badge badge-info">${item.category}</span></td>
+              <td><strong>#${Number(item.id)}</strong></td>
+              <td><span class="stat-badge badge-info">${escapeHtml(item.category)}</span></td>
               <td style="max-width: 250px; font-weight: 500;">${escapeHtml(item.questions)}</td>
               <td style="max-width: 320px; color: var(--text-muted); font-size: 13px;" title="${escapeHtml(item.answer)}">
-                ${escapeHtml(item.answer.slice(0, 75))}${item.answer.length > 75 ? '...' : ''}
+                ${escapeHtml((item.answer || '').slice(0, 75))}${(item.answer || '').length > 75 ? '...' : ''}
               </td>
               <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(item.section_path || '-')}</td>
               <td>${statusBadge}</td>
-              <td style="font-size: 12px; color: var(--text-muted);">${item.created_at}</td>
+              <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(item.created_at)}</td>
             </tr>
           `;
         }).join("");
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">加载失败: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">加载失败: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
@@ -1029,8 +1038,8 @@
           body: JSON.stringify(payload),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "录入失败");
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `录入失败 (HTTP ${res.status})`);
         }
         const created = await res.json();
         showToast(`✅ 知识块 #${created.id} 录入成功！(状态: ${created.vectorize_status})`);
@@ -1097,8 +1106,8 @@
           body: JSON.stringify({ filename, category, content }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "切块预览失败");
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `切块预览失败 (HTTP ${res.status})`);
         }
         const data = await res.json();
 
@@ -1116,14 +1125,14 @@
 
         tbody.innerHTML = data.chunks.map(chunk => `
           <tr>
-            <td><strong>#${chunk.id}</strong></td>
+            <td><strong>#${Number(chunk.id)}</strong></td>
             <td><span class="stat-badge badge-info">${escapeHtml(chunk.category)}</span></td>
             <td style="font-size: 12px; color: var(--text-muted);">${escapeHtml(chunk.section_path || '-')}</td>
             <td style="font-weight: 500; font-size: 13px;">${escapeHtml(chunk.questions)}</td>
             <td style="font-size: 12px; color: var(--text-muted);" title="${escapeHtml(chunk.answer)}">
-              ${escapeHtml(chunk.answer.slice(0, 80))}${chunk.answer.length > 80 ? '...' : ''}
+              ${escapeHtml((chunk.answer || '').slice(0, 80))}${(chunk.answer || '').length > 80 ? '...' : ''}
             </td>
-            <td><span class="stat-badge ${chunk.content_type === 'faq' ? 'badge-success' : 'badge-warning'}">${chunk.content_type}</span></td>
+            <td><span class="stat-badge ${chunk.content_type === 'faq' ? 'badge-success' : 'badge-warning'}">${escapeHtml(chunk.content_type)}</span></td>
             <td>${chunk.is_key_clause ? '<span class="stat-badge badge-danger">核心</span>' : '<span style="color:var(--text-muted);">-</span>'}</td>
           </tr>
         `).join("");
@@ -1172,8 +1181,8 @@
           }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "文档录入失败");
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `文档录入失败 (HTTP ${res.status})`);
         }
         const data = await res.json();
 
@@ -1254,8 +1263,8 @@
           }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "检索异常");
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `检索异常 (HTTP ${res.status})`);
         }
         const data = await res.json();
 
@@ -1294,7 +1303,7 @@
         }).join("");
 
       } catch (err) {
-        resultsDiv.innerHTML = `<div style="color: var(--danger); padding: 20px;">检索失败: ${err.message}</div>`;
+        resultsDiv.innerHTML = `<div style="color: var(--danger); padding: 20px;">检索失败: ${escapeHtml(err.message)}</div>`;
       } finally {
         btn.disabled = false;
         btn.innerText = "🚀 执行语义检索";

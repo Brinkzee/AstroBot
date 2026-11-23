@@ -8,6 +8,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
+from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ QA_EXTRACTION_SYSTEM_PROMPT = """你是由“星光优选”电商平台研发�
 """
 
 qa_extraction_prompt = ChatPromptTemplate.from_messages([
-    ("system", QA_EXTRACTION_SYSTEM_PROMPT),
+    SystemMessage(content=QA_EXTRACTION_SYSTEM_PROMPT),
     ("human", "请从以下客服对话中抽取提炼通用问答对：\n\n{dialogue_text}"),
 ])
 
@@ -106,21 +107,22 @@ def parse_qa_extraction_output(text: str) -> List[ExtractedQAPair]:
 
     # 将解析出的结构归一化为 List[ExtractedQAPair]
     results: List[ExtractedQAPair] = []
+    raw_items: Any = None
     if isinstance(data, list):
-        for item in data:
+        raw_items = data
+    elif isinstance(data, dict):
+        raw_items = data.get("items") or data.get("qa_list") or data.get("data")
+
+    if isinstance(raw_items, list):
+        for item in raw_items:
             if isinstance(item, dict) and "question" in item and "answer" in item:
-                q = str(item["question"]).strip()
-                a = str(item["answer"]).strip()
+                raw_q = item.get("question")
+                raw_a = item.get("answer")
+                if raw_q is None or raw_a is None:
+                    continue
+                q = str(raw_q).strip()
+                a = str(raw_a).strip()
                 if q and a:
                     results.append(ExtractedQAPair(question=q, answer=a))
-    elif isinstance(data, dict):
-        items = data.get("items") or data.get("qa_list") or data.get("data")
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict) and "question" in item and "answer" in item:
-                    q = str(item["question"]).strip()
-                    a = str(item["answer"]).strip()
-                    if q and a:
-                        results.append(ExtractedQAPair(question=q, answer=a))
 
     return results

@@ -7,7 +7,8 @@
 4. 白名单作业运行器：仅允许启动 eval-rag，绝对防命令注入。
 """
 
-from datetime import datetime
+import asyncio
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
@@ -17,15 +18,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import verify_admin_token
 from app.db.session import get_db
 from app.models.faith_case import FaithCase
-from app.services.job_runner import job_runner
 from app.services.rag.evaluator import parse_evaluation_report_md
 
 logger = logging.getLogger(__name__)
 
-# 单一真实源评估报告路径 (供测试打 patch)
-REPORT_PATH = Path("reports/ch04_evaluation_report.md")
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+
+# 单一真实源评估报告路径 (锚定项目根目录，并支持测试 patch)
+REPORT_PATH = ROOT_DIR / "reports" / "ch04_evaluation_report.md"
 
 router = APIRouter()
 
@@ -36,11 +39,7 @@ router = APIRouter()
 
 class FaithCaseResolveRequest(BaseModel):
     status: str = Field(..., description="处置状态：已解决 / 无需解决 / 未解决")
-    resolution: str = Field(..., description="处置说明，详细说明修改措施或判定理由")
-
-
-class JobStartRequest(BaseModel):
-    job_name: str = Field(..., description="白名单作业名称，如 eval-rag")
+    resolution: str = Field("", max_length=300, description="处置说明，详细说明修改措施或判定理由")
 
 
 # ==============================================================================
@@ -61,7 +60,7 @@ async def get_rag_eval_report():
         }
 
     try:
-        content = REPORT_PATH.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(REPORT_PATH.read_text, encoding="utf-8")
         parsed = parse_evaluation_report_md(content)
         return {
             "present": True,
@@ -161,7 +160,7 @@ async def get_faith_cases(
     eval_set_size = 300
     try:
         if REPORT_PATH.exists():
-            report_txt = REPORT_PATH.read_text(encoding="utf-8")
+            report_txt = await asyncio.to_thread(REPORT_PATH.read_text, encoding="utf-8")
             parsed_meta = parse_evaluation_report_md(report_txt).get("meta", {})
             eval_set_size = parsed_meta.get("eval_set_size", 300)
     except Exception:
@@ -239,19 +238,19 @@ async def get_faith_cases(
     }
 
 
-@router.post("/rag-eval/faith-cases/{case_id}/resolve")
+@router.post("/rag-eval/faith-cases/{case_id}/resolve", dependencies=[Depends(verify_admin_token)])
 async def resolve_faith_case(
     case_id: int,
     request: FaithCaseResolveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """处置编造个案，更新其状态为已解决或无需解决，强制填写处置说明。"""
-    clean_resolution = (request.resolution or "").strip()
-    if not clean_resolution:
-        raise HTTPException(status_code=400, detail="处置说明不能为空，请详细说明修改或判定理由")
-
+    """处置编造个案，更新其状态为已解决或无需解决（强制填写处置说明），退回未解决时清空处置说明。"""
     if request.status not in ["已解决", "无需解决", "未解决"]:
         raise HTTPException(status_code=400, detail="非法处置状态")
+
+    clean_resolution = (request.resolution or "").strip()
+    if request.status in ["已解决", "无需解决"] and not clean_resolution:
+        raise HTTPException(status_code=400, detail="处置说明不能为空，请详细说明修改或判定理由")
 
     try:
         stmt = select(FaithCase).where(FaithCase.id == case_id)
@@ -261,9 +260,11 @@ async def resolve_faith_case(
             raise HTTPException(status_code=404, detail="未找到该编造个案记录")
 
         case.status = request.status
-        case.resolution = clean_resolution
-        if request.status in ["已解决", "无需解决"]:
-            case.resolved_at = datetime.now()
+        if request.status == "未解决":
+            case.resolution = None
+        else:
+            case.resolution = clean_resolution
+            case.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         await db.commit()
         await db.refresh(case)
@@ -278,56 +279,13 @@ async def resolve_faith_case(
     except HTTPException:
         raise
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.exception(f"Failed to resolve faith case: {e}")
         raise HTTPException(
             status_code=503,
             detail=f"数据库暂不可用，无法保存处置记录: {str(e)}",
         )
-
-
-# ==============================================================================
-# 3. 白名单作业运行器接口 (/api/jobs/...)
-# ==============================================================================
-
-@router.post("/jobs")
-@router.post("/jobs/start")
-async def start_job(request: JobStartRequest):
-    """触发安全白名单作业"""
-    if request.job_name not in job_runner.get_whitelist():
-        raise HTTPException(
-            status_code=400,
-            detail=f"作业不在安全白名单内: '{request.job_name}'。仅允许触发安全白名单作业: {job_runner.get_whitelist()}",
-        )
-
-    try:
-        job_info = job_runner.start_job(request.job_name)
-        return job_info
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"启动作业异常: {str(e)}")
-
-
-@router.get("/jobs/{job_id}")
-async def get_job_status(job_id: str):
-    """查询作业执行状态与元数据"""
-    job = job_runner.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"作业不存在: {job_id}")
-    return job
-
-
-@router.get("/jobs/{job_id}/logs")
-async def get_job_logs(
-    job_id: str,
-    tail: Optional[int] = Query(None, ge=1, le=2000, description="读取最近 N 行日志"),
-):
-    """获取作业运行输出日志及当前执行状态"""
-    job = job_runner.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"作业不存在: {job_id}")
-    logs = job_runner.get_logs(job_id, tail_lines=tail)
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "logs": logs or [],
-    }
 

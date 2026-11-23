@@ -9,17 +9,19 @@
 6. 进程生命周期治理：start_new_session=True（或 Windows CREATE_NEW_PROCESS_GROUP），停止作业时递归终止整棵进程树（避免孤儿进程）。
 """
 
+import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import uuid
 
 import psutil
@@ -36,10 +38,12 @@ class JobAlreadyRunningError(Exception):
 
 
 def _resolve_cuda_python() -> str:
-    """Resolve Python executable with CUDA GPU support if available."""
-    pytorch_env_python = Path("D:/Anaconda3/envs/pytorch/python.exe")
-    if pytorch_env_python.exists():
-        return str(pytorch_env_python)
+    """Resolve Python executable with CUDA GPU support via env var or active interpreter."""
+    env_py = (os.environ.get("CUDA_PYTHON") or "").strip()
+    if env_py:
+        env_path = Path(env_py)
+        if env_path.exists():
+            return str(env_path)
     return sys.executable
 
 
@@ -127,16 +131,31 @@ class JobRegistry:
         return recipe.get("heavy", False)
 
     @classmethod
+    def get_makefile_targets(cls) -> Set[str]:
+        """解析项目根目录 Makefile 中实际定义的目标名称集合。"""
+        makefile_path = ROOT_DIR / "Makefile"
+        if not makefile_path.exists():
+            return set()
+        try:
+            content = makefile_path.read_text(encoding="utf-8")
+        except OSError:
+            return set()
+        return set(re.findall(r"^([A-Za-z0-9_-]+):", content, re.MULTILINE))
+
+    @classmethod
     def get_command(cls, job_name: str) -> List[str]:
-        """获取作业执行命令。优先使用 make <target>，若系统无 make 则自适应官方 Python 命令。"""
+        """获取作业执行命令。仅当系统存在 make 且 Makefile 确实定义该目标时走 make，否则直接执行官方 Python 配方。"""
         if job_name not in cls.RECIPES:
             raise ValueError(f"Job '{job_name}' is not in whitelist (作业不在安全白名单内)。")
 
         make_executable = shutil.which("make")
-        if make_executable:
+        if make_executable and job_name in cls.get_makefile_targets():
             return ["make", job_name]
 
-        return list(cls.RECIPES[job_name]["cmd"])
+        cmd = list(cls.RECIPES[job_name]["cmd"])
+        if job_name == "train-ch10":
+            cmd[0] = _resolve_cuda_python()
+        return cmd
 
 
 @dataclass
@@ -154,6 +173,8 @@ class JobRecord:
     pid: Optional[int] = None
     log_file: Optional[str] = None
     proc: Optional[subprocess.Popen] = None
+    log_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    log_stream: Optional[Any] = field(default=None, repr=False)
 
 
 class JobRunner:
@@ -161,10 +182,19 @@ class JobRunner:
 
     WHITELIST_JOBS = JobRegistry.RECIPES
 
-    def __init__(self, max_logs_per_job: int = 5000):
+    def __init__(self, max_logs_per_job: int = 5000, max_retained_jobs: int = 100):
         self._jobs: Dict[str, JobRecord] = {}
         self._lock = threading.Lock()
         self._max_logs_per_job = max_logs_per_job
+        self._max_retained_jobs = max(1, max_retained_jobs)
+
+    def _prune_finished_jobs_locked(self) -> None:
+        """在持锁状态下清理超出保留上限的历史非运行作业，防止内存无限增长。"""
+        finished_ids = [jid for jid, rec in self._jobs.items() if rec.status != "running"]
+        excess = len(finished_ids) - self._max_retained_jobs
+        if excess > 0:
+            for jid in finished_ids[:excess]:
+                self._jobs.pop(jid, None)
 
     def get_whitelist(self) -> List[str]:
         return list(JobRegistry.WHITELIST)
@@ -187,6 +217,8 @@ class JobRunner:
                     raise JobAlreadyRunningError(
                         f"Job '{job_name}' is already running (同名作业正在运行中，job_id: {j.job_id})"
                     )
+
+            self._prune_finished_jobs_locked()
 
             job_id = f"job_{uuid.uuid4().hex[:10]}"
             heavy = JobRegistry.is_heavy(job_name)
@@ -235,74 +267,89 @@ class JobRunner:
 
         try:
             with open(log_path, "a", encoding="utf-8") as f_log:
-                f_log.write(f"\n=== [{job.started_at}] Job '{job.job_name}' (ID: {job_id}) Started ===\n")
-                f_log.write(f"{start_msg}\n")
-                f_log.flush()
+                with job.log_lock:
+                    job.log_stream = f_log
+                    f_log.write(f"\n=== [{job.started_at}] Job '{job.job_name}' (ID: {job_id}) Started ===\n")
+                    f_log.write(f"{start_msg}\n")
+                    f_log.flush()
 
-                child_env = os.environ.copy()
-                child_env["PYTHONIOENCODING"] = "utf-8"
-                child_env["PYTHONUTF8"] = "1"
+                try:
+                    child_env = os.environ.copy()
+                    child_env["PYTHONIOENCODING"] = "utf-8"
+                    child_env["PYTHONUTF8"] = "1"
 
-                kwargs: Dict[str, Any] = {
-                    "cwd": str(ROOT_DIR),
-                    "env": child_env,
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.STDOUT,
-                    "text": True,
-                    "bufsize": 1,
-                    "universal_newlines": True,
-                    "encoding": "utf-8",
-                    "errors": "replace",
-                }
+                    kwargs: Dict[str, Any] = {
+                        "cwd": str(ROOT_DIR),
+                        "env": child_env,
+                        "stdout": subprocess.PIPE,
+                        "stderr": subprocess.STDOUT,
+                        "text": True,
+                        "bufsize": 1,
+                        "universal_newlines": True,
+                        "encoding": "utf-8",
+                        "errors": "replace",
+                    }
 
-                # 严格独立进程组：Windows 使用 CREATE_NEW_PROCESS_GROUP，Unix 使用 start_new_session=True
-                if sys.platform == "win32":
-                    kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-                else:
-                    kwargs["start_new_session"] = True
+                    # 严格独立进程组：Windows 使用 CREATE_NEW_PROCESS_GROUP，Unix 使用 start_new_session=True
+                    if sys.platform == "win32":
+                        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                    else:
+                        kwargs["start_new_session"] = True
 
-                # 消除与 stop_job 的竞态：启动进程前双重校验
-                with self._lock:
-                    if job.status == "stopped":
-                        return
+                    # 消除与 stop_job 的竞态：启动进程前双重校验
+                    with self._lock:
+                        if job.status == "stopped":
+                            return
 
-                proc = subprocess.Popen(cmd_args, **kwargs)
+                    proc = subprocess.Popen(cmd_args, **kwargs)
 
-                # 启动进程后双重校验，若在 Popen 期间已调用 stop_job 则立即清理并退出
-                with self._lock:
-                    if job.status == "stopped":
+                    # 启动进程后双重校验，若在 Popen 期间已调用 stop_job 则先释放全局锁再清理进程树
+                    stopped_during_popen = False
+                    with self._lock:
+                        if job.status == "stopped":
+                            stopped_during_popen = True
+                        else:
+                            job.proc = proc
+                            job.pid = proc.pid
+
+                    if stopped_during_popen:
                         try:
                             self._terminate_process_tree(proc.pid)
                         except Exception:
                             pass
                         return
-                    job.proc = proc
-                    job.pid = proc.pid
 
-                if proc.stdout:
-                    for raw_line in iter(proc.stdout.readline, ""):
-                        line = raw_line.rstrip("\r\n")
-                        with self._lock:
-                            job.logs.append(line)
-                        f_log.write(line + "\n")
-                        f_log.flush()
+                    if proc.stdout:
+                        for raw_line in iter(proc.stdout.readline, ""):
+                            line = raw_line.rstrip("\r\n")
+                            with self._lock:
+                                job.logs.append(line)
+                            with job.log_lock:
+                                f_log.write(line + "\n")
+                                f_log.flush()
 
-                proc.wait()
-                return_code = proc.returncode
+                    proc.wait()
+                    return_code = proc.returncode
 
-                with self._lock:
-                    if job.status != "stopped":
-                        job.return_code = return_code
-                        job.finished_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        if return_code == 0:
-                            job.status = "completed"
-                            end_msg = f"[{job.finished_at}] 作业执行成功完成 (exit code 0)"
-                        else:
-                            job.status = "failed"
-                            end_msg = f"[{job.finished_at}] 作业执行失败 (exit code {return_code})"
-                        job.logs.append(end_msg)
-                        f_log.write(f"{end_msg}\n")
-                        f_log.flush()
+                    end_msg: Optional[str] = None
+                    with self._lock:
+                        if job.status != "stopped":
+                            job.return_code = return_code
+                            job.finished_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            if return_code == 0:
+                                job.status = "completed"
+                                end_msg = f"[{job.finished_at}] 作业执行成功完成 (exit code 0)"
+                            else:
+                                job.status = "failed"
+                                end_msg = f"[{job.finished_at}] 作业执行失败 (exit code {return_code})"
+                            job.logs.append(end_msg)
+                    if end_msg is not None:
+                        with job.log_lock:
+                            f_log.write(f"{end_msg}\n")
+                            f_log.flush()
+                finally:
+                    with job.log_lock:
+                        job.log_stream = None
 
         except Exception as e:
             logger.exception(f"Job execution failed for {job_id}: {e}")
@@ -341,9 +388,14 @@ class JobRunner:
 
         if job.log_file:
             try:
-                with open(job.log_file, "a", encoding="utf-8") as f_log:
-                    f_log.write(f"{stop_msg}\n")
-                    f_log.flush()
+                with job.log_lock:
+                    if job.log_stream is not None and not job.log_stream.closed:
+                        job.log_stream.write(f"{stop_msg}\n")
+                        job.log_stream.flush()
+                    else:
+                        with open(job.log_file, "a", encoding="utf-8") as f_log:
+                            f_log.write(f"{stop_msg}\n")
+                            f_log.flush()
             except Exception:
                 pass
 
@@ -406,7 +458,7 @@ job_runner = JobRunner()
 
 
 async def start_job(job_name: str) -> Dict[str, Any]:
-    return job_runner.start_job(job_name)
+    return await asyncio.to_thread(job_runner.start_job, job_name)
 
 
 async def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
@@ -434,4 +486,4 @@ async def get_job_logs(job_id: str, tail: Optional[int] = None) -> Optional[Dict
 
 
 async def stop_job(job_id: str) -> Dict[str, Any]:
-    return job_runner.stop_job(job_id)
+    return await asyncio.to_thread(job_runner.stop_job, job_id)

@@ -96,13 +96,16 @@ async def run_mining_pipeline(
                     logger.info(f"正在处理批次 {active_batch_no}，包含 {len(convs)} 个会话...")
 
                     for conv in convs:
-                        staged_items = await miner.extract_and_stage(
-                            session=sess,
-                            dialogue_text=conv["dialogue_text"],
-                            source_ref=conv["source_ref"],
-                            batch_no=active_batch_no,
-                        )
-                        stats["staged_count"] += len(staged_items)
+                        try:
+                            staged_items = await miner.extract_and_stage(
+                                session=sess,
+                                dialogue_text=conv["dialogue_text"],
+                                source_ref=conv["source_ref"],
+                                batch_no=active_batch_no,
+                            )
+                            stats["staged_count"] += len(staged_items)
+                        except Exception as e:
+                            logger.warning(f"会话 {conv.get('source_ref')} 抽取失败，已跳过: {e}")
 
                 logger.info(f"抽取完成：暂存写入 {stats['staged_count']} 条问答记录")
 

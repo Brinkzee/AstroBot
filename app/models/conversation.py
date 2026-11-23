@@ -24,6 +24,7 @@ class Conversation(Base):
         String(64),
         nullable=False,
         default="default_user",
+        index=True,
         comment="用户标识",
     )
     status: Mapped[str] = mapped_column(

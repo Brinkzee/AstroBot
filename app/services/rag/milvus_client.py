@@ -15,6 +15,82 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Milvus VARCHAR 字段 UTF-8 字节上限（与 init_collection schema 严格对齐）
+MILVUS_VARCHAR_BYTE_LIMITS: Dict[str, int] = {
+    "chunk_text": 65535,
+    "category": 128,
+    "section_path": 512,
+    "questions": 2048,
+    "answer": 8192,
+    "content_type": 32,
+}
+
+
+def _escape_milvus_str(val: str) -> str:
+    """转义 Milvus 标量过滤表达式中的字符串字面量，防止引号/反斜杠注入。"""
+    return str(val).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def truncate_utf8_bytes(text: Optional[str], max_bytes: int) -> Optional[str]:
+    """按 UTF-8 字节长度安全截断字符串，避免多字节中文字符触发 Milvus VARCHAR 长度超限。"""
+    if text is None:
+        return None
+    raw = str(text)
+    encoded = raw.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return raw
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+# 安全的默认 gRPC 客户端选项，解决长连接闲置过频 Ping 触发的 too_many_pings (GOAWAY) 报错
+DEFAULT_GRPC_OPTIONS: Dict[str, Any] = {
+    # 禁用无请求活跃时的侵略性心跳 Ping，避免触发服务端防 DoS/Ping-flooding 惩罚 (too_many_pings)
+    "grpc.keepalive_permit_without_calls": False,
+    # 将长连接保活探测周期放宽至 60 秒（pymilvus 默认 10 秒过频）
+    "grpc.keepalive_time_ms": 60000,
+    "grpc.keepalive_timeout_ms": 10000,
+    # 允许在无数据时发送的 ping 数量限制放宽
+    "grpc.http2.max_pings_without_data": 0,
+}
+
+
+def _patch_milvus_lite_server_keepalive() -> None:
+    """为 milvus-lite 进程内 gRPC 服务端注入宽容的 keepalive 配置，彻底消除 too_many_pings。"""
+    try:
+        from concurrent import futures
+        import grpc
+        import milvus_lite.adapter.grpc.server as ml_server
+
+        if getattr(ml_server, "_astro_keepalive_patched", False):
+            return
+
+        def patched_build_server(db, max_workers: int):
+            server = grpc.server(
+                futures.ThreadPoolExecutor(max_workers=max_workers),
+                options=[
+                    ("grpc.max_receive_message_length", ml_server._MAX_MESSAGE_SIZE),
+                    ("grpc.max_send_message_length", ml_server._MAX_MESSAGE_SIZE),
+                    # 允许客户端发送心跳 ping，且不触发 GOAWAY ENHANCE_YOUR_CALM
+                    ("grpc.http2.min_recv_ping_interval_without_data_ms", 1000),
+                    ("grpc.http2.min_ping_interval_without_data_ms", 1000),
+                    ("grpc.http2.max_ping_strikes", 0),  # 0 次 strike -> 永不因 too_many_pings 发送 GOAWAY
+                    ("grpc.http2.max_pings_without_data", 0),  # 允许无数据下无限制 ping
+                    ("grpc.keepalive_permit_without_calls", 1),
+                ],
+            )
+            servicer = ml_server.MilvusServicer(db)
+            ml_server.milvus_pb2_grpc.add_MilvusServiceServicer_to_server(servicer, server)
+            return server
+
+        ml_server._build_server = patched_build_server
+        ml_server._astro_keepalive_patched = True
+        logger.debug("已成功为 milvus-lite gRPC 服务端挂载 keepalive 宽容补丁")
+    except Exception as e:
+        logger.debug(f"挂载 milvus-lite 服务端补丁跳过: {e}")
+
+
+# 模块导入时预先挂载 milvus-lite 补丁
+_patch_milvus_lite_server_keepalive()
+
 
 class MilvusKnowledgeStore:
     """基于 Milvus-Lite / Milvus 的 RAG 知识库向量与原生 BM25 混合存储管理器。
@@ -23,7 +99,12 @@ class MilvusKnowledgeStore:
     COSINE 相似度、BM25 稀疏检索、RRFRanker(k=60) 倒数排名融合检索、标量过滤及安全生命周期管理。
     """
 
-    def __init__(self, uri: Optional[str] = None):
+    def __init__(
+        self,
+        uri: Optional[str] = None,
+        grpc_options: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ):
         if uri is None:
             uri = (
                 getattr(settings, "MILVUS_URI", None)
@@ -39,7 +120,17 @@ class MilvusKnowledgeStore:
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
 
-        self.client: Optional[MilvusClient] = MilvusClient(uri=self.uri)
+        _patch_milvus_lite_server_keepalive()
+
+        client_grpc_options = dict(DEFAULT_GRPC_OPTIONS)
+        if grpc_options:
+            client_grpc_options.update(grpc_options)
+
+        self.client: Optional[MilvusClient] = MilvusClient(
+            uri=self.uri,
+            grpc_options=client_grpc_options,
+            **kwargs,
+        )
         logger.info(f"MilvusKnowledgeStore 已初始化，连接至: {self.uri}")
 
     def init_collection(self, collection_name: str = "knowledge", drop_existing: bool = False):
@@ -56,6 +147,9 @@ class MilvusKnowledgeStore:
         - vector: FLOAT_VECTOR(dim=1024), metric_type=COSINE
         - category, section_path, questions, answer, content_type, is_key_clause 等标量元数据
         """
+        if self.client is None:
+            raise RuntimeError("MilvusClient 未初始化或已关闭")
+
         if drop_existing and self.client.has_collection(collection_name):
             logger.info(f"drop_existing=True，正在删除已有集合: {collection_name}")
             self.client.drop_collection(collection_name)
@@ -118,6 +212,9 @@ class MilvusKnowledgeStore:
         if not records:
             return 0
 
+        if self.client is None:
+            raise RuntimeError("MilvusClient 未初始化或已关闭")
+
         if not self.client.has_collection(collection_name):
             self.init_collection(collection_name)
 
@@ -129,6 +226,9 @@ class MilvusKnowledgeStore:
                 a = rec.get("answer") or ""
                 cat = rec.get("category") or ""
                 rec["chunk_text"] = f"【类目】{cat}\n【标准问法】{q}\n【解答】{a}".strip()
+            for field_name, max_bytes in MILVUS_VARCHAR_BYTE_LIMITS.items():
+                if field_name in rec and rec[field_name] is not None:
+                    rec[field_name] = truncate_utf8_bytes(rec[field_name], max_bytes)
             clean_records.append(rec)
 
         res = self.client.upsert(collection_name=collection_name, data=clean_records)
@@ -144,12 +244,14 @@ class MilvusKnowledgeStore:
                 continue
 
             entity = raw_hit.get("entity") or {}
-            item = dict(entity)
-            item.pop("vector", None)
-            item.pop("sparse_vector", None)
+            clean_entity = dict(entity)
+            clean_entity.pop("vector", None)
+            clean_entity.pop("sparse_vector", None)
+
+            item = dict(clean_entity)
             item["id"] = raw_hit.get("id")
             item["distance"] = dist
-            item["entity"] = entity
+            item["entity"] = clean_entity
             formatted.append(item)
         return formatted
 
@@ -181,7 +283,8 @@ class MilvusKnowledgeStore:
         if filter:
             expr_parts.append(f"({filter})")
         if category_filter:
-            expr_parts.append(f'(category == "{category_filter}")')
+            safe_cat = _escape_milvus_str(category_filter)
+            expr_parts.append(f'(category == "{safe_cat}")')
         final_filter = " and ".join(expr_parts) if expr_parts else ""
 
         raw_results = self.client.search(
@@ -249,7 +352,8 @@ class MilvusKnowledgeStore:
         if filter:
             expr_parts.append(f"({filter})")
         if category_filter:
-            expr_parts.append(f'(category == "{category_filter}")')
+            safe_cat = _escape_milvus_str(category_filter)
+            expr_parts.append(f'(category == "{safe_cat}")')
         final_filter = " and ".join(expr_parts) if expr_parts else ""
 
         raw_results = self.client.search(
@@ -293,15 +397,35 @@ class MilvusKnowledgeStore:
         if not self.client or not self.client.has_collection(collection_name):
             return []
 
-        if not dense_vector and not bm25_text:
+        has_dense = bool(dense_vector)
+        has_bm25 = bool(bm25_text and str(bm25_text).strip())
+        if not has_dense and not has_bm25:
             return []
+        if not has_dense:
+            return self.search_bm25(
+                query_text=bm25_text,
+                top_k=limit,
+                category_filter=category_filter,
+                collection_name=collection_name,
+            )
+        if not has_bm25:
+            return self.search_dense(
+                query_vector=dense_vector,
+                top_k=limit,
+                category_filter=category_filter,
+                collection_name=collection_name,
+            )
 
         try:
             self.client.load_collection(collection_name)
         except Exception as e:
             logger.debug(f"load_collection({collection_name}) 提示: {e}")
 
-        filter_expr = f'category == "{category_filter}"' if category_filter else None
+        filter_expr = (
+            f'category == "{_escape_milvus_str(category_filter)}"'
+            if category_filter
+            else None
+        )
 
         dense_req = AnnSearchRequest(
             data=[dense_vector],

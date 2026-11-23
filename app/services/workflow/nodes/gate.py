@@ -2,11 +2,34 @@ from typing import List, Dict, Any
 from app.services.workflow.state import AgentWorkflowState
 from app.config import settings
 
+
+def extract_doc_score(doc: Any, default: float = 0.0) -> float:
+    """按 score > rerank_score > distance 优先级提取文档相关性得分。"""
+    if isinstance(doc, dict):
+        for key in ("score", "rerank_score", "distance"):
+            val = doc.get(key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    continue
+        return default
+
+    for attr in ("score", "rerank_score", "distance"):
+        val = getattr(doc, attr, None)
+        if val is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                continue
+    return default
+
+
 def compute_evidence_confidence(docs: List[Dict[str, Any]], k: int = 3) -> float:
     if not docs:
         return 0.0
 
-    scores = sorted([float(d.get("score") or 0.0) for d in docs], reverse=True)
+    scores = sorted([extract_doc_score(d) for d in docs], reverse=True)
     
     top1_score = scores[0]
     valid_count = sum(1 for s in scores if s >= 0.25)

@@ -1,4 +1,6 @@
+import asyncio
 import inspect
+import json
 from typing import Any, Callable, Dict, List
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -35,17 +37,36 @@ async def run_bare_agent_loop(
         # 遍历执行工具调用并喂回 ToolMessage
         for tool_call in tool_calls:
             tool_name = tool_call.get("name", "")
-            tool_args = tool_call.get("args") or {}
+            raw_args = tool_call.get("args")
             call_id = str(tool_call.get("id") or "")
 
             tool_func = tools.get(tool_name)
             if tool_func is None:
                 output = f"Error: Tool {tool_name} not found."
             else:
-                if inspect.iscoroutinefunction(tool_func):
-                    output = await tool_func(**tool_args)
-                else:
-                    output = tool_func(**tool_args)
+                try:
+                    if raw_args is None:
+                        tool_args: Dict[str, Any] = {}
+                    elif isinstance(raw_args, str):
+                        parsed = json.loads(raw_args)
+                        if not isinstance(parsed, dict):
+                            raise TypeError(f"Tool arguments JSON must be an object, got {type(parsed).__name__}")
+                        tool_args = parsed
+                    elif isinstance(raw_args, dict):
+                        tool_args = raw_args
+                    else:
+                        raise TypeError(f"Tool arguments must be dict or JSON string, got {type(raw_args).__name__}")
+
+                    if hasattr(tool_func, "ainvoke"):
+                        output = await tool_func.ainvoke(tool_args)
+                    elif hasattr(tool_func, "invoke"):
+                        output = await asyncio.to_thread(tool_func.invoke, tool_args)
+                    elif inspect.iscoroutinefunction(tool_func):
+                        output = await tool_func(**tool_args)
+                    else:
+                        output = await asyncio.to_thread(tool_func, **tool_args)
+                except Exception as e:
+                    output = f"Error executing tool {tool_name}: {e}"
 
             messages.append(ToolMessage(content=str(output), tool_call_id=call_id))
 

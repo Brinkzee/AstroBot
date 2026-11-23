@@ -3,6 +3,7 @@
 实现 MySQL knowledge_chunks 原文权威源与 Milvus-Lite knowledge 向量库的四阶段双写落库、
 双向链表前后指针绑定，以及断点重跑补偿修复机制 repair_pending_chunks。
 """
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -11,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeChunk
 from app.services.rag.embedding import BGEEmbeddingClient
-from app.services.rag.milvus_client import MilvusKnowledgeStore
+from app.services.rag.milvus_client import (
+    MILVUS_VARCHAR_BYTE_LIMITS,
+    MilvusKnowledgeStore,
+    truncate_utf8_bytes,
+)
 from app.services.rag.splitter import DocChunk
 
 logger = logging.getLogger(__name__)
@@ -43,7 +48,23 @@ class KnowledgeDualWriter:
         milvus_uri: Optional[str] = None,
     ):
         self.store = store or MilvusKnowledgeStore(uri=milvus_uri)
-        self.embedding_client = embedding_client or BGEEmbeddingClient()
+        self.embedding_client = embedding_client or BGEEmbeddingClient(fallback_to_mock=False)
+
+    @staticmethod
+    def _build_milvus_record(chunk: KnowledgeChunk, vec: List[float], text: str) -> dict:
+        return {
+            "id": chunk.id,
+            "vector": vec,
+            "category": truncate_utf8_bytes(chunk.category, MILVUS_VARCHAR_BYTE_LIMITS["category"]),
+            "questions": truncate_utf8_bytes(chunk.questions, MILVUS_VARCHAR_BYTE_LIMITS["questions"]),
+            "answer": truncate_utf8_bytes(chunk.answer, MILVUS_VARCHAR_BYTE_LIMITS["answer"]),
+            "chunk_text": truncate_utf8_bytes(text, MILVUS_VARCHAR_BYTE_LIMITS["chunk_text"]),
+            "content_type": truncate_utf8_bytes(chunk.content_type, MILVUS_VARCHAR_BYTE_LIMITS["content_type"]),
+            "is_key_clause": chunk.is_key_clause,
+            "section_path": truncate_utf8_bytes(chunk.section_path, MILVUS_VARCHAR_BYTE_LIMITS["section_path"]),
+            "prev_chunk_id": chunk.prev_chunk_id,
+            "next_chunk_id": chunk.next_chunk_id,
+        }
 
     async def write_chunks(
         self, session: AsyncSession, chunks: List[DocChunk]
@@ -95,24 +116,17 @@ class KnowledgeDualWriter:
             for c in db_chunks
         ]
         vectors = await self.embedding_client.aembed_documents(texts)
+        if len(vectors) != len(db_chunks):
+            raise ValueError(
+                f"向量生成数量 ({len(vectors)}) 与待写入知识块数量 ({len(db_chunks)}) 不匹配"
+            )
 
-        # 阶段 5: 组装 Milvus records 并执行 Upsert
-        records = []
-        for chunk, vec, text in zip(db_chunks, vectors, texts):
-            records.append({
-                "id": chunk.id,
-                "vector": vec,
-                "category": chunk.category,
-                "questions": chunk.questions,
-                "answer": chunk.answer,
-                "chunk_text": text,
-                "content_type": chunk.content_type,
-                "is_key_clause": chunk.is_key_clause,
-                "section_path": chunk.section_path,
-                "prev_chunk_id": chunk.prev_chunk_id,
-                "next_chunk_id": chunk.next_chunk_id,
-            })
-        self.store.upsert(records)
+        # 阶段 5: 组装 Milvus records 并执行 Upsert（卸载至工作线程避免阻塞事件循环）
+        records = [
+            self._build_milvus_record(chunk, vec, text)
+            for chunk, vec, text in zip(db_chunks, vectors, texts)
+        ]
+        await asyncio.to_thread(self.store.upsert, records)
         logger.info(f"Milvus 向量库成功写入/更新 {len(records)} 条向量记录")
 
         # 阶段 6: 回填 vector_id 并更新状态为 'done'
@@ -153,23 +167,16 @@ class KnowledgeDualWriter:
             for c in pending_chunks
         ]
         vectors = await self.embedding_client.aembed_documents(texts)
+        if len(vectors) != len(pending_chunks):
+            raise ValueError(
+                f"补偿向量数量 ({len(vectors)}) 与 pending 知识块数量 ({len(pending_chunks)}) 不匹配"
+            )
 
-        records = []
-        for chunk, vec, text in zip(pending_chunks, vectors, texts):
-            records.append({
-                "id": chunk.id,
-                "vector": vec,
-                "category": chunk.category,
-                "questions": chunk.questions,
-                "answer": chunk.answer,
-                "chunk_text": text,
-                "content_type": chunk.content_type,
-                "is_key_clause": chunk.is_key_clause,
-                "section_path": chunk.section_path,
-                "prev_chunk_id": chunk.prev_chunk_id,
-                "next_chunk_id": chunk.next_chunk_id,
-            })
-        self.store.upsert(records)
+        records = [
+            self._build_milvus_record(chunk, vec, text)
+            for chunk, vec, text in zip(pending_chunks, vectors, texts)
+        ]
+        await asyncio.to_thread(self.store.upsert, records)
 
         for chunk in pending_chunks:
             chunk.vector_id = str(chunk.id)

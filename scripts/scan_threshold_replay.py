@@ -134,6 +134,8 @@ def replay_threshold_scan(
     """
     if candidates is None:
         candidates = DEFAULT_CANDIDATES
+    if not candidates:
+        raise ValueError("Candidate thresholds list must not be empty")
 
     thresh_path = Path(threshold_file)
     if not thresh_path.exists():
@@ -142,8 +144,20 @@ def replay_threshold_scan(
     with open(thresh_path, "r", encoding="utf-8") as f:
         target_data = json.load(f)
 
-    target_threshold = float(target_data["threshold"])
-    target_score = float(target_data.get("score", 0.0))
+    if isinstance(target_data, (int, float)):
+        target_threshold = float(target_data)
+        target_score = 0.0
+    elif isinstance(target_data, dict) and isinstance(target_data.get("threshold"), (int, float)):
+        target_threshold = float(target_data["threshold"])
+        target_score = float(target_data.get("score", 0.0))
+    elif isinstance(target_data, dict):
+        numeric_vals = [float(v) for k, v in target_data.items() if k in TAXONOMY_17 and isinstance(v, (int, float))]
+        if not numeric_vals:
+            raise ValueError(f"Invalid threshold schema in {thresh_path}: missing numeric 'threshold'")
+        target_threshold = float(np.mean(numeric_vals))
+        target_score = 0.0
+    else:
+        raise ValueError(f"Unsupported threshold JSON structure in {thresh_path}")
 
     y_true, y_probs, _ = load_validation_scores(val_scores_file)
 
@@ -232,10 +246,12 @@ def main() -> None:
 
     print_grid_table(result)
 
-    assert result["matched"], (
-        f"Threshold replay mismatch: scanned best {result['best_threshold']} != "
-        f"target {result['target_threshold']} in {args.threshold_file}"
-    )
+    if not result["matched"]:
+        logger.error(
+            f"Threshold replay mismatch: scanned best {result['best_threshold']} != "
+            f"target {result['target_threshold']} in {args.threshold_file}"
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

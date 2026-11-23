@@ -1,4 +1,5 @@
 import atexit
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -15,8 +16,40 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 _keepalive_proc = None
 _mysql_ensured = False
+
+
+def _to_wsl_path(path: Path) -> str:
+    """将 Windows 绝对路径动态转换为 WSL2 /mnt/<drive>/... 路径。"""
+    raw = str(path)
+    if len(raw) >= 2 and raw[1] == ":":
+        drive = raw[0].lower()
+        rest = raw[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+    return raw.replace("\\", "/")
+
+
+def _cleanup_keepalive() -> None:
+    """进程退出时清理 WSL2 保活子进程，避免遗留 24 小时孤儿进程。"""
+    global _keepalive_proc
+    proc = _keepalive_proc
+    _keepalive_proc = None
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+atexit.register(_cleanup_keepalive)
+
 
 def is_port_open(host: str = "127.0.0.1", port: int = 3306, timeout: float = 1.0) -> bool:
     try:
@@ -32,14 +65,12 @@ def ensure_mysql_ready(verbose: bool = True):
     """
     global _keepalive_proc, _mysql_ensured
 
-    # 1. 确保 Windows 端持有 1 个 WSL2 会话保活进程（单例，避免 WSL2 在 8~10 秒空闲时自动挂起）
-    if sys.platform == "win32" and _keepalive_proc is None:
+    # 1. 确保 Windows 端持有 1 个 WSL2 会话保活进程（单例，退出时由 atexit 回收）
+    if sys.platform == "win32" and (_keepalive_proc is None or _keepalive_proc.poll() is not None):
         try:
             creation_flags = 0
             if hasattr(subprocess, "CREATE_NO_WINDOW"):
                 creation_flags |= subprocess.CREATE_NO_WINDOW
-            if hasattr(subprocess, "DETACHED_PROCESS"):
-                creation_flags |= subprocess.DETACHED_PROCESS
             _keepalive_proc = subprocess.Popen(
                 ["wsl", "-d", "Ubuntu", "sleep", "86400"],
                 stdout=subprocess.DEVNULL,
@@ -82,8 +113,9 @@ def ensure_mysql_ready(verbose: bool = True):
         if verbose:
             print("检测到 MySQL 容器未运行，正在自动拉起 Docker 容器...")
         try:
+            compose_wsl_path = _to_wsl_path(PROJECT_ROOT / "docker-compose.yml")
             subprocess.run(
-                ["wsl", "-d", "Ubuntu", "docker", "compose", "-f", "/mnt/d/PycharmProjects/AstroBot/docker-compose.yml", "up", "-d"],
+                ["wsl", "-d", "Ubuntu", "docker", "compose", "-f", compose_wsl_path, "up", "-d"],
                 check=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL

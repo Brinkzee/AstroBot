@@ -2,6 +2,7 @@ import inspect
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 from langchain_core.messages import (
     AIMessage,
@@ -11,6 +12,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langgraph.types import interrupt
+from app.config import settings
 from app.llm import get_chat_model
 from app.services.context.budget import estimate_tokens
 from app.services.context.logger import log_model_context
@@ -23,6 +25,71 @@ logger = logging.getLogger(__name__)
 
 # 挂起中断状态缓存（避免中断恢复执行时重复调用 LLM 重复生成相同 tool call）
 _pending_agent_states: Dict[int, Any] = {}
+_MAX_PENDING_STATES = 512
+_PENDING_TTL_SECONDS = 3600.0
+
+
+def clear_pending_agent_state(conv_id: int) -> None:
+    """清除指定会话的挂起中断状态缓存（用于新轮次启动防止陈旧中断泄漏）。"""
+    _pending_agent_states.pop(conv_id, None)
+
+
+def _prune_pending_agent_states() -> None:
+    """清理超时或超限的挂起状态缓存，避免放弃确认导致内存无限增长。"""
+    now = time.monotonic()
+    expired = [
+        cid
+        for cid, entry in list(_pending_agent_states.items())
+        if isinstance(entry, dict)
+        and (now - float(entry.get("created_at", now))) > _PENDING_TTL_SECONDS
+    ]
+    for cid in expired:
+        _pending_agent_states.pop(cid, None)
+
+    while len(_pending_agent_states) >= _MAX_PENDING_STATES:
+        oldest_key = next(iter(_pending_agent_states))
+        _pending_agent_states.pop(oldest_key, None)
+
+
+def _accumulate_tokens(total_tokens: Dict[str, int], msg: Any) -> None:
+    """从单次 LLM 响应消息中提取并累加 token 用量。"""
+    meta = getattr(msg, "response_metadata", {}) or {}
+    usage = meta.get("token_usage") or meta.get("usage") or getattr(msg, "usage_metadata", None) or {}
+    if usage:
+        prompt_t = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
+        comp_t = int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
+        tot_t = int(usage.get("total_tokens", 0)) or (prompt_t + comp_t)
+        total_tokens["prompt_tokens"] += prompt_t
+        total_tokens["completion_tokens"] += comp_t
+        total_tokens["total_tokens"] += tot_t
+
+
+def _extract_history_user_queries(
+    state: AgentWorkflowState, messages: List[BaseMessage]
+) -> List[str]:
+    """提取当前会话中历史用户原话（仅 HumanMessage），供权限门禁核验跨轮建单诉求。"""
+    seen = set()
+    queries: List[str] = []
+    sources = (
+        list(state.get("layer2_messages") or [])
+        + list(state.get("layer1_messages") or [])
+        + list(state.get("messages") or [])
+        + list(messages)
+    )
+    for m in sources:
+        is_human = isinstance(m, HumanMessage) or getattr(m, "type", None) == "human"
+        if not is_human and isinstance(m, dict) and m.get("role") in ("user", "human"):
+            is_human = True
+        if not is_human:
+            continue
+        content = getattr(m, "content", None)
+        if content is None and isinstance(m, dict):
+            content = m.get("content", "")
+        text = str(content or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            queries.append(text)
+    return queries
 
 AGENT_SYSTEM_BASE = """你是电商平台的生产级主力客服 Agent。
 你拥有自主多步决策与调用工具的能力。
@@ -40,7 +107,15 @@ REFUND_SPECIALIZED_INSTRUCTIONS = """【退款退货/售后专注裁决专项指
 4. 严禁冗长追问：严禁在对话中反复追问用户复杂的退款原因（用户后续提交申请时从固定类目自选）；
 5. 引导退款动作：若判定支持退款，明确提示用户「可点击下方“申请退款”按钮提交退款申请单」。"""
 
-MAX_STEPS = 5
+_INITIAL_MAX_STEPS: int = max(1, int(getattr(settings, "max_agent_steps", 5)))
+MAX_STEPS: int = _INITIAL_MAX_STEPS
+
+
+def _resolve_max_steps() -> int:
+    """获取当前生效的 ReAct 最大步数：支持模块级 MAX_STEPS 覆盖与 settings.max_agent_steps 动态读取。"""
+    if MAX_STEPS != _INITIAL_MAX_STEPS:
+        return max(1, int(MAX_STEPS))
+    return max(1, int(getattr(settings, "max_agent_steps", MAX_STEPS)))
 
 
 def format_order_context(order_data: Dict[str, Any]) -> str:
@@ -100,6 +175,17 @@ def is_refund_approved(response_text: str) -> bool:
     text = response_text.strip()
 
     # 1. 强否定主结论拦截：如果文本明确以拒退为开门见山的结论，判定为不支持
+    # 预先剥离“不属于/并非...不支持退货的特殊品类”等双重否定免责从句，防止主结论正则误杀
+    primary_check_text = re.sub(
+        r"(?:不属于|并非)[^，,。！!\n；;]*?(?:不支持|不可|无法)[^，,。！!\n；;]*?(?:特殊品类|品类|商品|范围|情形)",
+        "【豁免品类】",
+        text,
+    )
+    primary_check_text = re.sub(
+        r"(?:不属于|并非)\s*(?:不支持|不可|无法)(?:办理|申请)?(?:退款|退货|退换)",
+        "【豁免】",
+        primary_check_text,
+    )
     primary_rejection_patterns = [
         r"^\s*[*#\s]*不支持(?:申请|办理)?(?:退款|退货|退换|售后)",
         r"^\s*[*#\s]*(?:无法|不能|不可|不予)(?:办理|申请)?(?:退款|退货|退换)",
@@ -108,7 +194,7 @@ def is_refund_approved(response_text: str) -> bool:
         r"(?:已超出|已超过|超过)(?:7天|七天|15天|十五天|售后|退货|退换)[^。\n]*?(?:不支持|无法|不能|不可)(?:退款|退货|退换)",
     ]
     for pattern in primary_rejection_patterns:
-        if re.search(pattern, text):
+        if re.search(pattern, primary_check_text):
             return False
 
     # 2. 强正向动作引导（Prompt 第 5 条专项指令引导词）：
@@ -224,7 +310,7 @@ async def main_agent_node(
     llm = model or get_chat_model(streaming=False)
     if tools is not None:
         available_tools = tools
-        executor = ToolExecutor(registry=ToolRegistry(tools=tools))
+        executor = ToolExecutor(registry=ToolRegistry(tools=tools, mcp_client=None))
     else:
         res = default_tool_registry.get_all_tools()
         if inspect.isawaitable(res):
@@ -238,8 +324,7 @@ async def main_agent_node(
         from app.tools.business_tools import query_logistics
         if not any(t.name == "query_logistics" for t in available_tools):
             available_tools = list(available_tools) + [query_logistics]
-            executor = ToolExecutor(registry=ToolRegistry(tools=available_tools))
-    tools_map = {t.name: t for t in available_tools}
+            executor = ToolExecutor(registry=ToolRegistry(tools=available_tools, mcp_client=None))
 
     # 1. 构造上下文提示词（融合上游知识库证据与订单真实状态）
     sys_content = AGENT_SYSTEM_BASE
@@ -252,6 +337,7 @@ async def main_agent_node(
     docs = state.get("retrieved_docs") or []
 
     # 2. 准备消息列表（优先使用 layer2_messages 与 layer1_messages 并结合 ContextManager.build_model_messages）
+    messages: List[BaseMessage]
     if state.get("layer2_messages") is not None or state.get("layer1_messages") is not None:
         l2 = list(state.get("layer2_messages") or [])
         l1 = list(state.get("layer1_messages") or [])
@@ -288,7 +374,7 @@ async def main_agent_node(
                     knowledge_texts.append(f"【参考知识 {i}】{text}")
                 sys_content += "\n以下为检索到的官方政策与业务知识，请参考并用于回答：\n" + "\n".join(knowledge_texts)
 
-        messages: List[BaseMessage] = [SystemMessage(content=sys_content)]
+        messages = [SystemMessage(content=sys_content)]
         existing_messages = state.get("messages") or []
         for m in existing_messages:
             if not isinstance(m, SystemMessage):
@@ -310,6 +396,7 @@ async def main_agent_node(
     )
 
     steps = 0
+    effective_max_steps = _resolve_max_steps()
     init_tokens = state.get("token_usage") or {}
     total_tokens = {
         "prompt_tokens": int(init_tokens.get("prompt_tokens", 0)),
@@ -319,14 +406,22 @@ async def main_agent_node(
     final_text = ""
     new_messages: List[BaseMessage] = []
     current_turn_tool_messages: List[BaseMessage] = []
+    history_user_queries = _extract_history_user_queries(state, messages)
 
+    _prune_pending_agent_states()
     cached_pending = _pending_agent_states.pop(conv_id, None)
+    if cached_pending is not None:
+        cached_query = cached_pending.get("turn_query")
+        if cached_query is not None and cached_query != user_query:
+            cached_pending = None
 
-    while steps < MAX_STEPS:
+    while steps < effective_max_steps:
         steps += 1
+        prior_executed_results: Dict[str, ToolMessage] = {}
         if cached_pending is not None:
             resp = cached_pending["resp"]
             steps = cached_pending.get("steps", steps)
+            prior_executed_results = dict(cached_pending.get("executed_results") or {})
             messages.append(resp)
             new_messages.append(resp)
             cached_pending = None
@@ -334,17 +429,7 @@ async def main_agent_node(
             resp = await bound_llm.ainvoke(messages)
             messages.append(resp)
             new_messages.append(resp)
-
-            # 统计 token 消耗
-            meta = getattr(resp, "response_metadata", {}) or {}
-            usage = meta.get("token_usage") or meta.get("usage") or getattr(resp, "usage_metadata", None) or {}
-            if usage:
-                prompt_t = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
-                comp_t = int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
-                tot_t = int(usage.get("total_tokens", 0)) or (prompt_t + comp_t)
-                total_tokens["prompt_tokens"] += prompt_t
-                total_tokens["completion_tokens"] += comp_t
-                total_tokens["total_tokens"] += tot_t
+            _accumulate_tokens(total_tokens, resp)
 
         tool_calls = getattr(resp, "tool_calls", None) or []
         if not tool_calls:
@@ -352,8 +437,35 @@ async def main_agent_node(
             final_text = str(resp.content or "")
             break
 
-        # 执行工具并将结果回填
+        # 执行工具并将结果回填（同一 LLM 轮次内 resp 仅记录一次至 current_turn_tool_messages）
         interrupted_break = False
+        ticket_confirmed = False
+        confirmed_ticket_no: Optional[str] = None
+        resp_recorded_in_turn = False
+        step_executed_results: Dict[str, ToolMessage] = {}
+        step_appended_tool_msgs: List[ToolMessage] = []
+
+        def _record_resp_once() -> None:
+            nonlocal resp_recorded_in_turn
+            if not resp_recorded_in_turn:
+                current_turn_tool_messages.append(resp)
+                resp_recorded_in_turn = True
+
+        def _rollback_step_messages() -> None:
+            if resp in new_messages:
+                new_messages.remove(resp)
+            if resp in messages:
+                messages.remove(resp)
+            if resp in current_turn_tool_messages:
+                current_turn_tool_messages.remove(resp)
+            for tm in step_appended_tool_msgs:
+                if tm in new_messages:
+                    new_messages.remove(tm)
+                if tm in messages:
+                    messages.remove(tm)
+                if tm in current_turn_tool_messages:
+                    current_turn_tool_messages.remove(tm)
+
         for tool_call in tool_calls:
             name = tool_call.get("name", "")
             raw_args = tool_call.get("args") or {}
@@ -365,9 +477,21 @@ async def main_agent_node(
             call_id = str(tool_call.get("id") or "")
 
             if name == "create_ticket":
+                if ticket_confirmed:
+                    dup_msg = ToolMessage(
+                        content="本轮已处理工单请求，请勿重复创建。",
+                        tool_call_id=call_id,
+                    )
+                    messages.append(dup_msg)
+                    new_messages.append(dup_msg)
+                    current_turn_tool_messages.append(dup_msg)
+                    step_appended_tool_msgs.append(dup_msg)
+                    continue
+
                 desc = str(raw_args.get("description", "")).strip() if isinstance(raw_args, dict) else ""
-                # 安全兜底：若无问题描述，坚决追问，不发工单
+                # 安全兜底：若无问题描述，坚决追问，不发工单，并剔除未执行的 tool_call 消息防止历史悬挂
                 if not desc:
+                    _rollback_step_messages()
                     final_text = "请问您具体遇到了什么问题？请提供详细情况以便我们为您建立工单联系专员跟进处理。"
                     ask_msg = AIMessage(content=final_text)
                     messages.append(ask_msg)
@@ -375,10 +499,14 @@ async def main_agent_node(
                     interrupted_break = True
                     break
 
-                # 挂起前先缓存状态，防止中断恢复执行时重复调用 LLM
+                # 挂起前先缓存状态与已执行前置工具结果，防止中断恢复执行时重复调用 LLM 或重复执行工具
+                _prune_pending_agent_states()
                 _pending_agent_states[conv_id] = {
                     "resp": resp,
                     "steps": steps,
+                    "turn_query": user_query,
+                    "executed_results": dict(step_executed_results),
+                    "created_at": time.monotonic(),
                 }
                 ticket_type = raw_args.get("ticket_type", "售后") if isinstance(raw_args, dict) else "售后"
                 # 调用 LangGraph 原生 interrupt 挂起工作流
@@ -394,7 +522,7 @@ async def main_agent_node(
 
                 # 恢复执行时分支裁决
                 if user_action == "confirm":
-                    current_turn_tool_messages.append(resp)
+                    _record_resp_once()
                     if isinstance(raw_args, dict):
                         raw_args["conversation_id"] = conv_id
                         tool_call["args"] = raw_args
@@ -402,8 +530,10 @@ async def main_agent_node(
                         tool_call=tool_call,
                         context={
                             "user_query": user_query,
-                            "intent": intent or "工单",
+                            "intent": intent,
+                            "history_user_queries": history_user_queries,
                             "confirmed": True,
+                            "preview_confirmed": True,
                         },
                         conversation_id=conv_id,
                     )
@@ -412,32 +542,21 @@ async def main_agent_node(
                     messages.append(tool_msg)
                     new_messages.append(tool_msg)
                     current_turn_tool_messages.append(tool_msg)
+                    step_appended_tool_msgs.append(tool_msg)
+                    step_executed_results[call_id] = tool_msg
+                    ticket_confirmed = True
 
-                    ticket_no = None
-                    try:
-                        parsed_t = json.loads(tool_output)
-                        if isinstance(parsed_t, dict):
-                            ticket_no = parsed_t.get("ticket_no")
-                    except Exception:
-                        pass
+                    if tool_result.get("success") is True:
+                        try:
+                            parsed_t = json.loads(tool_output)
+                            if isinstance(parsed_t, dict) and not parsed_t.get("error"):
+                                confirmed_ticket_no = parsed_t.get("ticket_no")
+                        except Exception:
+                            pass
+                    # 继续遍历同 resp 中剩余 sibling tool_calls，确保每个 tool_call_id 均配对 ToolMessage
 
-                    try:
-                        resp2 = await bound_llm.ainvoke(messages)
-                        final_text = str(resp2.content or "")
-                        new_messages.append(resp2)
-                    except Exception as e:
-                        logger.warning(f"LLM summary after ticket creation: {e}")
-                        final_text = ""
-
-                    if ticket_no and (not final_text or ticket_no not in final_text):
-                        if not final_text:
-                            final_text = f"已为您成功创建工单，工单编号为：{ticket_no}，人工客服专员将尽快为您跟进处理。"
-                        else:
-                            final_text = f"已为您成功创建工单，工单编号为：{ticket_no}。{final_text}"
-                    interrupted_break = True
-                    break
-
-                elif user_action == "cancel":
+                else:
+                    # 取消或非预期动作：统一按取消处理，记录权限拒绝审计并清理悬挂 tool_call
                     if isinstance(raw_args, dict):
                         raw_args["conversation_id"] = conv_id
                         tool_call["args"] = raw_args
@@ -445,16 +564,14 @@ async def main_agent_node(
                         tool_call=tool_call,
                         context={
                             "user_query": user_query,
-                            "intent": intent or "工单",
+                            "intent": intent,
+                            "history_user_queries": history_user_queries,
                             "confirmed": False,
+                            "preview_confirmed": False,
                         },
                         conversation_id=conv_id,
                     )
-                    # 取消工单：将未执行成功的包含 tool_calls 的 resp 从消息历史中剔除，避免遗留悬挂 tool_call
-                    if resp in new_messages:
-                        new_messages.remove(resp)
-                    if resp in messages:
-                        messages.remove(resp)
+                    _rollback_step_messages()
 
                     final_text = "已为您取消工单创建。如果您有其他问题，欢迎随时咨询。"
                     cancel_msg = AIMessage(content=final_text)
@@ -465,21 +582,46 @@ async def main_agent_node(
                     break
 
             else:
-                # 常规业务工具执行
-                current_turn_tool_messages.append(resp)
-                tool_result = await executor.execute(
-                    tool_call=tool_call,
-                    context={
-                        "user_query": user_query,
-                        "intent": intent,
-                    },
-                    conversation_id=conv_id,
-                )
-                output = str(tool_result.get("output") or "")
-                tool_msg = ToolMessage(content=output, tool_call_id=call_id)
+                # 常规业务工具执行（中断恢复重放时直接复用已执行结果，严禁二次执行）
+                _record_resp_once()
+                if call_id and call_id in prior_executed_results:
+                    tool_msg = prior_executed_results[call_id]
+                else:
+                    tool_result = await executor.execute(
+                        tool_call=tool_call,
+                        context={
+                            "user_query": user_query,
+                            "intent": intent,
+                        },
+                        conversation_id=conv_id,
+                    )
+                    output = str(tool_result.get("output") or "")
+                    tool_msg = ToolMessage(content=output, tool_call_id=call_id)
                 messages.append(tool_msg)
                 new_messages.append(tool_msg)
                 current_turn_tool_messages.append(tool_msg)
+                step_appended_tool_msgs.append(tool_msg)
+                if call_id:
+                    step_executed_results[call_id] = tool_msg
+
+        if ticket_confirmed:
+            try:
+                resp2 = await bound_llm.ainvoke(messages)
+                _accumulate_tokens(total_tokens, resp2)
+                final_text = str(resp2.content or "")
+                new_messages.append(resp2)
+            except Exception as e:
+                logger.warning(f"LLM summary after ticket creation: {e}")
+                final_text = ""
+
+            if confirmed_ticket_no and (not final_text or confirmed_ticket_no not in final_text):
+                if not final_text:
+                    final_text = f"已为您成功创建工单，工单编号为：{confirmed_ticket_no}，人工客服专员将尽快为您跟进处理。"
+                else:
+                    final_text = f"已为您成功创建工单，工单编号为：{confirmed_ticket_no}。{final_text}"
+            elif not final_text:
+                final_text = "抱歉，工单创建失败，请稍后重试或联系人工客服专员协助处理。"
+            interrupted_break = True
 
         if interrupted_break:
             break
@@ -491,15 +633,7 @@ async def main_agent_node(
         )
         final_text = str(final_summary.content or "")
         new_messages.append(final_summary)
-        meta = getattr(final_summary, "response_metadata", {}) or {}
-        usage = meta.get("token_usage") or meta.get("usage") or getattr(final_summary, "usage_metadata", None) or {}
-        if usage:
-            prompt_t = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
-            comp_t = int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
-            tot_t = int(usage.get("total_tokens", 0)) or (prompt_t + comp_t)
-            total_tokens["prompt_tokens"] += prompt_t
-            total_tokens["completion_tokens"] += comp_t
-            total_tokens["total_tokens"] += tot_t
+        _accumulate_tokens(total_tokens, final_summary)
 
     # 动作推荐下发 (suggested_actions)
     suggested_actions = list(state.get("suggested_actions") or [])

@@ -22,7 +22,6 @@ from app.services.classifier.taxonomy import (
 TYPO_CORRECTIONS: Dict[str, str] = {
     "降介": "降价",
     "退款到长": "退款到账",
-    "退款到长": "退款到账",
     "发标": "发票",
     "快弟": "快递",
     "尺玛": "尺码",
@@ -93,10 +92,10 @@ def clean_and_mask_text(text: str) -> str:
     # 2. 订单号脱敏 (连续 14~24 位数字，不依赖英文单词边界 \b)
     text = re.sub(r"(?<!\d)\d{14,24}(?!\d)", "[订单号]", text)
 
-    # 3. 姓名脱敏 (匹配 "我叫XXX"、"姓名：XXX" 等模式)
+    # 3. 姓名脱敏 (仅匹配显式姓名引导语，避免误伤"我是会员"/"用户评价"等正常问句；按捕获组偏移精确替换)
     text = re.sub(
-        r"(?:我叫|我是|姓名[：:\s]*|用户[：:\s]*)([\u4e00-\u9fa5]{2,4})",
-        lambda m: m.group(0).replace(m.group(1), "[姓名]"),
+        r"(我叫|姓名[：:\s]+|联系人[：:\s]+|用户[：:]\s*)([\u4e00-\u9fa5]{2,4})",
+        lambda m: f"{m.group(1)}[姓名]",
         text,
     )
 
@@ -169,13 +168,24 @@ def stratified_split(
     test_ratio: float = 0.1,
     seed: int = 42,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """分层抽样划分数据集为 train, val, test."""
-    assert abs((train_ratio + val_ratio + test_ratio) - 1.0) < 1e-5, "Ratios must sum to 1.0"
+    """分层抽样划分数据集为 train, val, test（先按文本去重防止跨集泄漏，单样本类目优先归入训练集）。"""
+    if abs((train_ratio + val_ratio + test_ratio) - 1.0) >= 1e-5:
+        raise ValueError("Ratios must sum to 1.0")
     rng = random.Random(seed)
+
+    # 先按文本去重，杜绝重复样本被拆入不同划分造成数据泄漏
+    deduped_data: List[Dict[str, Any]] = []
+    seen_texts = set()
+    for item in data:
+        key = str(item.get("text", "")).strip()
+        if key in seen_texts:
+            continue
+        seen_texts.add(key)
+        deduped_data.append(item)
 
     # 按照 primary label (即第一个标签) 分组
     label_groups: Dict[str, List[Dict[str, Any]]] = {}
-    for item in data:
+    for item in deduped_data:
         labels = item.get("labels", [])
         primary_label = labels[0] if labels else "其他"
         label_groups.setdefault(primary_label, []).append(item)
@@ -187,8 +197,18 @@ def stratified_split(
     for label, group in label_groups.items():
         rng.shuffle(group)
         n = len(group)
-        n_train = int(n * train_ratio)
+        if n == 1:
+            train_data.extend(group)
+            continue
+        if n == 2:
+            train_data.append(group[0])
+            val_data.append(group[1])
+            continue
+
+        n_train = max(1, int(n * train_ratio))
         n_val = int(n * val_ratio)
+        if n_train + n_val > n:
+            n_val = max(0, n - n_train)
 
         train_data.extend(group[:n_train])
         val_data.extend(group[n_train:n_train + n_val])
@@ -249,9 +269,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Chapter 10 Data Prep & Leakage Check")
     parser.add_argument(
         "--check-leakage",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="执行零泄漏自检 (默认启用)",
+        help="执行零泄漏自检 (默认启用，可使用 --no-check-leakage 关闭)",
     )
     parser.add_argument(
         "--dataset-dir",

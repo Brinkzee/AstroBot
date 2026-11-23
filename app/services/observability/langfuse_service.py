@@ -1,63 +1,71 @@
-import os
+from contextlib import nullcontext
 import logging
-from typing import Optional, Any, Dict, List
+import threading
+from typing import Any, Dict, List, Optional
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class LangfuseManager:
+    _lock: threading.Lock = threading.Lock()
     _handler: Optional[Any] = None
     _client: Optional[Any] = None
+    _client_config_key: Optional[tuple] = None
 
     @classmethod
     def is_enabled(cls) -> bool:
         return bool(
-            settings.langfuse_enabled and 
-            settings.langfuse_public_key and 
-            settings.langfuse_secret_key
+            settings.langfuse_enabled
+            and settings.langfuse_public_key
+            and settings.langfuse_secret_key
         )
 
     @classmethod
     def get_client(cls) -> Optional[Any]:
         if not cls.is_enabled():
             return None
-        if cls._client is not None:
-            return cls._client
+
+        cfg_key = (
+            settings.langfuse_public_key,
+            settings.langfuse_secret_key,
+            settings.langfuse_host,
+        )
+        with cls._lock:
+            if cls._client is not None and (
+                cls._client_config_key is None or cls._client_config_key == cfg_key
+            ):
+                return cls._client
+            try:
+                from langfuse import Langfuse
+
+                cls._client = Langfuse(
+                    public_key=settings.langfuse_public_key,
+                    secret_key=settings.langfuse_secret_key,
+                    host=settings.langfuse_host,
+                )
+                cls._client_config_key = cfg_key
+                return cls._client
+            except Exception as e:
+                logger.warning(f"Failed to initialize Langfuse client: {e}")
+                return None
+
+    @classmethod
+    def get_callback_handler(cls) -> Optional[Any]:
+        """返回一个隔离的 Langfuse LangChain CallbackHandler 实例，绝不因观测异常阻断核心对话链路。"""
+        if not cls.is_enabled():
+            return None
+
+        # 1. Try langfuse.callback (Langfuse v2 SDK)
         try:
-            from langfuse import Langfuse
-            cls._client = Langfuse(
+            from langfuse.callback import CallbackHandler
+
+            return CallbackHandler(
                 public_key=settings.langfuse_public_key,
                 secret_key=settings.langfuse_secret_key,
                 host=settings.langfuse_host,
             )
-            return cls._client
-        except Exception as e:
-            logger.warning(f"Failed to initialize Langfuse client: {e}")
-            return None
-
-    @classmethod
-    def get_callback_handler(cls) -> Optional[Any]:
-        if not cls.is_enabled():
-            return None
-
-        # Ensure environment variables are set for SDK and background processes
-        if settings.langfuse_public_key:
-            os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key)
-        if settings.langfuse_secret_key:
-            os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key)
-        if settings.langfuse_host:
-            os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_host)
-            os.environ.setdefault("LANGFUSE_BASEURL", settings.langfuse_host)
-
-        # 1. First try langfuse.callback (Langfuse v2 SDK)
-        try:
-            from langfuse.callback import CallbackHandler
-            cls._handler = CallbackHandler(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host
-            )
-            return cls._handler
         except ImportError:
             pass
         except Exception as e:
@@ -66,54 +74,95 @@ class LangfuseManager:
         # 2. Try langfuse.langchain (Langfuse v3 / v4 SDK)
         try:
             from langfuse.langchain import CallbackHandler
+
             try:
-                # Try v2/v3 signature
-                cls._handler = CallbackHandler(
+                return CallbackHandler(
                     public_key=settings.langfuse_public_key,
                     secret_key=settings.langfuse_secret_key,
-                    host=settings.langfuse_host
+                    host=settings.langfuse_host,
                 )
-                return cls._handler
             except TypeError:
-                # v4 signature: initialize client first, then pass public_key
-                cls.get_client()
-                cls._handler = CallbackHandler(public_key=settings.langfuse_public_key)
-                return cls._handler
+                # v4 signature: register singleton client with explicit credentials first
+                if cls.get_client() is None:
+                    return None
+                return CallbackHandler(public_key=settings.langfuse_public_key)
         except Exception as e:
             logger.warning(f"Failed to initialize Langfuse CallbackHandler: {e}")
             return None
 
     @classmethod
-    def update_current_trace(cls, metadata: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None) -> None:
+    def trace_attributes_context(
+        cls,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ):
+        """Return a Langfuse v4 propagate_attributes context manager (or nullcontext on fallback)."""
+        if not cls.is_enabled():
+            return nullcontext()
+        try:
+            from langfuse import propagate_attributes
+
+            return propagate_attributes(metadata=metadata, tags=tags)
+        except Exception as e:
+            logger.debug(f"propagate_attributes unavailable: {e}")
+            return nullcontext()
+
+    @classmethod
+    def update_current_trace(
+        cls,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> None:
         if not cls.is_enabled():
             return
 
-        # Try v2/v3 langfuse_context
+        # 1. Try v2/v3 langfuse_context
         try:
             from langfuse.decorators import langfuse_context
+
             if metadata:
                 langfuse_context.update_current_trace(metadata=metadata)
             if tags:
                 langfuse_context.update_current_trace(tags=tags)
             return
-        except (ImportError, Exception):
+        except ImportError:
             pass
-
-        # Try v4 propagate_attributes
-        try:
-            from langfuse import propagate_attributes
-            propagate_attributes(metadata=metadata, tags=tags)
         except Exception as e:
-            logger.warning(f"Failed to update current trace: {e}")
+            logger.debug(f"langfuse_context.update_current_trace skipped: {e}")
+
+        # 2. Langfuse v4 client API (never discard propagate_attributes context manager as a no-op)
+        try:
+            client = cls.get_client()
+            if client is None:
+                return
+
+            if hasattr(client, "update_current_trace"):
+                kwargs: Dict[str, Any] = {}
+                if metadata is not None:
+                    kwargs["metadata"] = metadata
+                if tags is not None:
+                    kwargs["tags"] = tags
+                if kwargs:
+                    client.update_current_trace(**kwargs)
+                return
+
+            if hasattr(client, "update_current_span"):
+                span_meta: Dict[str, Any] = dict(metadata) if metadata else {}
+                if tags:
+                    span_meta.setdefault("tags", list(tags))
+                if span_meta:
+                    client.update_current_span(metadata=span_meta)
+        except Exception as e:
+            logger.warning(f"Failed to update current Langfuse trace/span: {e}")
 
     @classmethod
     def flush(cls) -> None:
-        if cls._handler and hasattr(cls._handler, 'flush'):
+        if cls._handler and hasattr(cls._handler, "flush"):
             try:
                 cls._handler.flush()
             except Exception as e:
                 logger.warning(f"Failed to flush langfuse handler: {e}")
-        if cls._client and hasattr(cls._client, 'flush'):
+        if cls._client and hasattr(cls._client, "flush"):
             try:
                 cls._client.flush()
             except Exception as e:

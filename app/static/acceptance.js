@@ -17,6 +17,20 @@
     "flywheel-pipeline",
   ]);
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  if (typeof window.escapeHtml !== "function") {
+    window.escapeHtml = escapeHtml;
+  }
+
   // =========================================================================
   // 1. API Fetch Helpers
   // =========================================================================
@@ -24,7 +38,9 @@
     const res = await fetch(url, options);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-      throw new Error(err.detail || `请求失败 (HTTP ${res.status})`);
+      const error = new Error(err.detail || `请求失败 (HTTP ${res.status})`);
+      error.status = res.status;
+      throw error;
     }
     return await res.json();
   }
@@ -108,11 +124,6 @@
         </div>
       `;
       document.body.appendChild(modal);
-
-      const closeBtn = document.getElementById("job-modal-close");
-      closeBtn.addEventListener("click", () => {
-        closeJobModal();
-      });
     }
     return modal;
   }
@@ -134,12 +145,45 @@
     const closeBtn = document.getElementById("job-modal-close");
 
     modal.classList.add("active");
-    titleEl.innerHTML = `⚡ 执行作业: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;">${jobName}</code>`;
+    titleEl.innerHTML = `⚡ 执行作业: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;">${escapeHtml(jobName)}</code>`;
     statusEl.className = "badge badge-missing";
     statusEl.innerText = "运行中 (Running)";
     logsEl.innerText = `[${new Date().toLocaleTimeString()}] 正在启动作业: ${jobName}...\n`;
     closeBtn.disabled = true;
     closeBtn.innerText = "等待执行完成";
+    closeBtn.onclick = () => closeJobModal();
+
+    const finishJobUi = (status, errMsg = "") => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      if (status === "completed") {
+        statusEl.className = "badge badge-pass";
+        statusEl.innerText = "✓ 执行成功 (Done)";
+        closeBtn.innerText = "完成并刷新";
+      } else if (status === "stopped") {
+        statusEl.className = "badge badge-missing";
+        statusEl.innerText = "⏹ 已停止 (Stopped)";
+        closeBtn.innerText = "关闭";
+      } else {
+        statusEl.className = "badge badge-fail";
+        statusEl.innerText = errMsg ? "轮询异常" : "✕ 执行失败 (Failed)";
+        closeBtn.innerText = "关闭";
+        if (errMsg) {
+          logsEl.innerText += `\n[ERROR] ${errMsg}\n`;
+        }
+      }
+      closeBtn.disabled = false;
+      closeBtn.onclick = () => {
+        closeJobModal();
+        if (options.onComplete) {
+          options.onComplete(status === "completed");
+        } else {
+          window.location.reload();
+        }
+      };
+    };
 
     try {
       const startRes = await fetchJson("/api/jobs/start", {
@@ -152,9 +196,14 @@
       logsEl.innerText += `[${new Date().toLocaleTimeString()}] 作业已派发，Job ID: ${jobId}\n`;
 
       if (pollInterval) clearInterval(pollInterval);
+      let consecutiveErrors = 0;
+      let isPolling = false;
       pollInterval = setInterval(async () => {
+        if (isPolling) return;
+        isPolling = true;
         try {
           const logData = await fetchJson(`/api/jobs/${jobId}/logs?tail=100`);
+          consecutiveErrors = 0;
           if (logData && logData.logs) {
             logsEl.innerText = logData.logs.join("\n");
             logsEl.scrollTop = logsEl.scrollHeight;
@@ -166,32 +215,17 @@
             status = statusData.status;
           }
 
-          if (status === "completed" || status === "failed") {
-            clearInterval(pollInterval);
-            pollInterval = null;
-
-            if (status === "completed") {
-              statusEl.className = "badge badge-pass";
-              statusEl.innerText = "✓ 执行成功 (Done)";
-              closeBtn.innerText = "完成并刷新";
-            } else {
-              statusEl.className = "badge badge-fail";
-              statusEl.innerText = "✕ 执行失败 (Failed)";
-              closeBtn.innerText = "关闭";
-            }
-            closeBtn.disabled = false;
-
-            closeBtn.onclick = () => {
-              closeJobModal();
-              if (options.onComplete) {
-                options.onComplete(status === "completed");
-              } else {
-                window.location.reload();
-              }
-            };
+          if (status === "completed" || status === "failed" || status === "stopped") {
+            finishJobUi(status);
           }
         } catch (pollErr) {
+          consecutiveErrors++;
           console.error("Job polling error", pollErr);
+          if (pollErr.status === 404 || consecutiveErrors >= 3) {
+            finishJobUi("failed", `日志轮询中断: ${pollErr.message}`);
+          }
+        } finally {
+          isPolling = false;
         }
       }, 1000);
     } catch (err) {
@@ -216,9 +250,25 @@
   // =========================================================================
   // 5. Single Query Interactive Tester
   // =========================================================================
-  window.initClassifyDemo = function (containerId, initialText = "买大了想退") {
+  window.initClassifyDemo = function (containerId, initialText = "买大了想退", options = {}) {
     const container = document.getElementById(containerId);
     if (!container) return;
+
+    const thresholdVal = options.threshold !== undefined && options.threshold !== null
+      ? Number(options.threshold).toFixed(2)
+      : "0.45";
+
+    // Preserve user input if already initialized; only update threshold label
+    const existingInput = document.getElementById("demo-input-text");
+    if (container.dataset && container.dataset.demoInitialized === "1" && existingInput) {
+      const labelEl = document.getElementById("demo-threshold-label");
+      if (labelEl) labelEl.innerText = thresholdVal;
+      return;
+    }
+
+    if (container.dataset) {
+      container.dataset.demoInitialized = "1";
+    }
 
     container.innerHTML = `
       <div class="classify-box">
@@ -229,7 +279,7 @@
           输入客户口语原话（如“买大了想退”），现场调用独立推理服务 (:8110)，观察 17 个类目各自的置信度得分及过线状态。
         </div>
         <div class="classify-input-group">
-          <input type="text" id="demo-input-text" class="classify-input" value="${initialText}" placeholder="请输入客户咨询文本..." />
+          <input type="text" id="demo-input-text" class="classify-input" value="${escapeHtml(initialText)}" placeholder="请输入客户咨询文本..." />
           <button class="btn-primary" id="demo-classify-btn">⚡ 立即分类</button>
         </div>
         <div id="demo-results-wrap" style="display:none;">
@@ -238,7 +288,7 @@
             <div id="demo-hit-tags" class="classify-tags"></div>
           </div>
           <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:8px;">
-            17 类独立置信度得分 (判定红线: <code id="demo-threshold-label">0.45</code>)：
+            17 类独立置信度得分 (判定红线: <code id="demo-threshold-label">${escapeHtml(thresholdVal)}</code>)：
           </div>
           <div id="demo-bars-container" class="bar-chart-container"></div>
         </div>
@@ -267,7 +317,7 @@
         if (labels.length === 0) {
           hitTagsEl.innerHTML = '<span class="classify-tag" style="background:#f1f5f9;color:#64748b;">(未命中任何类目，无过线标签)</span>';
         } else {
-          hitTagsEl.innerHTML = labels.map((l) => `<span class="classify-tag active">🏷️ ${l}</span>`).join(" ");
+          hitTagsEl.innerHTML = labels.map((l) => `<span class="classify-tag active">🏷️ ${escapeHtml(l)}</span>`).join(" ");
         }
 
         const scores = data.scores || {};
@@ -275,17 +325,17 @@
 
         barsEl.innerHTML = sortedCats.map(([cat, score]) => {
           const isHit = labels.includes(cat);
-          const pct = Math.min(100, Math.max(0, score * 100)).toFixed(1);
+          const pct = Math.min(100, Math.max(0, Number(score) * 100)).toFixed(1);
           return `
             <div class="bar-chart-row">
               <div class="bar-label" style="${isHit ? 'color:var(--primary);font-weight:700;' : ''}">
-                ${isHit ? '🔥 ' : ''}${cat}
+                ${isHit ? '🔥 ' : ''}${escapeHtml(cat)}
               </div>
               <div class="bar-track">
                 <div class="bar-fill ${isHit ? 'top3' : ''}" style="width:${pct}%"></div>
               </div>
               <div class="bar-meta">
-                <strong>${score.toFixed(4)}</strong> (${pct}%)
+                <strong>${Number(score).toFixed(4)}</strong> (${pct}%)
                 ${isHit ? '<span class="badge badge-pass" style="margin-left:4px;">过线</span>' : ''}
               </div>
             </div>
@@ -304,8 +354,8 @@
       if (e.key === "Enter") doClassify();
     });
 
-    // Auto-run once if initial text present
-    if (initialText) {
+    // Only auto-run when explicitly requested (e.g., when service probe confirms online)
+    if (options.autoRun === true && initialText) {
       setTimeout(doClassify, 300);
     }
   };

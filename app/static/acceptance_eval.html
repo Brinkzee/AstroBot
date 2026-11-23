@@ -120,7 +120,7 @@
       <div class="section-block">
         <div class="section-header">
           <div>
-            <div class="section-title">📉 验证集 9 候选线网格扫描对比 (0.20 ~ 0.60)</div>
+            <div class="section-title">📉 验证集 9 候选线网格扫描对比 (0.30 ~ 0.70)</div>
             <div class="section-desc">纯 HTML/CSS 柱状对比，验证最优判定阈值的复现与稳定性</div>
           </div>
           <button class="btn-secondary btn-small" onclick="runAcceptanceJob('replay-threshold', { onComplete: loadEval })">
@@ -173,8 +173,12 @@
         document.getElementById('kpi-macro-pr').innerText = `${macroP} / ${macroR}`;
         document.getElementById('kpi-threshold').innerText = Number(thresh).toFixed(2);
 
-        // 2. Init Interactive Single Query Demo
-        initClassifyDemo('interactive-demo-container', '买大了想退');
+        // 2. Check Service Status & Init Interactive Single Query Demo
+        const isServiceOnline = await checkDemoServiceStatus();
+        initClassifyDemo('interactive-demo-container', '买大了想退', {
+          threshold: thresh,
+          autoRun: isServiceOnline,
+        });
 
         // 3. 17-Class Table
         const perClass = data.per_class || [];
@@ -236,7 +240,7 @@
                   <div class="bar-fill ${isOpt ? 'top3' : ''}" style="width:${pct}%;"></div>
                 </div>
                 <div class="bar-meta">
-                  Macro F1: <strong>${Number(f1Val).toFixed(4)}</strong>
+                  Micro F1: <strong>${Number(f1Val).toFixed(4)}</strong>
                   ${isOpt ? '<span class="badge badge-pass" style="margin-left:6px;">最优推荐</span>' : ''}
                 </div>
               </div>
@@ -288,9 +292,7 @@
           }).join('');
         }
 
-        // 6. Check Service Status
-        await checkDemoServiceStatus();
-
+        // 6. Service Status already checked above
       } catch (err) {
         console.error("加载评测深剖失败", err);
         showToast("加载评测深剖失败: " + err.message, "error");
@@ -299,19 +301,27 @@
 
     async function checkDemoServiceStatus() {
       const badge = document.getElementById("demo-service-badge");
-      if (!badge) return;
       try {
         const s = await fetchAcceptanceService();
         if (s.online) {
-          badge.className = "badge badge-pass";
-          badge.innerText = "🟢 服务在线 (:8110)";
+          if (badge) {
+            badge.className = "badge badge-pass";
+            badge.innerText = "🟢 服务在线 (:8110)";
+          }
+          return true;
         } else {
+          if (badge) {
+            badge.className = "badge badge-fail";
+            badge.innerText = "🔴 服务离线";
+          }
+          return false;
+        }
+      } catch (e) {
+        if (badge) {
           badge.className = "badge badge-fail";
           badge.innerText = "🔴 服务离线";
         }
-      } catch (e) {
-        badge.className = "badge badge-fail";
-        badge.innerText = "🔴 服务离线";
+        return false;
       }
     }
 

@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, List, Optional, Sequence, Tuple
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -5,6 +6,23 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from app.services.context.budget import estimate_tokens
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_tool_calls(raw: Any) -> Any:
+    """安全反序列化 JSON 字符串形态的 tool_calls，避免构造 AIMessage 时崩溃。"""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            parsed = json.loads(s)
+            return parsed if isinstance(parsed, list) else None
+        except Exception as e:
+            logger.warning(f"Failed to parse tool_calls JSON: {e}")
+            return None
+    return raw
 
 
 def _get_message_id(msg: Any) -> Optional[int]:
@@ -35,7 +53,9 @@ def _extract_msg_info(m: Any) -> Tuple[str, str, Any, Optional[str], Optional[st
 
     role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else "user")
     content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else "") or ""
-    tool_calls = getattr(m, "tool_calls", None) or (m.get("tool_calls") if isinstance(m, dict) else None)
+    tool_calls = _parse_tool_calls(
+        getattr(m, "tool_calls", None) or (m.get("tool_calls") if isinstance(m, dict) else None)
+    )
     tool_call_id = getattr(m, "tool_call_id", None) or (m.get("tool_call_id") if isinstance(m, dict) else None)
     tool_name = getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else None)
     return str(role), str(content), tool_calls, tool_call_id, tool_name
@@ -127,11 +147,22 @@ def apply_layer1_degradation(
     remaining_l1 = list(layer1_msgs)
     new_id = curr_l1_id
 
+    def _is_tool_msg(msg: Any) -> bool:
+        role, _, _, _, _ = _extract_msg_info(msg)
+        return role.lower() == "tool"
+
     while remaining_l1 and estimate_tokens(remaining_l1) > layer1_budget:
         popped = remaining_l1.pop(0)
         pid = _get_message_id(popped)
         if pid is not None:
             new_id = pid
+
+        # 原子化降级：严禁将 assistant(tool_calls) 与紧随其后的 tool 响应拆散，防止层 1 头部出现孤立 ToolMessage
+        while remaining_l1 and _is_tool_msg(remaining_l1[0]):
+            orphan_tool = remaining_l1.pop(0)
+            tid = _get_message_id(orphan_tool)
+            if tid is not None:
+                new_id = tid
 
     if isinstance(conv, dict):
         conv["layer1_from_msg_id"] = new_id

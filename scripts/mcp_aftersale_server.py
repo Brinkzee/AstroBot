@@ -4,8 +4,9 @@
 并支持动态工具注册与热插拔扩展。
 """
 
+import argparse
 import json
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional, Sequence
 from mcp.server.fastmcp import FastMCP
 
 # 预置模拟质保数据
@@ -156,6 +157,15 @@ def create_aftersale_server(
     return server
 
 
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """解析售后 MCP Server 启动命令行参数。"""
+    parser = argparse.ArgumentParser(description="Aftersale MCP Server")
+    parser.add_argument("--host", default="127.0.0.1", help="监听主机地址")
+    parser.add_argument("--port", type=int, default=8002, help="监听端口号")
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    server = create_aftersale_server()
+    args = parse_args()
+    server = create_aftersale_server(host=args.host, port=args.port)
     server.run(transport="streamable-http")

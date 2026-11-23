@@ -1,3 +1,4 @@
+import contextvars
 import inspect
 import logging
 import os
@@ -40,6 +41,11 @@ from app.services.workflow.nodes.refund_nodes import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 异步上下文变量：将 WorkflowEngine.run 传入的 db 会话安全透传至节点（不进入序列化 checkpoint）
+workflow_db_var: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "workflow_db_var", default=None
+)
 
 LEGACY_TEST_FILES = (
     "test_workflow_nodes.py",
@@ -117,7 +123,14 @@ async def _knowledge_retrieval_node(state: AgentWorkflowState) -> Dict[str, Any]
 
 
 async def _knowledge_fallback_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    res = knowledge_node.knowledge_fallback_node(state)
+    db = workflow_db_var.get()
+    if db is not None:
+        try:
+            res = knowledge_node.knowledge_fallback_node(state, db=db)
+        except TypeError:
+            res = knowledge_node.knowledge_fallback_node(state)
+    else:
+        res = knowledge_node.knowledge_fallback_node(state)
     if inspect.isawaitable(res):
         return await res
     return res
@@ -258,15 +271,22 @@ class WorkflowEngine:
             layer2_messages=layer2_messages,
             layer1_messages=layer1_messages,
         )
+        # 开启新一轮工作流前，清除同会话可能遗留的未恢复中断缓存，防止陈旧工单劫持新轮次
+        agent_node.clear_pending_agent_state(conversation_id)
+
         token = None
         if _is_legacy_caller():
             token = router.legacy_ch05_mode_var.set(True)
+
+        db_token = workflow_db_var.set(db) if db is not None else None
 
         config = {"configurable": {"thread_id": str(conversation_id)}}
         try:
             final_state = await self.graph.ainvoke(initial_state, config=config)
             return final_state
         finally:
+            if db_token is not None:
+                workflow_db_var.reset(db_token)
             if token is not None:
                 router.legacy_ch05_mode_var.reset(token)
 

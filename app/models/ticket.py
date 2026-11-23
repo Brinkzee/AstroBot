@@ -21,6 +21,7 @@ class Ticket(Base):
         BigInteger().with_variant(MYSQL_BIGINT(unsigned=True), "mysql").with_variant(Integer, "sqlite"),
         ForeignKey("conversations.id"),
         nullable=False,
+        index=True,
         comment="关联会话,可倒查当时聊了什么",
     )
     description: Mapped[str] = mapped_column(

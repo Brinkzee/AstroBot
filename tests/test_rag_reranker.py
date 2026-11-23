@@ -419,9 +419,9 @@ async def test_bge_reranker_timeout_exhaustion_trips_configurable_circuit_breake
         side_effect=TimeoutError("The read operation timed out"),
     ) as mock_post:
         import time
-        before_call = time.time()
+        before_call = time.monotonic()
         reranked = await reranker.rerank("测试", candidates, top_k=1)
-        after_call = time.time()
+        after_call = time.monotonic()
 
         # 重试 2 次后耗尽
         assert mock_post.call_count == 2

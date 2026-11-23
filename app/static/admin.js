@@ -60,13 +60,28 @@
     return { activeMain, activeSub };
   }
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  if (typeof window.escapeHtml !== "function") {
+    window.escapeHtml = escapeHtml;
+  }
+
   function renderAdminShell(options = {}) {
     const detected = detectActiveKeys();
     const activeMain = options.activeMain || detected.activeMain;
     const activeSub = options.activeSub || detected.activeSub;
-    const title = options.title || "AstroBot 后台聚合管理中心";
-    const subtitle = options.subtitle || "智能电商客服系统管理中心";
-    const icon = options.icon || "⚙️";
+    const meta = PAGE_METAS[activeMain] || PAGE_METAS.admin;
+    const title = options.title || (meta && meta.title ? `AstroBot ${meta.title}` : "AstroBot 后台聚合管理中心");
+    const subtitle = options.subtitle || (meta && meta.subtitle) || "智能电商客服系统管理中心";
+    const icon = options.icon || (meta && meta.icon) || "⚙️";
 
     // 1. Render Header
     let headerEl = document.querySelector("header");
@@ -77,16 +92,16 @@
 
     const mainNavHtml = MAIN_NAV_ITEMS.map((item) => {
       const isActive = item.key === activeMain ? "active" : "";
-      const target = item.external ? 'target="_blank"' : "";
+      const target = item.external ? 'target="_blank" rel="noopener noreferrer"' : "";
       return `<a href="${item.href}" class="btn-nav ${isActive}" ${target}>${item.label}</a>`;
     }).join("\n");
 
     headerEl.innerHTML = `
       <a href="/admin" class="brand">
-        <div class="brand-icon">${icon}</div>
+        <div class="brand-icon">${escapeHtml(icon)}</div>
         <div>
-          <div class="brand-title">${title}</div>
-          <div class="brand-subtitle">${subtitle}</div>
+          <div class="brand-title">${escapeHtml(title)}</div>
+          <div class="brand-subtitle">${escapeHtml(subtitle)}</div>
         </div>
       </a>
       <div class="header-links">

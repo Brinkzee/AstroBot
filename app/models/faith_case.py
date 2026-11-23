@@ -1,12 +1,17 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from sqlalchemy import BigInteger, Integer, String, Text, Enum, DateTime, JSON, select, func
 from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT, INTEGER as MYSQL_INTEGER
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class FaithCaseStatus(str, enum.Enum):
@@ -98,14 +103,14 @@ class FaithCase(Base):
     )
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=_utcnow_naive,
         server_default=func.now(),
         nullable=False,
         comment="第一次被判编造的时间",
     )
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=_utcnow_naive,
         server_default=func.now(),
         nullable=False,
         index=True,
@@ -155,11 +160,29 @@ async def upsert_faith_case(
     Returns:
         持久化后的 FaithCase 实体
     """
+    def _apply_update(target: FaithCase, ts: datetime) -> None:
+        target.bucket = bucket
+        target.query = query
+        target.strategy = strategy
+        target.answer = answer
+        target.reason = reason
+        target.citations = citations
+        if judge_model is not None:
+            target.judge_model = judge_model
+        target.seen_count += 1
+        target.last_seen_at = ts
+
+        # 复发机制：若原状态为「已解决」，再次出现编造自动退回「未解决」
+        if target.status in ("已解决", FaithCaseStatus.RESOLVED):
+            target.status = "未解决"
+            target.resolution = None
+            # target.resolved_at 保留不变以追踪复发
+
     stmt = select(FaithCase).where(FaithCase.eval_id == eval_id)
     result = await db.execute(stmt)
     case = result.scalar_one_or_none()
 
-    now = datetime.utcnow()
+    now = _utcnow_naive()
     if case is None:
         case = FaithCase(
             eval_id=eval_id,
@@ -178,24 +201,19 @@ async def upsert_faith_case(
             resolved_at=None,
         )
         db.add(case)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            retry_res = await db.execute(stmt)
+            case = retry_res.scalar_one_or_none()
+            if case is None:
+                raise
+            _apply_update(case, now)
+            await db.commit()
     else:
-        case.bucket = bucket
-        case.query = query
-        case.strategy = strategy
-        case.answer = answer
-        case.reason = reason
-        case.citations = citations
-        if judge_model is not None:
-            case.judge_model = judge_model
-        case.seen_count += 1
-        case.last_seen_at = now
+        _apply_update(case, now)
+        await db.commit()
 
-        # 复发机制：若原状态为「已解决」，再次出现编造自动退回「未解决」
-        if case.status in ("已解决", FaithCaseStatus.RESOLVED):
-            case.status = "未解决"
-            case.resolution = None
-            # case.resolved_at 保留不变以追踪复发
-
-    await db.commit()
     await db.refresh(case)
     return case

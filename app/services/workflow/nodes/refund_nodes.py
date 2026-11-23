@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -7,40 +8,90 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from app.llm import get_chat_model
 from app.services.workflow.state import AgentWorkflowState
+from app.services.workflow.nodes.knowledge_node import (
+    _extract_retrieval_items,
+    _normalize_retrieved_doc,
+)
 from app.tools.business_tools import MOCK_ORDERS, query_order, get_retriever
 
 logger = logging.getLogger(__name__)
 
 REFUND_SELECT_ORDER_PROMPT = "为您查询退款政策前，请先选择您需要咨询的订单："
 
+MOBILE_PHONE_PATTERN = re.compile(r"^1[3-9]\d{9}$")
+VALID_ORDER_ID_PATTERN = re.compile(r"^(?:\d{4,}|(?:TB|ORD|OD|DD|SO|NO)[_-]?\d{3,})$", re.IGNORECASE)
+
 ORDER_PATTERNS = [
     re.compile(r'(?:退款)?(?:订单|单号)(?:编号|号)?(?:是|为)?[:：\s]*([A-Za-z0-9_-]+)'),
     re.compile(r'(?i)(?<![0-9a-zA-Z])(TB\d+)(?![0-9a-zA-Z])'),
     re.compile(r'(?<!\d)(100[1-3])(?!\d)'),
-    re.compile(r'(?<!\d)(\d{4,})(?!\d|[年月号天分秒点时元块角毛件个支本双条台斤两克米折倍])'),
+    re.compile(r'(?<!\d)(?<!花了)(?<!付了)(?<!手机)(?<!电话)(\d{4,})(?!\d|[年月号天分秒点时元块角毛件个支本双条台斤两克米折倍])'),
 ]
 
 
+def _is_valid_order_id(candidate: str) -> bool:
+    """过滤 11 位手机号与非订单格式的商品型号（如 PRO-X99）。"""
+    val = str(candidate or "").strip()
+    if not val:
+        return False
+    if MOBILE_PHONE_PATTERN.match(val):
+        return False
+    return bool(VALID_ORDER_ID_PATTERN.match(val))
+
+
 class _AwaitableDict(dict):
-    """支持直接同步作为字典读取，也可直接 await 返回字典自身，保证双重调用兼容性"""
+    """支持直接同步作为字典读取，也可直接 await 异步加载，保证双重调用兼容性。"""
+
+    def __init__(self, data: Dict[str, Any], async_runner=None, sync_resolver=None):
+        super().__init__(data)
+        self._async_runner = async_runner
+        self._sync_resolver = sync_resolver
+        self._resolved = async_runner is None and sync_resolver is None
+
+    def _ensure_sync_resolved(self) -> None:
+        if not self._resolved and self._sync_resolver is not None:
+            self._resolved = True
+            res = self._sync_resolver()
+            if isinstance(res, dict):
+                super().update(res)
+
+    def __getitem__(self, key):
+        self._ensure_sync_resolved()
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        self._ensure_sync_resolved()
+        return super().get(key, default)
+
+    def items(self):
+        self._ensure_sync_resolved()
+        return super().items()
+
+    def values(self):
+        self._ensure_sync_resolved()
+        return super().values()
 
     def __await__(self):
         async def _wrap():
+            if not self._resolved and self._async_runner is not None:
+                self._resolved = True
+                res = await self._async_runner()
+                if isinstance(res, dict):
+                    dict.update(self, res)
             return self
 
         return _wrap().__await__()
 
 
 def _extract_from_text(text: str) -> Optional[str]:
-    """从单段文本中按正则提取订单号"""
+    """从单段文本中按正则提取合法订单号（排除手机号与商品型号 SKU）。"""
     if not text or not isinstance(text, str):
         return None
     clean_text = text.strip()
     for pat in ORDER_PATTERNS:
-        m = pat.search(clean_text)
-        if m:
+        for m in pat.finditer(clean_text):
             val = m.group(1).strip()
-            if val:
+            if _is_valid_order_id(val):
                 return val
     return None
 
@@ -182,17 +233,43 @@ def emit_order_selector_node(state: AgentWorkflowState) -> Dict[str, Any]:
 def refund_order_check_node(state: AgentWorkflowState) -> Dict[str, Any]:
     """确定性退款子流程订单检查节点：
     1. 提取订单号；
-    2. 命中有效订单号时预取订单数据，返回 status="order_fetched"；
+    2. 命中有效订单号时预取订单数据（异步 await 路径通过 asyncio.to_thread 防阻塞事件循环），返回 status="order_fetched"；
     3. 缺失订单号时挂起拦截，装配 suggested_orders 候选卡片并引导用户选择，返回 status="need_order_selection"。
     """
     order_id = extract_order_id(state=state)
     if order_id:
-        order_info = fetch_order_data(order_id)
-        return _AwaitableDict({
-            "order_id": order_id,
-            "order_data": order_info,
-            "status": "order_fetched",
-        })
+        key = str(order_id).strip()
+        if key in MOCK_ORDERS:
+            return _AwaitableDict({
+                "order_id": order_id,
+                "order_data": dict(MOCK_ORDERS[key]),
+                "status": "order_fetched",
+            })
+
+        async def _async_fetch() -> Dict[str, Any]:
+            order_info = await asyncio.to_thread(fetch_order_data, key)
+            return {
+                "order_id": order_id,
+                "order_data": order_info,
+                "status": "order_fetched",
+            }
+
+        def _sync_fetch() -> Dict[str, Any]:
+            return {
+                "order_id": order_id,
+                "order_data": fetch_order_data(key),
+                "status": "order_fetched",
+            }
+
+        return _AwaitableDict(
+            {
+                "order_id": order_id,
+                "order_data": None,
+                "status": "order_fetched",
+            },
+            async_runner=_async_fetch,
+            sync_resolver=_sync_fetch,
+        )
     return emit_order_selector_node(state)
 
 
@@ -286,29 +363,12 @@ def _parse_expanded_queries(content: Any) -> List[str]:
 
 
 def _normalize_hit(hit: Any) -> Dict[str, Any]:
-    """统一知识检索命中项为标准字典格式"""
-    if isinstance(hit, dict):
-        d = dict(hit)
-    elif hasattr(hit, "to_dict") and callable(hit.to_dict):
-        d = dict(hit.to_dict())
-    else:
-        d = {
-            "text": getattr(hit, "text", str(hit)),
-            "score": getattr(hit, "score", 0.0),
-        }
-
-    raw_text = d.get("text") or d.get("content") or getattr(hit, "text", None) or str(hit)
-    d["text"] = str(raw_text).strip()
-
-    raw_score = d.get("score")
-    if raw_score is None:
-        raw_score = getattr(hit, "score", 0.0)
-    try:
-        d["score"] = float(raw_score)
-    except (ValueError, TypeError):
-        d["score"] = 0.0
-
-    return d
+    """复用知识节点归一化逻辑：剥离 entity 向量、兼容 answer/chunk_text、填充 text 与 content、提取 score > rerank_score > distance。"""
+    doc = _normalize_retrieved_doc(hit, default_score=0.0)
+    clean_text = str(doc.get("text") or doc.get("content") or "").strip()
+    doc["text"] = clean_text
+    doc["content"] = clean_text
+    return doc
 
 
 def merge_and_deduplicate_docs(
@@ -361,25 +421,17 @@ async def _execute_single_retrieve(retriever: Any, query: str) -> List[Any]:
                 res = retriever.retrieve_with_strategy(query=query, min_score=0.1)
             except TypeError:
                 res = retriever.retrieve_with_strategy(query)
-            if asyncio.iscoroutine(res):
+            if inspect.isawaitable(res):
                 res = await res
-            hits = getattr(res, "hits", None)
-            if hits is None:
-                hits = getattr(res, "docs", None)
-            if hits is None and isinstance(res, list):
-                hits = res
-            return hits or []
+            return _extract_retrieval_items(res)
         elif hasattr(retriever, "retrieve"):
             try:
                 res = retriever.retrieve(query=query, top_k=5)
             except TypeError:
                 res = retriever.retrieve(query)
-            if asyncio.iscoroutine(res):
+            if inspect.isawaitable(res):
                 res = await res
-            if isinstance(res, list):
-                return res
-            hits = getattr(res, "hits", None) or getattr(res, "docs", None)
-            return hits or []
+            return _extract_retrieval_items(res)
     except Exception as e:
         logger.warning(f"单路检索执行异常 [query='{query}']: {e}")
         return []

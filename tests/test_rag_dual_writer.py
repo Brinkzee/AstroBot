@@ -55,6 +55,12 @@ class AsyncSessionAdapter:
         await self.close()
 
 
+@pytest.fixture(autouse=True)
+def force_offline_mock_embedding(monkeypatch):
+    """确保双写单元测试离线确定性运行，不依赖外部 HuggingFace 配额。"""
+    monkeypatch.setenv("MOCK_EMBEDDING", "1")
+
+
 @pytest.fixture
 def sqlite_session():
     engine = create_engine("sqlite:///:memory:")
@@ -171,9 +177,9 @@ async def test_dual_writer_full_flow(sqlite_session, temp_milvus_db):
         # 验证 Milvus 存储记录数量与主键幂等
         assert writer.store.count() == 3
 
-        # 检索测试 Milvus 中的 Payload
+        # 检索测试 Milvus 中的 Payload（Mock 随机向量余弦分布含负值，min_score=-1.0 确保召回全部 3 条）
         query_vec = writer.embedding_client.embed_query("退货运费谁付？")
-        hits = writer.store.search(query_vector=query_vec, top_k=3)
+        hits = writer.store.search(query_vector=query_vec, top_k=3, min_score=-1.0)
         assert len(hits) == 3
         hit_ids = {h["id"] for h in hits}
         assert hit_ids == {c0.id, c1.id, c2.id}

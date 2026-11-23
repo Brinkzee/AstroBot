@@ -256,6 +256,14 @@ class ChatService:
                 tool_call_map: Dict[str, str] = {}
                 for i, m in enumerate(msgs):
                     if hasattr(m, "tool_calls") and m.tool_calls:
+                        # 一条 AIMessage 仅落库一行 assistant 记录（保留完整 tool_calls 列表），避免多工具并发时破坏协议顺序
+                        await self.save_message(
+                            db,
+                            conversation_id=conv_id,
+                            role="assistant",
+                            content=m.content if m.content else None,
+                            tool_calls=list(m.tool_calls),
+                        )
                         for tc in m.tool_calls:
                             t_name = tc.get("name", "")
                             t_id = str(tc.get("id") or "")
@@ -270,23 +278,10 @@ class ChatService:
                                 "tool_label": t_label,
                                 "args": t_args,
                             }
-                            await self.save_message(
-                                db,
-                                conversation_id=conv_id,
-                                role="assistant",
-                                content=m.content if m.content else None,
-                                tool_calls=[tc],
-                            )
                     elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
                         t_content = str(m.content or "")
                         t_call_id = str(getattr(m, "tool_call_id", "") or "")
                         t_name = getattr(m, "name", "") or tool_call_map.get(t_call_id, "")
-                        yield {
-                            "event_type": "tool_end",
-                            "conversation_id": conv_id,
-                            "tool_name": t_name,
-                            "success": not t_content.startswith("执行异常"),
-                        }
                         await self.save_message(
                             db,
                             conversation_id=conv_id,
@@ -294,6 +289,12 @@ class ChatService:
                             content=t_content,
                             tool_call_id=t_call_id,
                         )
+                        yield {
+                            "event_type": "tool_end",
+                            "conversation_id": conv_id,
+                            "tool_name": t_name,
+                            "success": not t_content.startswith("执行异常"),
+                        }
 
                 # 8. 若状态为 need_order_selection 或存在 suggested_orders，发射 order_selector 卡片选择事件
                 if final_state.get("status") == "need_order_selection" or final_state.get("suggested_orders"):
@@ -303,20 +304,20 @@ class ChatService:
                         "orders": final_state.get("suggested_orders") or [],
                     }
 
-                # 9. 输出 text 文本事件
+                # 9. 先持久化落库，再输出 text 文本事件（防止客户端断开导致消息丢失）
                 resp_text = str(final_state.get("response_text") or "")
                 if resp_text:
-                    yield {
-                        "event_type": "text",
-                        "conversation_id": conv_id,
-                        "content": resp_text,
-                    }
                     await self.save_message(
                         db,
                         conversation_id=conv_id,
                         role="assistant",
                         content=resp_text,
                     )
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": resp_text,
+                    }
 
                 # 10. 如果有建议操作 suggested_actions，发射 actions 事件
                 actions = final_state.get("suggested_actions") or []
@@ -390,18 +391,18 @@ class ChatService:
             # 6. 分支 A: 无需工具调用的纯对话分支
             if not tool_calls:
                 content = resp.content if isinstance(resp.content, str) else str(resp.content or "")
-                if content:
-                    yield {
-                        "event_type": "text",
-                        "conversation_id": conv_id,
-                        "content": content,
-                    }
                 await self.save_message(
                     db,
                     conversation_id=conv_id,
                     role="assistant",
                     content=content,
                 )
+                if content:
+                    yield {
+                        "event_type": "text",
+                        "conversation_id": conv_id,
+                        "content": content,
+                    }
                 return
 
             # 7. 分支 B: 触发工具调用 (严格单轮收敛，仅取第一个工具执行)
@@ -617,11 +618,18 @@ class ChatService:
 
             final_state = await engine.resume(conversation_id=conversation_id, action=action)
 
-            # 1. 发射工具执行事件（若有）
+            # 1. 发射工具执行事件（若有）：先落库再发射 SSE
             msgs = final_state.get("current_turn_tool_messages") or []
             tool_call_map: Dict[str, str] = {}
             for m in msgs:
                 if hasattr(m, "tool_calls") and m.tool_calls:
+                    await self.save_message(
+                        db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=m.content if m.content else None,
+                        tool_calls=list(m.tool_calls),
+                    )
                     for tc in m.tool_calls:
                         t_name = tc.get("name", "")
                         t_id = str(tc.get("id") or "")
@@ -636,23 +644,10 @@ class ChatService:
                             "tool_label": t_label,
                             "args": t_args,
                         }
-                        await self.save_message(
-                            db,
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content=m.content if m.content else None,
-                            tool_calls=[tc],
-                        )
                 elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
                     t_content = str(m.content or "")
                     t_call_id = str(getattr(m, "tool_call_id", "") or "")
                     t_name = getattr(m, "name", "") or tool_call_map.get(t_call_id, "")
-                    yield {
-                        "event_type": "tool_end",
-                        "conversation_id": conversation_id,
-                        "tool_name": t_name,
-                        "success": not t_content.startswith("执行异常"),
-                    }
                     await self.save_message(
                         db,
                         conversation_id=conversation_id,
@@ -660,21 +655,27 @@ class ChatService:
                         content=t_content,
                         tool_call_id=t_call_id,
                     )
+                    yield {
+                        "event_type": "tool_end",
+                        "conversation_id": conversation_id,
+                        "tool_name": t_name,
+                        "success": not t_content.startswith("执行异常"),
+                    }
 
-            # 2. 输出 text 文本事件并落库
+            # 2. 先持久化落库，再输出 text 文本事件
             resp_text = str(final_state.get("response_text") or "")
             if resp_text:
-                yield {
-                    "event_type": "text",
-                    "conversation_id": conversation_id,
-                    "content": resp_text,
-                }
                 await self.save_message(
                     db,
                     conversation_id=conversation_id,
                     role="assistant",
                     content=resp_text,
                 )
+                yield {
+                    "event_type": "text",
+                    "conversation_id": conversation_id,
+                    "content": resp_text,
+                }
 
             # 3. 输出建议操作
             actions = final_state.get("suggested_actions") or []

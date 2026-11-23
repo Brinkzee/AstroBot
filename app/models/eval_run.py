@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Any, Dict
 from sqlalchemy import BigInteger, Integer, Enum, DateTime, JSON, func
-from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT
+from sqlalchemy.dialects.mysql import BIGINT as MYSQL_BIGINT, INTEGER as MYSQL_INTEGER
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -37,7 +37,7 @@ class EvalRun(Base):
         comment="这轮怎么起的:定时任务,或某次改动后手动跑",
     )
     dataset_size: Mapped[int] = mapped_column(
-        Integer,
+        Integer().with_variant(MYSQL_INTEGER(unsigned=True), "mysql"),
         nullable=False,
         comment="这轮跑的评估集条数",
     )

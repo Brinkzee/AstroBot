@@ -35,6 +35,13 @@ from scripts.wsl_helper import ensure_mysql_ready
 
 
 async def run_acceptance():
+    try:
+        await _run_acceptance_body()
+    finally:
+        await engine.dispose()
+
+
+async def _run_acceptance_body():
     print("=" * 75)
     print("🚀 [Chapter 03] RAG 知识库与向量语义检索端到端双重验收开始")
     print("=" * 75)
@@ -137,6 +144,21 @@ async def run_acceptance():
         assert second_repair == 0, "再次检查应无任何残留 pending 块"
         print("  ✅ 【验收标准 2 验证通过】: 漏向量化数据 100% 自动检出、补齐向量并最终一致！")
     finally:
+        # 清理演练注入的临时知识块（MySQL + Milvus），杜绝污染生产知识库
+        if test_chunk_id is not None:
+            try:
+                async with AsyncSessionLocal() as session:
+                    drill_chunk = await session.get(KnowledgeChunk, test_chunk_id)
+                    if drill_chunk is not None:
+                        await session.delete(drill_chunk)
+                        await session.commit()
+            except Exception as cleanup_err:
+                print(f"  ⚠️ 清理 MySQL 演练知识块 (ID={test_chunk_id}) 失败: {cleanup_err}")
+            try:
+                if writer.store and writer.store.client is not None:
+                    writer.store.client.delete(collection_name="knowledge", ids=[test_chunk_id])
+            except Exception as milvus_cleanup_err:
+                print(f"  ⚠️ 清理 Milvus 演练向量 (ID={test_chunk_id}) 失败: {milvus_cleanup_err}")
         writer.close()
 
     # 5. 存储对齐一致性校验
@@ -189,9 +211,6 @@ async def run_acceptance():
     assert any(kw in full_response for kw in ["88", "八十八"]), "最终回复应包含88元包邮规则"
     assert any(kw in full_response for kw in ["15", "十五", "偏远", "加收"]), "最终回复应包含偏远地区加收15元说明"
     print("  ✅ 【大模型问答验证通过】: 大模型基于向量检索结果提供了准确专业的答复！")
-
-    # 释放数据库连接池
-    await engine.dispose()
 
     print("\n" + "=" * 75)
     print("🎉 Chapter 03 RAG 知识库与密集向量检索四大核心验收全部成功通过！")
