@@ -35,7 +35,7 @@ CREATE TABLE qa_extraction_staging (
   source_ref       VARCHAR(255)    NULL                    COMMENT '来源会话 / 导出文件标识,溯源用,不入最终知识库',
   question         TEXT            NOT NULL                COMMENT 'LLM 从会话抽出的用户问法',
   answer           TEXT            NOT NULL                COMMENT 'LLM 从会话抽出的客服答案',
-  status           ENUM('extracted','kept','discarded') NOT NULL DEFAULT 'extracted' COMMENT '已抽出待去重 / 去重保留 / 去重丢弃',
+  status           ENUM('extracted','kept','discarded','ingested') NOT NULL DEFAULT 'extracted' COMMENT '已抽出待去重 / 去重保留 / 去重丢弃 / 已入库',
   created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '抽取写入时间',
   PRIMARY KEY (id),
   KEY idx_batch_no (batch_no),

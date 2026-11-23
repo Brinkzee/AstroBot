@@ -1044,3 +1044,7 @@ def test_ver08_gitignore_and_requirements_hygiene():
     req = (ROOT_DIR / "requirements.txt").read_text(encoding="utf-8").lower()
     for dep in ["pymilvus", "aiosqlite", "huggingface-hub", "jieba"]:
         assert dep in req
+
+    ch03_ddl = (ROOT_DIR / "sql" / "ch03-ddl.sql").read_text(encoding="utf-8")
+    assert "ENUM('pending','done','failed')" in ch03_ddl
+    assert "ENUM('extracted','kept','discarded','ingested')" in ch03_ddl

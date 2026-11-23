@@ -49,7 +49,7 @@ class QAExtractionStaging(Base):
         server_default="extracted",
         nullable=False,
         index=True,
-        comment="已抽出待去重 / 去重保留 / 去重丢弃",
+        comment="已抽出待去重 / 去重保留 / 去重丢弃 / 已入库",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
